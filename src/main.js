@@ -7,47 +7,13 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
+import { TWO_PI, smooth01, hex } from './util.js?v=17';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=17';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=17';
 
-const TWO_PI = Math.PI * 2;
-const smooth01 = x => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
-
-/* ================= DONNÉES — modèles réels =================
-   Specs issues des essais presse : vitesse max bridée ~108 km/h
-   (accord constructeurs / US Coast Guard), Spark Trixx ~80 km/h. */
-const MODELS = [
-  { id: 'rxpx', kind: 'jetski', brand: 'Sea-Doo', name: 'RXP-X 325', hp: 325, top: 108, weight: 353, style: 'race',
-    colors: { hull: 0x121318, deck: 0xd8232a, accent: 0x0c0d10, seat: 0x1a1c22, trim: 0xe8e8e8 } },
-  { id: 'gtx', kind: 'jetski', brand: 'Sea-Doo', name: 'GTX Limited 300', hp: 300, top: 105, weight: 390, style: 'luxe',
-    colors: { hull: 0x2b2f36, deck: 0xd9d5cc, accent: 0xc9a24a, seat: 0x4a3826, trim: 0x2b2f36 } },
-  { id: 'spark', kind: 'jetski', brand: 'Sea-Doo', name: 'Spark Trixx', hp: 90, top: 80, weight: 139, style: 'fun',
-    colors: { hull: 0x18b8c9, deck: 0xff7a1a, accent: 0xffd23c, seat: 0x22242a, trim: 0x18b8c9 } },
-  { id: 'gp', kind: 'jetski', brand: 'Yamaha', name: 'GP1800R SVHO', hp: 250, top: 108, weight: 338, style: 'race',
-    colors: { hull: 0x0a2e6e, deck: 0xf2f4f6, accent: 0x1a5cc9, seat: 0x14161c, trim: 0xd8232a } },
-  { id: 'fx', kind: 'jetski', brand: 'Yamaha', name: 'FX Cruiser SVHO', hp: 250, top: 105, weight: 380, style: 'luxe',
-    colors: { hull: 0x14161a, deck: 0x9aa3ad, accent: 0x2456b8, seat: 0x3c332a, trim: 0x9aa3ad } },
-  { id: 'ultra', kind: 'jetski', brand: 'Kawasaki', name: 'Ultra 310LX', hp: 310, top: 108, weight: 465, style: 'luxe',
-    colors: { hull: 0x0f130f, deck: 0x35a832, accent: 0x0f130f, seat: 0x1c1e22, trim: 0xc2c8cc } }
-];
-const PILOTES = [
-  { id: 'sonny', name: 'Sonny', skin: 0xd9a878 },
-  { id: 'rico', name: 'Rico', skin: 0x6e4a32 },
-  { id: 'gina', name: 'Gina', skin: 0xc98e62 }
-];
-const SUITS = [
-  { id: 'rose', name: 'Rose néon', c: 0xff4d7d, c2: 0x35e0e0 },
-  { id: 'turquoise', name: 'Turquoise', c: 0x1fb8c4, c2: 0xff4d7d },
-  { id: 'blanc', name: 'Blanc Miami', c: 0xe8e6df, c2: 0xd4a53c },
-  { id: 'noir', name: 'Noir nuit', c: 0x22242c, c2: 0xff4d7d }
-];
-const QUALITIES = [
-  { id: 'faible', name: 'Faible', pr: 1, segs: 288, bloom: false, shadow: 0 },
-  { id: 'moyen', name: 'Moyen', pr: 1.5, segs: 384, bloom: true, shadow: 1024 },
-  { id: 'eleve', name: 'Élevé', pr: 2, segs: 448, bloom: true, shadow: 2048 }
-];
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
 
 /* ================= MENU DOM ================= */
-function hex(c) { return '#' + c.toString(16).padStart(6, '0'); }
 function makeCards(containerId, items, group, renderFn) {
   const el = document.getElementById(containerId);
   items.forEach(item => {
@@ -65,7 +31,6 @@ function makeCards(containerId, items, group, renderFn) {
     el.appendChild(card);
   });
 }
-const JETSKIS = MODELS.filter(m => m.kind === 'jetski');
 const cardTpl = m => `
   <div class="swatch"><div style="background:${hex(m.colors.hull)}"></div><div style="background:${hex(m.colors.deck)}"></div><div style="background:${hex(m.colors.accent)}"></div></div>
   <div class="brand">${m.brand}</div><div class="name">${m.name}</div>
@@ -77,45 +42,6 @@ makeCards('cards-suit', SUITS, 'suit', s => `
   <div class="swatch"><div style="background:${hex(s.c)}"></div><div style="background:${hex(s.c2)}"></div></div>
   <div class="name">${s.name}</div>`);
 makeCards('cards-quality', QUALITIES, 'quality', q => `<div class="name">${q.name}</div>`);
-
-/* ================= VAGUES (Gerstner) =================
-   Zone côtière (< 80m de l'origine) = quasi-plat, marina protégée.
-   Rampe progressive jusqu'à 260m, puis pleine mer = houle complète. */
-const WAVES = [
-  [1.0, 0.12, 0.22, 62],
-  [0.85, -0.28, 0.18, 44],
-  [0.65, 0.60, 0.15, 33],
-  [0.45, -0.85, 0.12, 26],
-  [-0.30, 1.0, 0.10, 20],
-  [1.0, 0.55, 0.08, 16.5],
-  [0.20, 1.0, 0.06, 14],
-  [-0.70, 0.55, 0.045, 12.5]
-];
-// Grand plateau côtier calme (marina protégée) : il faut vraiment prendre le
-// large pour trouver la houle, et encore plus loin pour les très grosses vagues.
-const COAST_INNER = 130, COAST_OUTER = 640, COAST_CALM = 0.05;
-const OFFSHORE_START = 640, OFFSHORE_SPAN = 900, OFFSHORE_BOOST = 0.6;
-function seaFactor(x, z) {
-  const d = Math.hypot(x, z);
-  const t = Math.max(0, Math.min(1, (d - COAST_INNER) / (COAST_OUTER - COAST_INNER)));
-  const s = t * t * (3 - 2 * t);
-  let f = COAST_CALM + (1 - COAST_CALM) * s;
-  // Au-delà du plateau, l'amplitude continue de grossir : grosses vagues au large.
-  const far = Math.max(0, Math.min(1, (d - OFFSHORE_START) / OFFSHORE_SPAN));
-  f += far * far * OFFSHORE_BOOST;
-  return f;
-}
-function waveHeight(x, z, t) {
-  let y = 0;
-  for (let i = 0; i < WAVES.length; i++) {
-    const w = WAVES[i];
-    const k = TWO_PI / w[3];
-    const c = Math.sqrt(9.8 / k);
-    const len = Math.hypot(w[0], w[1]);
-    y += (w[2] / k) * Math.sin(k * ((w[0] / len) * x + (w[1] / len) * z - c * t));
-  }
-  return y * seaFactor(x, z);
-}
 
 /* ================= RENDU ================= */
 const canvas = document.getElementById('sea');
