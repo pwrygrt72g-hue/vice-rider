@@ -7,10 +7,10 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=23';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=23';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=23';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=23';
+import { TWO_PI, smooth01, hex } from './util.js?v=26';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=26';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=26';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=26';
 
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
 
@@ -1122,11 +1122,14 @@ function buildSki() {
   const deckM = gel(cfg.colors.deck, 0.22);
   const accM = gel(cfg.colors.accent, 0.18);
   const seatM = new THREE.MeshStandardMaterial({ color: cfg.colors.seat, roughness: 0.85 });
-  const rubber = new THREE.MeshStandardMaterial({ color: 0x121417, roughness: 0.9 });
-  const chrome = new THREE.MeshStandardMaterial({ color: 0xcfd4d8, metalness: 0.9, roughness: 0.2 });
+  const rubber = new THREE.MeshStandardMaterial({ color: 0x121417, roughness: 0.85 });
+  const gripRub = new THREE.MeshStandardMaterial({ color: 0x16181d, roughness: 0.95, metalness: 0.0 });
+  const chrome = new THREE.MeshPhysicalMaterial({ color: 0xd6dbe0, metalness: 1.0, roughness: 0.14, clearcoat: 1.0, clearcoatRoughness: 0.1, envMapIntensity: 1.2 });
+  const mirrorGlass = new THREE.MeshPhysicalMaterial({ color: 0x2a3644, metalness: 0.9, roughness: 0.06, clearcoat: 1.0, envMapIntensity: 1.4 });
   const suitM = new THREE.MeshStandardMaterial({ color: suitCfg.c, roughness: 0.75 });
-  const cuffM = new THREE.MeshStandardMaterial({ color: suitCfg.c2, roughness: 0.7 });
-  const skinM = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.65 });
+  const cuffM = new THREE.MeshStandardMaterial({ color: 0x1a1d24, roughness: 0.7 }); // bracelet néoprène sombre (plus discret que l'accent vif)
+  // Peau bronzée légèrement satinée (reflet mouillé de la course).
+  const skinM = new THREE.MeshPhysicalMaterial({ color: skinColor, roughness: 0.5, metalness: 0.0, sheen: 0.5, sheenRoughness: 0.55, sheenColor: new THREE.Color(0xffe4cc), clearcoat: 0.22, clearcoatRoughness: 0.45, envMapIntensity: 0.6 });
 
   const scaleF = cfg.id === 'spark' ? 0.88 : 1.0;
 
@@ -1209,12 +1212,25 @@ function buildSki() {
   column.position.set(0, -0.22, 0.02);
   column.rotation.x = 0.32;
   barGroup.add(column);
-  const centerPad = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.07, 0.11), rubber);
+  const centerPad = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.08, 0.12), rubber);
   centerPad.position.set(0, 0.12, 0.06);
   barGroup.add(centerPad);
-  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 1.0, 12).rotateZ(Math.PI / 2), chrome);
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 1.0, 24).rotateZ(Math.PI / 2), chrome);
   bar.position.set(0, 0.14, 0.1);
   barGroup.add(bar);
+  // Renfort central + colliers de serrage (détail réaliste du guidon)
+  const clampBlock = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.09), rubber);
+  clampBlock.position.set(0, 0.155, 0.1); barGroup.add(clampBlock);
+  // === TABLEAU DE BORD DIGITAL (façon Sea-Doo) : écran incliné vers le pilote ===
+  const dashHousing = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.155, 0.05), new THREE.MeshStandardMaterial({ color: 0x0b0d12, roughness: 0.5 }));
+  dashHousing.position.set(0, 0.225, 0.0); dashHousing.rotation.x = -0.5; barGroup.add(dashHousing);
+  // Écran incliné, décalé LE LONG DE SA NORMALE (sin/cos du tilt) pour éviter le
+  // z-fighting avec le boîtier, et double-face par sécurité d'orientation.
+  const dashScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.255, 0.12),
+    new THREE.MeshBasicMaterial({ map: gaugeTex, side: THREE.DoubleSide, toneMapped: false }));
+  dashScreen.position.set(0, 0.225 + Math.sin(0.5) * 0.028, Math.cos(0.5) * 0.028);
+  dashScreen.rotation.x = -0.5;
+  barGroup.add(dashScreen);
   // Leviers articulés : gâchette de gaz (droite) et frein (gauche), pivot au guidon
   animRefs = { throttleLever: null, brakeLever: null, rFingers: [], lFingers: [], rThumb: null };
   for (const s of [-1, 1]) {
@@ -1226,12 +1242,16 @@ function buildSki() {
     pivot.add(lever);
     barGroup.add(pivot);
     if (s > 0) animRefs.throttleLever = pivot; else animRefs.brakeLever = pivot;
-    const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.09, 0.035), deckM);
-    mirror.position.set(0.62 * s, 0.06, -0.3);
-    barGroup.add(mirror);
-    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.16, 8), rubber);
-    stalk.position.set(0.55 * s, 0.0, -0.24);
-    stalk.rotation.z = -0.7 * s;
+    // Rétroviseur : coque sombre + verre réfléchissant, incliné vers le pilote
+    const mHousing = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.085, 0.05), rubber);
+    mHousing.position.set(0.66 * s, 0.10, -0.3); mHousing.rotation.set(0.2, -0.35 * s, 0);
+    barGroup.add(mHousing);
+    const mGlass = new THREE.Mesh(new THREE.PlaneGeometry(0.13, 0.07), mirrorGlass);
+    mGlass.position.set(0.66 * s + 0.026 * s, 0.10, -0.275); mGlass.rotation.set(0.2, -0.35 * s + Math.PI, 0);
+    barGroup.add(mGlass);
+    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, 0.18, 8), rubber);
+    stalk.position.set(0.58 * s, 0.03, -0.22);
+    stalk.rotation.z = -0.6 * s;
     barGroup.add(stalk);
   }
   // Bouton de démarrage rouge sur le pavé central
@@ -1283,10 +1303,18 @@ function buildSki() {
       face.rotation.z = Math.PI / 2;
       barGroup.add(face);
     }
-    // Poignée
-    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.046, 0.22, 12).rotateZ(Math.PI / 2), rubber);
+    // Poignée caoutchouc rainurée + embout d'extrémité
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.047, 0.22, 16).rotateZ(Math.PI / 2), gripRub);
     grip.position.set(0.46 * s, 0.14, 0.1);
     barGroup.add(grip);
+    for (let r = 0; r < 5; r++) {
+      const rib = new THREE.Mesh(new THREE.TorusGeometry(0.048, 0.005, 6, 18), gripRub);
+      rib.position.set((0.40 + r * 0.03) * s, 0.14, 0.1); rib.rotation.y = Math.PI / 2;
+      barGroup.add(rib);
+    }
+    const capEnd = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.042, 0.03, 16).rotateZ(Math.PI / 2), chrome);
+    capEnd.position.set(0.565 * s, 0.14, 0.1);
+    barGroup.add(capEnd);
     /* Main réaliste enveloppant la poignée (grip: centre y0.14 z0.10, r0.046).
        Paume bombée drapée sur le dessus, 4 doigts en 3 phalanges qui suivent
        le cercle de la poignée (haut -> avant -> dessous), pouce qui verrouille
@@ -1805,17 +1833,18 @@ function fitImported(obj, opts) {
 /* ================= COMPTEUR À ROULEAUX ================= */
 function drawOdo(kmh, thr, brand, reverse) {
   if (!gctx) return;
-  gctx.fillStyle = '#110a14';
+  gctx.fillStyle = '#0a0710';
   gctx.fillRect(0, 0, 256, 160);
-  gctx.strokeStyle = reverse ? '#ff9c1a' : '#ff4d6d';
-  gctx.lineWidth = 3;
-  gctx.strokeRect(6, 6, 244, 148);
-  gctx.fillStyle = '#35e0e0';
-  gctx.font = '600 13px Menlo, monospace';
+  // Léger glow de contour néon (le tableau de bord "brille")
+  gctx.strokeStyle = reverse ? '#ffb020' : '#ff5c8a';
+  gctx.lineWidth = 4;
+  gctx.strokeRect(5, 5, 246, 150);
+  gctx.fillStyle = '#4defe0';
+  gctx.font = '700 15px Menlo, monospace';
   gctx.textAlign = 'left';
-  gctx.fillText(reverse ? 'MARCHE ARR.' : brand.toUpperCase(), 16, 24);
+  gctx.fillText(reverse ? 'REVERSE' : brand.toUpperCase(), 16, 26);
   gctx.textAlign = 'right';
-  gctx.fillText('KM/H', 240, 24);
+  gctx.fillText('KM/H', 240, 26);
   const H = 78, W = 56, y0 = 38;
   const v = Math.max(kmh, 0);
   const places = [100, 10, 1];
@@ -1833,8 +1862,8 @@ function drawOdo(kmh, thr, brand, reverse) {
     gctx.beginPath();
     gctx.rect(x, y0, W, H);
     gctx.clip();
-    gctx.fillStyle = dim ? '#3a2433' : '#ff5470';
-    gctx.font = '700 62px Menlo, monospace';
+    gctx.fillStyle = dim ? '#3a2433' : '#ff6b86';
+    gctx.font = '800 64px Menlo, monospace';
     gctx.textAlign = 'center';
     const cx = x + W / 2, cy = y0 + H / 2 + 22;
     gctx.fillText(String(d), cx, cy - frac * H);
@@ -1958,6 +1987,10 @@ function computePhys() {
 const keys = {};
 let lastY = 0, slamCd = 0, camImpact = 0;
 let plunge = 0, plungeV = 0;
+// État caméra FPV : offsets lissés des forces G (la tête/le corps réagit à
+// l'accél, aux virages, aux chocs) + suivi de la vitesse pour dériver l'accél.
+const camG = { x: 0, z: 0, pitch: 0, roll: 0, yaw: 0 };
+let camPrevSpeed = 0, camJolt = 0;
 window.__vice = { state, keys, toggleCam: () => toggleCam(), islands: palmIslands, gate, CH, DEFIS, enterDefi, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
 window.__align = (o) => { Object.assign(MODEL_RIDE, o || {}); alignRideModel(); return { ...MODEL_RIDE }; };
 window.__analyzeModel = () => {
@@ -2445,6 +2478,7 @@ function frame() {
         burstDrops(state.x, hw, state.z, 30 + Math.floor(impact * 10), 0.7 + power * 0.6, fx * state.speed, fz * state.speed);
         lensDrops(4 + Math.floor(impact / 2));
         camImpact = Math.min(impact * 0.06, 0.5);
+        camJolt = Math.min(impact * 0.5, 2.2);
         audioSplash(power);
         state.vx *= 0.88; state.vz *= 0.88; state.speed *= 0.88;
       }
@@ -2463,11 +2497,16 @@ function frame() {
     burstDrops(state.x + fx * 2.2, hBow + 0.2, state.z + fz * 2.2, 16 + Math.floor(speedF * 14), 0.5 + speedF * 0.6, fx * state.speed, fz * state.speed);
     lensDrops(2 + Math.floor(speedF * 4));
     camImpact = Math.max(camImpact, 0.12 + speedF * 0.1);
+    camJolt = Math.max(camJolt, 0.5 + speedF * 0.7);
     plungeV -= 0.8 * speedF;
     audioSplash(0.4 + speedF * 0.4);
     state.vx *= 0.985; state.vz *= 0.985; state.speed *= 0.985;
   }
-  if (speedF > 0.75 && Math.random() < dt * 1.2 && camMode === 'fpv') lensDrops(1);
+  // Embruns sur l'objectif : d'autant plus fréquents qu'on va vite et que la
+  // mer est formée (le pilote se prend les gerbes en pleine face).
+  if (camMode === 'fpv' && !state.air && speedF > 0.35 && Math.random() < dt * (2 + speedF * 6 + rough * speedF * 5)) {
+    lensDrops(1 + (Math.random() < speedF * 0.4 ? 1 : 0));
+  }
 
   // Micro-pertes de stabilité sur le clapot : petit lacet erratique + sautillement
   // vertical, proportionnels à l'agitation locale ET à la vitesse (eau calme = lisse).
@@ -2531,14 +2570,40 @@ function frame() {
 
   /* ---- Caméra ---- */
   camImpact *= Math.exp(-dt * 5);
+  camJolt *= Math.exp(-dt * 9);
   if (camMode === 'fpv') {
-    const shake = state.air ? 0 : speedF * 0.008;
+    // === CAMÉRA FPV VIVANTE ===
+    // La caméra est enfant du ski : elle hérite déjà de son cap/tangage/roulis.
+    // On AJOUTE par-dessus le ressenti humain : vibration moteur, clapot,
+    // forces G (accél/virage), coups d'impact, regard dans le virage, flottement.
+    const smoothG = 1 - Math.exp(-dt * 8);
+    // 1) Vibration : moteur (rpm) + buzz du clapot à vitesse, multi-fréquence.
+    const vib = state.air ? 0.0015 : (0.0025 + state.rpm * 0.005 + rough * speedF * 0.012);
+    const bobX = (Math.sin(t * 22.0) * 0.6 + Math.sin(t * 38.7) * 0.4) * vib;
+    const bobY = (Math.sin(t * 26.5) * 0.6 + Math.sin(t * 44.3) * 0.4) * vib + Math.sin(t * 12.0) * state.rpm * 0.003;
+    // 2) Forces G : accél recule la tête (+z=poupe), décel avance ; le virage
+    //    pousse la tête vers l'extérieur ; l'accél cabre légèrement le regard.
+    const accel = (state.speed - camPrevSpeed) / Math.max(dt, 0.001);
+    camPrevSpeed = state.speed;
+    const gLong = Math.max(-1.5, Math.min(1.5, accel * 0.06));
+    const gLat = Math.max(-1.2, Math.min(1.2, state.speed * state.yawRate * 0.045));
+    camG.z += (gLong * 0.085 - camG.z) * smoothG;
+    camG.x += (gLat * 0.05 - camG.x) * smoothG;
+    camG.pitch += (-gLong * 0.045 - camG.pitch) * smoothG;
+    camG.roll += (gLat * 0.05 - camG.roll) * smoothG;
+    camG.yaw += (-state.rudder * 0.05 - camG.yaw) * smoothG; // le regard anticipe le virage
+    // 3) En l'air : le regard suit la trajectoire (nez qui monte/descend).
+    const airPitch = state.air ? Math.max(-0.28, Math.min(0.22, -Math.atan2(state.vy, Math.max(Math.abs(state.speed), 6)) * 0.45)) : 0;
     camera.position.set(
-      CAM_BASE.x + Math.sin(t * 21) * shake,
-      CAM_BASE.y - camImpact + Math.sin(t * 27) * shake,
-      CAM_BASE.z
+      CAM_BASE.x + bobX + camG.x,
+      CAM_BASE.y + bobY - camImpact - camJolt * 0.12,
+      CAM_BASE.z + camG.z
     );
-    camera.rotation.x = -0.17 - camImpact * 0.5;
+    camera.rotation.set(
+      -0.17 - camImpact * 0.6 - camJolt * 0.18 + camG.pitch + airPitch + bobY * 0.35,
+      camG.yaw,
+      camG.roll + bobX * 0.5
+    );
   } else {
     chaseTarget.set(state.x - fx * 6.6 - rx * state.rudder * 1.2, state.y + 2.45, state.z - fz * 6.6 - rz * state.rudder * 1.2);
     camera.position.lerp(chaseTarget, 1 - Math.exp(-dt * 4.5));
