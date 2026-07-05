@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Vice Rider — Miami 1986</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0c0916; font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; }
+  #app { position: relative; width: 100%; height: 100%; }
+  canvas#sea { display: block; width: 100%; height: 100%; }
+  .mono { font-family: "SF Mono", "Menlo", monospace; }
+
+  #vignette { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 140px rgba(8,4,18,0.6); }
+
+  /* ---- HUD ---- */
+  #hud { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 22px;
+         padding: 12px 20px; background: rgba(16,12,24,0.72); border-top: 1px solid rgba(255,92,138,0.25);
+         backdrop-filter: blur(6px); }
+  .hud-block .lbl { font-size: 11px; color: #9a7f95; letter-spacing: 1px; text-transform: uppercase; }
+  .hud-block .val { font-size: 20px; font-weight: 600; color: #ffd9e4; font-family: "SF Mono", Menlo, monospace; }
+  #hud-thr-wrap { flex: 1; max-width: 170px; }
+  #hud-thr-bar { position: relative; height: 8px; background: #0e0b12; border-radius: 4px; margin-top: 5px; }
+  #hud-thr { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: #ff5c8a; border-radius: 4px; }
+  #hud-fps { position: absolute; top: 12px; right: 16px; font-size: 13px; color: #35e0e0;
+             font-family: "SF Mono", Menlo, monospace; background: rgba(16,12,24,0.6); padding: 4px 10px; border-radius: 8px; }
+  #hud-air { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 16px; font-weight: 600;
+             color: #2a0d18; background: rgba(255,220,232,0.92); padding: 7px 18px; border-radius: 999px;
+             opacity: 0; transition: opacity 0.25s; font-family: "SF Mono", Menlo, monospace; pointer-events: none; }
+  #hud button { width: 44px; height: 42px; background: #241d2e; color: #e9d8e2; border: 1px solid #3c3048;
+                border-radius: 9px; font-size: 17px; cursor: pointer; }
+  #hud button:active { transform: scale(0.95); }
+  #btn-garage { width: auto !important; padding: 0 14px; font-size: 13px !important; letter-spacing: 1px; }
+  #hint { position: absolute; top: 38%; left: 50%; transform: translate(-50%,-50%); font-size: 15px; color: #e8eef2;
+          background: rgba(10,8,18,0.75); padding: 10px 22px; border-radius: 999px; pointer-events: none;
+          transition: opacity 0.8s; white-space: nowrap; }
+  #drops { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+
+  /* ---- MENU / GARAGE ---- */
+  #menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+          justify-content: flex-start; padding: 26px 20px 20px; gap: 14px; overflow: auto;
+          background: linear-gradient(180deg, rgba(12,8,24,0.55) 0%, rgba(12,8,24,0.15) 40%, rgba(12,8,24,0.75) 100%); }
+  #title { text-align: center; }
+  #title h1 { font-size: 40px; font-weight: 800; font-style: italic; letter-spacing: 8px; color: #ff5c8a;
+              text-shadow: 0 0 24px rgba(255,92,138,0.55), 3px 3px 0 rgba(53,224,224,0.6); }
+  #title .sub { font-size: 13px; color: #35e0e0; letter-spacing: 6px; margin-top: 2px; }
+  .menu-cols { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; align-items: flex-start; max-width: 1200px; }
+  .menu-group h3 { font-size: 12px; color: #35e0e0; letter-spacing: 3px; margin-bottom: 8px; text-align: center;
+                   text-transform: uppercase; }
+  .cards { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; max-width: 460px; }
+  .card { width: 142px; background: rgba(24,18,36,0.88); border: 2px solid transparent; border-radius: 12px;
+          padding: 10px; cursor: pointer; text-align: center; transition: border-color 0.15s, transform 0.15s; }
+  .card:hover { transform: translateY(-2px); }
+  .card.sel { border-color: #ff5c8a; box-shadow: 0 0 18px rgba(255,92,138,0.35); }
+  .card .swatch { display: flex; height: 24px; border-radius: 6px; overflow: hidden; }
+  .card .swatch div { flex: 1; }
+  .card .brand { font-size: 10px; color: #35e0e0; letter-spacing: 2px; margin-top: 7px; text-transform: uppercase; }
+  .card .name { font-size: 13px; color: #f2e9ee; font-weight: 600; margin-top: 1px; }
+  .card .specs { font-size: 10.5px; color: #8a93a8; font-family: "SF Mono", Menlo, monospace; margin-top: 4px; line-height: 1.5; }
+  .card .dot { width: 30px; height: 30px; border-radius: 50%; margin: 2px auto 0; }
+  .card.small { width: 96px; }
+  #btn-ride { margin-top: 4px; background: #ff4d7d; color: #23050f; border: none; border-radius: 12px;
+              padding: 14px 60px; font-size: 18px; font-weight: 800; letter-spacing: 4px; cursor: pointer;
+              font-style: italic; box-shadow: 0 0 26px rgba(255,77,125,0.5); }
+  #btn-ride:hover { background: #ff6a92; }
+  #menu .help { font-size: 12px; color: #9aa3b5; }
+  .hidden { display: none !important; }
+
+  /* ---- Tactile / smartphone ---- */
+  canvas#sea, #hud button, #touch button { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+
+  /* Manettes tactiles : direction à GAUCHE (◄ ► côte à côte), gaz/frein à
+     DROITE (▲ au-dessus de ▼). Grosses, semi-transparentes, uniquement en jeu
+     et uniquement sur écran tactile. */
+  #touch { position: absolute; inset: 0; pointer-events: none; z-index: 6; display: none; }
+  #touch button {
+    pointer-events: auto; width: 92px; height: 92px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.26); background: rgba(18,14,28,0.28);
+    color: rgba(255,255,255,0.72); font-size: 36px; line-height: 1;
+    backdrop-filter: blur(2px);
+  }
+  #touch button:active { background: rgba(255,92,138,0.38); border-color: rgba(255,92,138,0.65); color: #fff; }
+  #t-steer { position: absolute; left: calc(18px + env(safe-area-inset-left)); bottom: calc(100px + env(safe-area-inset-bottom)); display: flex; gap: 20px; }
+  #t-thr { position: absolute; right: calc(18px + env(safe-area-inset-right)); bottom: calc(100px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 20px; }
+
+  @media (max-width: 820px), (pointer: coarse) {
+    #hud { gap: 10px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
+    #hud button { width: 48px; height: 44px; font-size: 18px; }
+    #btn-garage { font-size: 11px !important; }
+    #hud-thr-wrap { display: none; }
+    .hud-block .val { font-size: 15px; }
+    /* Les anciennes petites flèches du HUD sont remplacées par les manettes */
+    #btn-port, #btn-slow, #btn-fast, #btn-stbd { display: none; }
+    #title h1 { font-size: 30px; letter-spacing: 5px; }
+    .card { width: 118px; }
+  }
+  @media (pointer: coarse) {
+    #touch:not(.hidden) { display: block; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="sea"></canvas>
+  <div id="vignette"></div>
+  <div id="uw" style="position:absolute; inset:0; pointer-events:none; background:rgba(14,62,78,0.5); opacity:0; transition:opacity 0.18s;"></div>
+  <div id="drops"></div>
+  <div id="hud-air" class="mono">air 0.00 s</div>
+  <div id="hud-fps" class="mono">-- fps</div>
+  <div id="chal" style="position:absolute; top:14px; left:16px; width:230px; display:none;">
+    <div style="display:flex; align-items:baseline; gap:10px;">
+      <span id="chal-score" class="mono" style="font-size:20px; font-weight:600; color:#35e0e0;">0</span>
+      <span id="chal-combo" class="mono" style="font-size:13px; color:#ff5c8a;"></span>
+    </div>
+    <div id="chal-txt" style="font-size:13px; color:#ffd9e4; margin-top:4px;">Défi</div>
+    <div style="height:6px; background:rgba(20,16,26,0.7); border-radius:3px; margin-top:5px; overflow:hidden;">
+      <div id="chal-bar" style="height:100%; width:0%; background:#ff5c8a; border-radius:3px; transition:width 0.15s;"></div>
+    </div>
+  </div>
+  <div id="toast" class="mono" style="position:absolute; top:30%; left:50%; transform:translateX(-50%); font-size:18px; font-weight:600; color:#0e2a30; background:rgba(53,224,224,0.92); padding:9px 22px; border-radius:999px; opacity:0; transition:opacity 0.35s; pointer-events:none; white-space:nowrap;"></div>
+  <div id="hint" style="opacity:0;">W gaz &middot; A / D virage &middot; S frein &middot; C vue &middot; pleine vitesse sur une crête pour sauter</div>
+
+  <div id="touch" class="hidden">
+    <div id="t-steer">
+      <button id="t-left" aria-label="Gauche">◄</button>
+      <button id="t-right" aria-label="Droite">►</button>
+    </div>
+    <div id="t-thr">
+      <button id="t-fast" aria-label="Gaz">▲</button>
+      <button id="t-slow" aria-label="Frein">▼</button>
+    </div>
+  </div>
+
+  <div id="menu">
+    <div id="title">
+      <h1>VICE RIDER</h1>
+      <div class="sub">MIAMI &middot; 1986</div>
+    </div>
+    <div class="menu-cols">
+      <div class="menu-group">
+        <h3>Jetski &mdash; modèles réels</h3>
+        <div class="cards" id="cards-ski"></div>
+      </div>
+      <div class="menu-group">
+        <h3>Pilote</h3>
+        <div class="cards" id="cards-pilote"></div>
+        <h3 style="margin-top:12px;">Combinaison</h3>
+        <div class="cards" id="cards-suit"></div>
+        <h3 style="margin-top:12px;">Qualité</h3>
+        <div class="cards" id="cards-quality"></div>
+      </div>
+    </div>
+    <button id="btn-ride">RIDE</button>
+    <div class="help">W gaz &middot; A / D virage &middot; S frein &middot; C changer de vue &middot; Échap garage</div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div class="hud-block"><div class="lbl">vitesse</div><div class="val" id="hud-speed">0 km/h</div></div>
+    <div class="hud-block"><div class="lbl">cap</div><div class="val" id="hud-heading">000&deg; N</div></div>
+    <div class="hud-block" id="hud-thr-wrap">
+      <div class="lbl">gaz <span id="hud-thr-pct" style="color:#c9aebf;">0%</span></div>
+      <div id="hud-thr-bar"><div id="hud-thr"></div></div>
+    </div>
+    <div class="hud-block"><div class="lbl">record air</div><div class="val" id="hud-best">0.00 s</div></div>
+    <div style="margin-left:auto; display:flex; gap:7px;">
+      <button id="btn-garage" title="Retour au garage">GARAGE</button>
+      <button id="btn-mute" aria-label="Son">🔊</button>
+      <button id="btn-cam" aria-label="Vue" title="Changer de vue">🎥</button>
+      <button id="btn-port" aria-label="Gauche">←</button>
+      <button id="btn-slow" aria-label="Frein">↓</button>
+      <button id="btn-fast" aria-label="Gaz">↑</button>
+      <button id="btn-stbd" aria-label="Droite">→</button>
+    </div>
+  </div>
+</div>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module" src="./src/main.js?v=16"></script>
+</body>
+</html>
