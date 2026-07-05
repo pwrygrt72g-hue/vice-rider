@@ -7,10 +7,10 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=17';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=17';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=17';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=17';
+import { TWO_PI, smooth01, hex } from './util.js?v=18';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=18';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=18';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=18';
 
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
 
@@ -236,10 +236,12 @@ void main(){
   // Jacobien : quand la surface se replie sur elle-même (crête qui déferle),
   // l'aire locale s'effondre -> critère physique des moutons d'écume.
   vFold = length(cross(tangent, binormal));
-  // Coque qui pousse l'eau : creux sous la coque + vague en V devant la proue.
+  // Coque qui pousse l'eau : LÉGER creux sous la coque (déplacement) + vague
+  // en V devant la proue. ATTENTION : un creux trop profond fait "léviter" le
+  // jet au-dessus d'un cratère (bug corrigé : -1.15 -> -0.22).
   vec3 dHull = wp - uHullPos;
   float rHull = length(dHull.xz);
-  float underHull = -1.15 * exp(-rHull * rHull / 6.0);
+  float underHull = -0.22 * exp(-rHull * rHull / 4.0);
   vec2 fwd2 = normalize(uHullFwd.xz);
   vec2 rel = dHull.xz;
   float alongF = dot(rel, fwd2);
@@ -250,11 +252,14 @@ void main(){
     bowV = smoothstep(0.0, 1.4, vShape) * smoothstep(9.0, 2.0, alongF) * min(uHullSpeed / 8.0, 1.4);
     bowV *= exp(-abs(sideF) * abs(sideF) / 12.0);
   }
+  // Écume de contact : anneau qui épouse la ligne de flottaison de la coque
+  // (léger au repos, franc dès qu'on avance) -> la coque a l'air DANS l'eau.
+  float ring = exp(-(rHull - 1.15) * (rHull - 1.15) / 0.35) * (0.3 + min(uHullSpeed / 6.0, 1.0));
   float hullPush = underHull + bowV * 1.05;
   disp.y += hullPush;
   vec3 p = wp + disp;
   vNormal = normalize(cross(binormal, tangent));
-  vWorldPos = p; vHeight = disp.y; vHullPush = bowV;
+  vWorldPos = p; vHeight = disp.y; vHullPush = bowV + ring;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`,
   fragmentShader: `precision highp float;
@@ -692,11 +697,45 @@ function placeGate(dx, dz) {
 const DEFIS = [
   { t: 'Franchis 3 portes', type: 'gates', target: 3, reward: 500 },
   { t: 'Monte à 95 km/h', type: 'speed', target: 95, reward: 400 },
+  { t: 'Ramasse 6 anneaux', type: 'rings', target: 6, reward: 1000 },
   { t: "Reste 1,0 s en l'air", type: 'air', target: 1.0, reward: 700 },
+  { t: 'Drifte 3 s cumulées', type: 'drift', target: 3, reward: 800 },
   { t: 'Combo x3 aux portes', type: 'combo', target: 3, reward: 900 },
+  { t: 'Porte en moins de 12 s', type: 'sprint', target: 12, reward: 900 },
   { t: 'Franchis 5 portes', type: 'gates', target: 5, reward: 800 }
 ];
-const CH = { score: 0, combo: 0, comboTimer: 0, gatesPassed: 0, idx: 0, startGates: 0, maxAir: 0, maxCombo: 0, gateFlash: 0 };
+const CH = { score: 0, combo: 0, comboTimer: 0, gatesPassed: 0, idx: 0, startGates: 0, maxAir: 0, maxCombo: 0, gateFlash: 0, driftAcc: 0, ringsGot: 0, sprintLeft: 0 };
+
+/* ---- Mini-jeu ANNEAUX : pickups dorés flottants posés en slalom devant le joueur ---- */
+const pickups = [];
+const pickMat = new THREE.MeshStandardMaterial({ color: 0xffd23c, emissive: 0xffb400, emissiveIntensity: 1.8, roughness: 0.35, metalness: 0.4 });
+for (let i = 0; i < 6; i++) {
+  const m = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.16, 10, 26), pickMat);
+  m.rotation.x = Math.PI / 2;   // à plat sur l'eau
+  m.visible = false;
+  scene.add(m);
+  pickups.push({ m, got: false });
+}
+function placePickups() {
+  // Chapelet en léger slalom devant le joueur (45 m -> ~175 m)
+  const fx0 = -Math.sin(state.yaw), fz0 = -Math.cos(state.yaw);
+  const rx0 = Math.cos(state.yaw), rz0 = -Math.sin(state.yaw);
+  pickups.forEach((p, i) => {
+    p.got = false; p.m.visible = true;
+    const ahead = 45 + i * 26, lat = Math.sin(i * 1.25) * 15;
+    p.m.position.set(state.x + fx0 * ahead + rx0 * lat, 0, state.z + fz0 * ahead + rz0 * lat);
+  });
+}
+function hidePickups() { for (const p of pickups) { p.m.visible = false; p.got = true; } }
+/* Entrée dans un défi : remet les compteurs et prépare le terrain du mini-jeu. */
+function enterDefi(i) {
+  CH.idx = i;
+  CH.startGates = CH.gatesPassed; CH.maxAir = 0; CH.maxCombo = 0;
+  CH.driftAcc = 0; CH.ringsGot = 0;
+  const d = DEFIS[i];
+  CH.sprintLeft = d.type === 'sprint' ? d.target : 0;
+  if (d.type === 'rings') placePickups(); else hidePickups();
+}
 
 const splashes = [];
 const splashGeo = new THREE.CircleGeometry(1.4, 24).rotateX(-Math.PI / 2);
@@ -1834,7 +1873,7 @@ const state = { x: 0, z: 0, yaw: 0, speed: 0, vx: 0, vz: 0, throttle: 0, rudder:
 let PHYS = { max: 30, thrust: 8, dragLin: 0.1, dragQuad: 0.008, dragLatQ: 0.06, gripLo: 3.4, gripHi: 1.1, planeLo: 8, planeHi: 18, steerBase: 0.12, steerThrust: 1.0, turn: 2.0 };
 // Hauteur d'assiette au repos (origine du ski au-dessus de la surface). ↑ = le
 // jet monte / a l'air de flotter ; ↓ = il s'enfonce. Réglable à chaud : window.__vice.setDraft(v).
-let DRAFT_REST = 0.54;
+let DRAFT_REST = 0.46;
 function computePhys() {
   const cfg = MODELS.find(m => m.id === sel.ski);
   const vmax = cfg.top / 3.6;                         // vitesse de pointe (m/s)
@@ -1863,7 +1902,7 @@ function computePhys() {
 const keys = {};
 let lastY = 0, slamCd = 0, camImpact = 0;
 let plunge = 0, plungeV = 0;
-window.__vice = { state, keys, toggleCam: () => toggleCam(), islands: palmIslands, gate, CH, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
+window.__vice = { state, keys, toggleCam: () => toggleCam(), islands: palmIslands, gate, CH, DEFIS, enterDefi, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
 window.__align = (o) => { Object.assign(MODEL_RIDE, o || {}); alignRideModel(); return { ...MODEL_RIDE }; };
 window.__analyzeModel = () => {
   if (!realModel) return 'no model';
@@ -1992,7 +2031,7 @@ function startRide() {
   if (audio && audio.ctx.state === 'suspended') audio.ctx.resume();
   applyQuality();
   CH.score = 0; CH.combo = 0; CH.comboTimer = 0; CH.gatesPassed = 0;
-  CH.idx = 0; CH.startGates = 0; CH.maxAir = 0; CH.maxCombo = 0;
+  enterDefi(0);
   placeGate(0, -1);
   gate.visible = true;
   chalPanel.style.display = 'block';
@@ -2010,6 +2049,7 @@ function toGarage() {
   touchPad.classList.add('hidden');
   chalPanel.style.display = 'none';
   gate.visible = false;
+  hidePickups();
   uwEl.style.opacity = '0';
   setSeaLifeVisible(false);
   if (audio) { audio.eGain.gain.value = 0; audio.nGain.gain.value = 0; }
@@ -2571,23 +2611,55 @@ function frame() {
   }
   if (CH.comboTimer > 0) { CH.comboTimer -= dt; if (CH.comboTimer <= 0) CH.combo = 0; }
   if (state.air) CH.maxAir = Math.max(CH.maxAir, state.airTime);
-  // Progression du défi courant
   const defi = DEFIS[CH.idx];
+  /* -- Mini-jeu ANNEAUX : flottent sur l'eau, tournent, se ramassent au passage -- */
+  if (defi.type === 'rings') {
+    for (const p of pickups) {
+      if (p.got) continue;
+      p.m.position.y = waveHeight(p.m.position.x, p.m.position.z, t) + 0.25;
+      p.m.rotation.z = t * 1.8;
+      if (Math.hypot(state.x - p.m.position.x, state.z - p.m.position.z) < 2.8) {
+        p.got = true; p.m.visible = false;
+        CH.ringsGot++; CH.score += 50;
+        burstDrops(p.m.position.x, p.m.position.y, p.m.position.z, 14, 0.8, fx * state.speed, fz * state.speed);
+        audioSplash(0.45);
+        toast('ANNEAU ' + CH.ringsGot + '/' + defi.target);
+      }
+    }
+  }
+  /* -- Mini-jeu DRIFT : cumule le temps passé en travers à vitesse -- */
+  if (defi.type === 'drift' && !state.air && Math.abs(vLat) > 2.5 && spd > 8) CH.driftAcc += dt;
+  /* -- Mini-jeu SPRINT : la porte contre la montre (échec = on remet une porte) -- */
+  if (defi.type === 'sprint') {
+    CH.sprintLeft -= dt;
+    if (CH.sprintLeft <= 0) {
+      toast('TROP TARD — nouvelle porte');
+      CH.sprintLeft = defi.target;
+      CH.startGates = CH.gatesPassed;
+      placeGate(fx, fz);
+    }
+  }
+  // Progression du défi courant
   let prog = 0;
   if (defi.type === 'gates') prog = (CH.gatesPassed - CH.startGates) / defi.target;
   else if (defi.type === 'speed') prog = (state.speed * 3.6) / defi.target;
   else if (defi.type === 'air') prog = CH.maxAir / defi.target;
   else if (defi.type === 'combo') prog = CH.maxCombo / defi.target;
+  else if (defi.type === 'rings') prog = CH.ringsGot / defi.target;
+  else if (defi.type === 'drift') prog = CH.driftAcc / defi.target;
+  else if (defi.type === 'sprint') prog = (CH.gatesPassed - CH.startGates) >= 1 ? 1 : 0;
   if (prog >= 1) {
     CH.score += defi.reward;
     toast('DÉFI RÉUSSI  +' + defi.reward);
-    CH.idx = (CH.idx + 1) % DEFIS.length;
-    CH.startGates = CH.gatesPassed; CH.maxAir = 0; CH.maxCombo = 0;
+    enterDefi((CH.idx + 1) % DEFIS.length);
   }
   chalScore.textContent = Math.round(CH.score).toLocaleString('fr-FR');
   chalCombo.textContent = CH.combo > 1 ? 'COMBO x' + CH.combo : '';
-  chalTxt.textContent = DEFIS[CH.idx].t;
-  chalBar.style.width = Math.min(prog * 100, 100) + '%';
+  chalTxt.textContent = DEFIS[CH.idx].t + (DEFIS[CH.idx].type === 'sprint' ? '  ·  ' + Math.max(0, CH.sprintLeft).toFixed(1) + ' s' : '');
+  // Pour le sprint, la barre montre le TEMPS restant (plus lisible qu'une progression)
+  chalBar.style.width = (DEFIS[CH.idx].type === 'sprint'
+    ? Math.max(0, CH.sprintLeft / DEFIS[CH.idx].target) * 100
+    : Math.min(prog * 100, 100)) + '%';
 
   /* ---- Audio ---- */
   if (audio) {
