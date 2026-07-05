@@ -7,10 +7,10 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=18';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=18';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=18';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=18';
+import { TWO_PI, smooth01, hex } from './util.js?v=22';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=22';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=22';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=22';
 
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
 
@@ -236,30 +236,37 @@ void main(){
   // Jacobien : quand la surface se replie sur elle-même (crête qui déferle),
   // l'aire locale s'effondre -> critère physique des moutons d'écume.
   vFold = length(cross(tangent, binormal));
-  // Coque qui pousse l'eau : LÉGER creux sous la coque (déplacement) + vague
-  // en V devant la proue. ATTENTION : un creux trop profond fait "léviter" le
-  // jet au-dessus d'un cratère (bug corrigé : -1.15 -> -0.22).
+  // === Interaction coque/eau ===
+  // LEÇON : la grille océan a ~8 m entre sommets -> toute déformation
+  // GÉOMÉTRIQUE plus fine (cuvette 2 m, bourrelet 0.4 m) est irrésolvable
+  // (l'ancien "cratère" venait d'un seul sommet tiré vers le bas puis
+  // interpolé sur 16 m). On ne déplace la géométrie que pour la vague en V
+  // de proue (échelle ~9 m, résolvable). Le contact fin coque/eau est rendu
+  // par : (1) le halo d'eau churnée ci-dessous, calculé AU FRAGMENT
+  // (per-pixel, indépendant de la grille), (2) un anneau d'écume mesh collé
+  // à la ligne de flottaison côté JS.
   vec3 dHull = wp - uHullPos;
-  float rHull = length(dHull.xz);
-  float underHull = -0.22 * exp(-rHull * rHull / 4.0);
   vec2 fwd2 = normalize(uHullFwd.xz);
   vec2 rel = dHull.xz;
   float alongF = dot(rel, fwd2);
   float sideF = rel.x * fwd2.y - rel.y * fwd2.x;
+  float eD = sqrt((alongF * alongF) / 4.84 + sideF * sideF);
+  float speedK = min(uHullSpeed / 12.0, 1.0);
   float bowV = 0.0;
   if (uHullSpeed > 0.3) {
     float vShape = alongF * 0.55 - abs(sideF);
     bowV = smoothstep(0.0, 1.4, vShape) * smoothstep(9.0, 2.0, alongF) * min(uHullSpeed / 8.0, 1.4);
     bowV *= exp(-abs(sideF) * abs(sideF) / 12.0);
   }
-  // Écume de contact : anneau qui épouse la ligne de flottaison de la coque
-  // (léger au repos, franc dès qu'on avance) -> la coque a l'air DANS l'eau.
-  float ring = exp(-(rHull - 1.15) * (rHull - 1.15) / 0.35) * (0.3 + min(uHullSpeed / 6.0, 1.0));
-  float hullPush = underHull + bowV * 1.05;
+  // Halo d'eau churnée autour de la coque (même au repos : le jet "trempe").
+  // Falloff LARGE (~6 m) exprès : plus étroit que le pas de grille (8 m), le
+  // halo "popperait" selon la position du ski entre les sommets.
+  float contactFoam = exp(-eD * eD * 0.08) * (0.7 + 0.7 * speedK);
+  float hullPush = bowV * 1.05;
   disp.y += hullPush;
   vec3 p = wp + disp;
   vNormal = normalize(cross(binormal, tangent));
-  vWorldPos = p; vHeight = disp.y; vHullPush = bowV + ring;
+  vWorldPos = p; vHeight = disp.y; vHullPush = bowV + contactFoam;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`,
   fragmentShader: `precision highp float;
@@ -1004,10 +1011,34 @@ const numberTex = (() => {
   return t;
 })();
 
+// Texture d'anneau d'écume de contact : donut blanc rongé de trous, centre
+// transparent (la coque passe au travers), bord externe fondu.
+const contactTex = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 256;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(128, 128, 40, 128, 128, 126);
+  g.addColorStop(0.0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.30, 'rgba(255,255,255,0.9)');
+  g.addColorStop(0.55, 'rgba(245,250,252,0.55)');
+  g.addColorStop(1.0, 'rgba(240,246,250,0)');
+  c.fillStyle = g; c.fillRect(0, 0, 256, 256);
+  c.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 40; i++) {
+    c.beginPath();
+    c.arc(20 + Math.random() * 216, 20 + Math.random() * 216, 3 + Math.random() * 9, 0, TWO_PI);
+    c.fillStyle = 'rgba(0,0,0,' + (0.2 + Math.random() * 0.4) + ')';
+    c.fill();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+})();
+
 const ski = new THREE.Group();
 ski.rotation.order = 'YXZ';
 scene.add(ski);
-let barGroup = null, sprays = [], wakes = [], sternWash = null, riderBody = null, animRefs = null;
+let barGroup = null, sprays = [], wakes = [], sternWash = null, contactRing = null, riderBody = null, animRefs = null;
 let realModel = null, realHullMesh = null, realDeckMesh = null, realRiderGroup = null;
 let realSuitMats = [];
 function updateRealModelColors() {
@@ -1361,7 +1392,21 @@ function buildSki() {
     ski.add(sp);
     sprays.push(sp);
   }
-  sternWash = null;
+  // Bouillon de poupe : patch d'écume qui bout juste derrière le tableau
+  // arrière (un vrai jet ne montre JAMAIS le dessous de son tableau à l'eau).
+  sternWash = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 2.8).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, opacity: 0, depthWrite: false }));
+  sternWash.position.set(0, 0.08, 2.4);
+  ski.add(sternWash);
+  // Anneau d'écume de contact : collé à la ligne de flottaison chaque frame,
+  // c'est LUI qui assoit visuellement la coque dans l'eau (résolution
+  // indépendante de la grille océan, contrairement au shader).
+  contactRing = new THREE.Mesh(
+    new THREE.PlaneGeometry(5.6, 7.4).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, opacity: 0.7, depthWrite: false })
+  );
+  contactRing.position.set(0, 0.1, 0.15);
+  ski.add(contactRing);
   if (realModel) { ski.add(realModel); alignRideModel(); refreshModelMode(); }
 }
 function rebuildSki() {
@@ -1392,7 +1437,7 @@ function refreshModelMode() {
   ski.children.forEach(c => {
     // barGroup (bras + mains + guidon) reste géré à part : c'est le cockpit
     // visible en vue 1re personne, on ne le force pas invisible ici.
-    if (c === camera || c === realModel || c === barGroup || sprays.includes(c) || wakes.includes(c) || c === sternWash) return;
+    if (c === camera || c === realModel || c === barGroup || c === contactRing || sprays.includes(c) || wakes.includes(c) || c === sternWash) return;
     c.visible = false;
   });
   realModel.visible = true;
@@ -1873,7 +1918,10 @@ const state = { x: 0, z: 0, yaw: 0, speed: 0, vx: 0, vz: 0, throttle: 0, rudder:
 let PHYS = { max: 30, thrust: 8, dragLin: 0.1, dragQuad: 0.008, dragLatQ: 0.06, gripLo: 3.4, gripHi: 1.1, planeLo: 8, planeHi: 18, steerBase: 0.12, steerThrust: 1.0, turn: 2.0 };
 // Hauteur d'assiette au repos (origine du ski au-dessus de la surface). ↑ = le
 // jet monte / a l'air de flotter ; ↓ = il s'enfonce. Réglable à chaud : window.__vice.setDraft(v).
-let DRAFT_REST = 0.46;
+// Calé pour que le bas de coque (-0.79 local) s'asseye AU FOND de la cuvette
+// que le shader creuse sous le jet (-0.5 au repos) : bas à hw-0.45, juste au
+// ras du fond de cuvette, bourrelet +0.3 qui remonte sur les flancs.
+let DRAFT_REST = 0.34;
 function computePhys() {
   const cfg = MODELS.find(m => m.id === sel.ski);
   const vmax = cfg.top / 3.6;                         // vitesse de pointe (m/s)
@@ -2181,6 +2229,11 @@ function frame() {
     const hw = waveHeight(0, 0, t);
     ski.visible = true;
     ski.position.set(0, hw * 0.4, 0);
+    if (contactRing) {
+      contactRing.visible = true;
+      contactRing.position.y = hw - ski.position.y + 0.05;
+      contactRing.material.opacity = 0.45 + 0.08 * Math.sin(t * 2.2);
+    }
     if (!window.__camFreeze) {
       ski.rotation.y = t * 0.3;
       ski.rotation.x = Math.sin(t * 0.7) * 0.02;
@@ -2193,6 +2246,12 @@ function frame() {
     }
     ocean.position.set(0, 0, 0);
     sky.position.set(0, 0, 0);
+    // La cuvette + bourrelet doivent rester SOUS le jet exposé au garage
+    // (sinon, au retour d'une session, ils restent au large -> jet posé sur
+    // une eau rigide, exactement le look "au-dessus de l'eau").
+    oceanUniforms.uHullPos.value.set(0, ski.position.y, 0);
+    oceanUniforms.uHullFwd.value.set(0, 0, -1);
+    oceanUniforms.uHullSpeed.value = 0;
     sun.position.copy(sunDir).multiplyScalar(40);
     sun.target.position.set(0, 0, 0);
     if (filmPass) filmPass.uniforms.uTime.value = t;
@@ -2329,23 +2388,33 @@ function frame() {
   // du ski. Pour que la ligne de flottaison tombe sur le tiers/moitié bas de la
   // coque (assis DANS l'eau, pas au-dessus), l'origine doit être ~0.54 AU-DESSUS
   // de la surface. Au planage la coque déjauge encore un peu (tirant réduit).
-  const draft = DRAFT_REST + planing * 0.20;
+  // Au planage la coque déjauge ET la cuvette du shader s'estompe : les deux
+  // remontent ensemble (+0.34 ici, cuvette -55% côté GPU).
+  const draft = DRAFT_REST + planing * 0.34;
   const waterline = hw + draft;
   // Agitation locale de la mer : calme près de la côte, formée au large.
   const rough = Math.min(1.5, seaFactor(state.x, state.z));
   if (!state.air) {
-    // Ressort mou : la coque garde son inertie sous l'eau après un choc,
-    // puis remonte progressivement à la ligne de flottaison.
-    plungeV += (-plunge * 22 - plungeV * 4.5) * dt;
+    // Ressort MOU (eau "souple") : la coque s'enfonce franchement sous un choc
+    // et la flottabilité la ramène LENTEMENT — c'est l'illusion de poids.
+    // Raideur 11 (~0.53 s de période), amortissement 3.2 (rebond visible).
+    plungeV += (-plunge * 11 - plungeV * 3.2) * dt;
     plunge += plungeV * dt;
     plunge = Math.max(-2.6, Math.min(0.15, plunge));
     const newY = waterline + plunge;
     state.vy = (newY - lastY) / dt;
     state.y = newY;
-    if (state.vy > 2.5 && state.speed > 13 && plunge > -0.15) {
-      state.air = true;
-      state.airTime = 0;
-      state.vy = Math.min(state.vy * 1.35, 7.5);
+    // DÉCOLLAGE : seulement si l'eau SE DÉROBE devant la proue (sortie de
+    // crête), pas à chaque oscillation. L'ancien seuil (vy>2.5 seul)
+    // confondait la vitesse de suivi des vagues avec un saut : le jet passait
+    // sa vie en micro-vols -> LE bug "il flotte au-dessus de l'eau".
+    if (state.vy > 3.4 && state.speed > 14 && plunge > -0.15) {
+      const hbow = waveHeight(state.x + fx * 2.2, state.z + fz * 2.2, t);
+      if (hbow - state.y < -0.35) {
+        state.air = true;
+        state.airTime = 0;
+        state.vy = Math.min(state.vy * 1.25, 7.0);
+      }
     }
   } else {
     state.vy -= 9.8 * dt;
@@ -2487,11 +2556,25 @@ function frame() {
     sp.material.opacity = state.air ? 0 : (0.15 * speedF + 0.55 * planing) * (0.6 + 0.4 * Math.sin(t * 14 + sp.position.x * 9));
     sp.scale.set(1 + planing * 0.5, 1 + speedF * 1.6 + planing * 0.6, 1);
   }
+  // Anneau d'écume : collé à la hauteur d'eau LOCALE (pas à la coque) -> il
+  // marque la ligne de flottaison même quand la coque plonge ou déjauge.
+  if (contactRing) {
+    contactRing.visible = !state.air;
+    contactRing.position.y = hw - state.y + 0.05;
+    contactRing.material.opacity = (0.35 + 0.3 * Math.min(state.rpm + speedF, 1)) * (0.8 + 0.2 * Math.sin(t * 6.3));
+    const cs = 1 + speedF * 0.3 + Math.sin(t * 4.1) * 0.05;
+    contactRing.scale.set(cs, 1, cs);
+    contactRing.rotation.y = Math.sin(t * 0.7) * 0.25;
+  }
   for (const wk of wakes) {
     wk.material.opacity = state.air ? 0 : speedF * 0.42 * (0.75 + 0.25 * Math.sin(t * 6 + wk.position.x * 5));
     wk.scale.set(1 + speedF * 0.6, 1, 1 + speedF * 0.8);
   }
-  if (sternWash) sternWash.material.opacity = state.air ? 0 : Math.min(state.speed / 8, 1) * 0.5;
+  if (sternWash) {
+    // Bout dès que la turbine tourne, collé à la flottaison comme l'anneau
+    sternWash.position.y = hw - state.y + 0.07;
+    sternWash.material.opacity = state.air ? 0 : (0.25 * state.rpm + Math.min(Math.abs(state.speed) / 8, 1) * 0.45) * (0.8 + 0.2 * Math.sin(t * 11));
+  }
   for (const s of splashes) {
     s.age += dt;
     const life = 0.7;
