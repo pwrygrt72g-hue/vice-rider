@@ -32,17 +32,69 @@ vec3 envSample(sampler2D tex, vec3 d, float rot){
   return texture2D(tex, vec2(u, v)).rgb;
 }`;
 
-/** Grain argentique + vignette — dernière passe du composer (look cinéma 80s). */
+/** Passe "caméra embarquée" : flou de vitesse radial + aberration chromatique +
+    distorsion barrel (grand-angle GoPro) + éblouissement solaire + grain +
+    vignette. uSpeed 0..1 (vitesse), uSun = position écran du soleil (xy en 0..1,
+    z<0 si derrière), uWet 0..1 (objectif mouillé). */
 export const FilmShader = {
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 } },
+  uniforms: {
+    tDiffuse: { value: null }, uTime: { value: 0 }, uSpeed: { value: 0 },
+    uSun: { value: [0.5, 0.5, -1] }, uWet: { value: 0 }, uAspect: { value: 1.78 }
+  },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `varying vec2 vUv; uniform sampler2D tDiffuse; uniform float uTime;
+  fragmentShader: `precision highp float;
+varying vec2 vUv; uniform sampler2D tDiffuse; uniform float uTime; uniform float uSpeed;
+uniform vec3 uSun; uniform float uWet; uniform float uAspect;
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 void main(){
-  vec4 c = texture2D(tDiffuse, vUv);
-  float g = (hash(vUv * vec2(1920.0, 1080.0) + mod(uTime, 10.0) * 60.0) - 0.5) * 0.035;
-  c.rgb += g;
-  float d = distance(vUv, vec2(0.5));
-  c.rgb *= 1.0 - smoothstep(0.5, 0.95, d) * 0.32;
-  gl_FragColor = c;
+  vec2 uv = vUv;
+  vec2 toC = uv - 0.5;
+  float r2 = dot(toC, toC);
+  // 1) Distorsion barrel légère (grand-angle) : pousse les bords vers l'extérieur.
+  float barrel = 1.0 + r2 * (0.08 + uSpeed * 0.10);
+  vec2 duv = 0.5 + toC * barrel;
+  // 2) Flou de vitesse RADIAL : on échantillonne le long du rayon (centre->bord),
+  //    d'autant plus étalé qu'on va vite et qu'on est loin du centre.
+  float edge = smoothstep(0.02, 0.5, r2);
+  float blurAmt = uSpeed * edge * 0.055;
+  vec3 col = vec3(0.0);
+  float wsum = 0.0;
+  for (int i = 0; i < 6; i++) {
+    float f = float(i) / 5.0;
+    float w = 1.0 - f * 0.5;
+    vec2 s = duv - toC * blurAmt * f;
+    // 3) Aberration chromatique : décalage R/B croissant vers les bords + vitesse.
+    float ca = (0.0016 + uSpeed * 0.0035) * (0.3 + edge);
+    col.r += texture2D(tDiffuse, s + toC * ca).r * w;
+    col.g += texture2D(tDiffuse, s).g * w;
+    col.b += texture2D(tDiffuse, s - toC * ca).b * w;
+    wsum += w;
+  }
+  col /= wsum;
+  // 4) Éblouissement solaire : halo + stries quand le soleil est à l'écran.
+  if (uSun.z > 0.0) {
+    vec2 sp = uSun.xy; sp.x = (sp.x - 0.5) * uAspect + 0.5;
+    vec2 pp = vec2((uv.x - 0.5) * uAspect + 0.5, uv.y);
+    float ds = distance(pp, sp);
+    float glow = exp(-ds * ds * 12.0);
+    float streak = pow(max(0.0, 1.0 - abs((pp.x - sp.x)) * 8.0), 3.0) * exp(-abs(pp.y - sp.y) * 5.0);
+    col += (vec3(1.0, 0.85, 0.6) * glow * 0.34 + vec3(1.0, 0.7, 0.5) * streak * 0.16) * smoothstep(0.0, 0.15, uSun.z);
+    // Petits fantômes d'objectif le long de l'axe soleil-centre
+    vec2 dir = (0.5 - sp);
+    for (int k = 1; k <= 3; k++) {
+      vec2 gp = sp + dir * (float(k) * 0.35);
+      float gd = distance(pp, vec2((gp.x - 0.5), gp.y) + 0.5);
+      col += vec3(0.6, 0.75, 1.0) * exp(-gd * gd * 60.0) * 0.12;
+    }
+  }
+  // 5) Objectif mouillé : ondulation légère qui distord + éclat diffus.
+  if (uWet > 0.01) {
+    float w = sin(uv.y * 60.0 + uTime * 3.0) * sin(uv.x * 45.0 - uTime * 2.0);
+    col += w * uWet * 0.022;
+  }
+  // 6) Grain argentique
+  col += (hash(uv * vec2(1920.0, 1080.0) + mod(uTime, 10.0) * 60.0) - 0.5) * 0.032;
+  // 7) Vignette
+  col *= 1.0 - smoothstep(0.45, 0.95, sqrt(r2)) * (0.34 + uSpeed * 0.12);
+  gl_FragColor = vec4(col, 1.0);
 }` };

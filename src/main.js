@@ -7,10 +7,10 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=26';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=26';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=26';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=26';
+import { TWO_PI, smooth01, hex } from './util.js?v=28';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=28';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=28';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=28';
 
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
 
@@ -1991,6 +1991,24 @@ let plunge = 0, plungeV = 0;
 // l'accél, aux virages, aux chocs) + suivi de la vitesse pour dériver l'accél.
 const camG = { x: 0, z: 0, pitch: 0, roll: 0, yaw: 0 };
 let camPrevSpeed = 0, camJolt = 0;
+// Objectif mouillé (0..1) : monte aux gerbes/impacts, sèche progressivement.
+let lensWet = 0;
+const _sunProj = new THREE.Vector3(), _camDir = new THREE.Vector3();
+function updateFilm(t, sf, wet) {
+  if (!filmPass) return;
+  const u = filmPass.uniforms;
+  u.uTime.value = t;
+  u.uSpeed.value = sf;
+  u.uWet.value = wet;
+  u.uAspect.value = window.innerWidth / Math.max(1, window.innerHeight);
+  // Position ÉCRAN du soleil : on projette un point lointain dans sa direction ;
+  // z = cap caméra · direction soleil (>0 = soleil devant l'objectif).
+  camera.getWorldDirection(_camDir);
+  _sunProj.copy(camera.position).addScaledVector(sunDir, 3000).project(camera);
+  u.uSun.value[0] = _sunProj.x * 0.5 + 0.5;
+  u.uSun.value[1] = _sunProj.y * 0.5 + 0.5;
+  u.uSun.value[2] = _camDir.dot(sunDir);
+}
 window.__vice = { state, keys, toggleCam: () => toggleCam(), islands: palmIslands, gate, CH, DEFIS, enterDefi, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
 window.__align = (o) => { Object.assign(MODEL_RIDE, o || {}); alignRideModel(); return { ...MODEL_RIDE }; };
 window.__analyzeModel = () => {
@@ -2295,7 +2313,7 @@ function frame() {
     oceanUniforms.uHullSpeed.value = 0;
     sun.position.copy(sunDir).multiplyScalar(40);
     sun.target.position.set(0, 0, 0);
-    if (filmPass) filmPass.uniforms.uTime.value = t;
+    updateFilm(t, 0, 0);
     composer.render();
     return;
   }
@@ -2852,7 +2870,10 @@ function frame() {
     hudAir.style.opacity = '0';
   }
 
-  if (filmPass) filmPass.uniforms.uTime.value = t;
-    composer.render();
+  // Objectif mouillé : sèche en continu, se remouille à vitesse sur mer formée
+  // et se prend une giclée aux impacts (camJolt). Plein effet en FPV.
+  lensWet = Math.min(1, Math.max(0, lensWet - dt * 0.4) + camJolt * 0.14 + (state.air ? 0 : speedF * rough * dt * 0.7));
+  updateFilm(t, speedF, camMode === 'fpv' ? lensWet : lensWet * 0.4);
+  composer.render();
 }
 requestAnimationFrame(frame);
