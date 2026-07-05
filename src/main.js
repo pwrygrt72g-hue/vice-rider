@@ -1993,7 +1993,7 @@ window.__analyzeModel = () => {
     vertCount: pos.count
   };
 };
-window.__debug = { scene, camera, THREE, ski, realHullMesh: () => realHullMesh, realDeckMesh: () => realDeckMesh, realRiderGroup: () => realRiderGroup };
+window.__debug = { scene, camera, THREE, ski, realHullMesh: () => realHullMesh, realDeckMesh: () => realDeckMesh, realRiderGroup: () => realRiderGroup, tick: () => frame() };
 window.__debug.wh = (x, z) => waveHeight(x || 0, z || 0, simTime);
 window.__debug.rideGeom = () => {
   // Bas de coque exprimé dans le repère LOCAL du ski (indépendant de ski.position.y).
