@@ -7,10 +7,10 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=22';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=22';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=22';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=22';
+import { TWO_PI, smooth01, hex } from './util.js?v=23';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=23';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=23';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=23';
 
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
 
@@ -258,20 +258,19 @@ void main(){
     bowV = smoothstep(0.0, 1.4, vShape) * smoothstep(9.0, 2.0, alongF) * min(uHullSpeed / 8.0, 1.4);
     bowV *= exp(-abs(sideF) * abs(sideF) / 12.0);
   }
-  // Halo d'eau churnée autour de la coque (même au repos : le jet "trempe").
-  // Falloff LARGE (~6 m) exprès : plus étroit que le pas de grille (8 m), le
-  // halo "popperait" selon la position du ski entre les sommets.
-  float contactFoam = exp(-eD * eD * 0.08) * (0.7 + 0.7 * speedK);
+  // (Le halo de contact coque/eau est calculé PAR PIXEL dans le fragment
+  // shader — indépendant de la grille, donc petit et net, sans popping.)
   float hullPush = bowV * 1.05;
   disp.y += hullPush;
   vec3 p = wp + disp;
   vNormal = normalize(cross(binormal, tangent));
-  vWorldPos = p; vHeight = disp.y; vHullPush = bowV + contactFoam;
+  vWorldPos = p; vHeight = disp.y; vHullPush = bowV;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`,
   fragmentShader: `precision highp float;
 uniform vec3 uSunDir; uniform vec3 uDeepColor; uniform vec3 uShallowColor; uniform vec3 uFogColor; uniform float uTime;
 uniform sampler2D uNormalMap; uniform sampler2D uEnvTex; uniform float uEnvRot; uniform float uUseEnv;
+uniform vec3 uHullPos; uniform vec3 uHullFwd; uniform float uHullSpeed;
 varying vec3 vNormal; varying vec3 vWorldPos; varying float vHeight; varying float vHullPush; varying float vFold;
 ${SKY_FUNC}
 ${ENV_FUNC}
@@ -306,7 +305,16 @@ void main(){
   float slopeFoam = smoothstep(0.16, 0.4, steep) * smoothstep(0.2, 1.4, vHeight);
   float jacFoam = smoothstep(0.72, 0.42, vFold) * (0.6 + 0.4 * mottling);
   float bowFoam = smoothstep(0.15, 0.7, vHullPush) * (0.75 + 0.25 * mottling);
-  float foam = clamp(crestFoam * 0.6 + slopeFoam * 0.5 + jacFoam * 1.2 + bowFoam * 1.4, 0.0, 1.0) * (0.7 + 0.3 * mottling);
+  // Halo de contact coque/eau PER-PIXEL : petite ellipse d'eau churnée qui
+  // épouse la coque (~1 m autour), bords rongés par le bruit. Précis quel que
+  // soit le pas de la grille (contrairement à un calcul au sommet).
+  vec2 relH = vWorldPos.xz - uHullPos.xz;
+  vec2 fwdH = normalize(uHullFwd.xz);
+  float alongH = dot(relH, fwdH);
+  float sideH = relH.x * fwdH.y - relH.y * fwdH.x;
+  float eDH = sqrt((alongH * alongH) / 4.84 + sideH * sideH);
+  float hullFoam = exp(-eDH * eDH * 0.9) * (0.5 + 0.6 * min(uHullSpeed / 12.0, 1.0)) * (0.55 + 0.45 * mottling);
+  float foam = clamp(crestFoam * 0.6 + slopeFoam * 0.5 + jacFoam * 1.2 + bowFoam * 1.4 + hullFoam * 1.15, 0.0, 1.0) * (0.7 + 0.3 * mottling);
   col = mix(col, vec3(0.96, 0.92, 0.92), foam * 0.9);
   float dist = length(cameraPosition - vWorldPos);
   col = mix(col, uFogColor, smoothstep(250.0, 1500.0, dist));
@@ -1402,7 +1410,7 @@ function buildSki() {
   // c'est LUI qui assoit visuellement la coque dans l'eau (résolution
   // indépendante de la grille océan, contrairement au shader).
   contactRing = new THREE.Mesh(
-    new THREE.PlaneGeometry(5.6, 7.4).rotateX(-Math.PI / 2),
+    new THREE.PlaneGeometry(4.4, 5.8).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, opacity: 0.7, depthWrite: false })
   );
   contactRing.position.set(0, 0.1, 0.15);
@@ -2561,7 +2569,7 @@ function frame() {
   if (contactRing) {
     contactRing.visible = !state.air;
     contactRing.position.y = hw - state.y + 0.05;
-    contactRing.material.opacity = (0.35 + 0.3 * Math.min(state.rpm + speedF, 1)) * (0.8 + 0.2 * Math.sin(t * 6.3));
+    contactRing.material.opacity = (0.26 + 0.22 * Math.min(state.rpm + speedF, 1)) * (0.8 + 0.2 * Math.sin(t * 6.3));
     const cs = 1 + speedF * 0.3 + Math.sin(t * 4.1) * 0.05;
     contactRing.scale.set(cs, 1, cs);
     contactRing.rotation.y = Math.sin(t * 0.7) * 0.25;
