@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=33';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=33';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=33';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=33';
+import { TWO_PI, smooth01, hex } from './util.js?v=34';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=34';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=34';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=34';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v33 · HUD compteur neon';
+const BUILD = 'v34 · eau+pilote vivants';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -354,8 +354,15 @@ void main(){
   float alongH = dot(relH, fwdH);
   float sideH = relH.x * fwdH.y - relH.y * fwdH.x;
   float eDH = sqrt((alongH * alongH) / 4.84 + sideH * sideH);
-  float hullFoam = exp(-eDH * eDH * 0.9) * (0.5 + 0.6 * min(uHullSpeed / 12.0, 1.0)) * (0.55 + 0.45 * mottling);
-  float foam = clamp(crestFoam * 0.6 + slopeFoam * 0.5 + jacFoam * 1.2 + bowFoam * 1.4 + hullFoam * 1.15, 0.0, 1.0) * (0.7 + 0.3 * mottling);
+  // Halo de contact TOUJOURS présent (la coque brasse l'eau même à l'arrêt) +
+  // traînée d'écume qui s'évase derrière (sillage en trompette qui grandit avec
+  // la vitesse). Rendu 100% par-pixel -> net quelle que soit la grille.
+  float contact = exp(-eDH * eDH * 0.6) * (0.85 + 0.75 * min(uHullSpeed / 10.0, 1.0));
+  float behind = max(0.0, -alongH);
+  float halfW = 0.9 + 0.16 * behind;
+  float wakeTrail = exp(-(sideH * sideH) / (halfW * halfW)) * smoothstep(34.0, 1.0, behind) * min(uHullSpeed / 5.0, 1.0);
+  float hullFoam = (contact + wakeTrail * 1.05) * (0.6 + 0.4 * mottling);
+  float foam = clamp(crestFoam * 0.6 + slopeFoam * 0.5 + jacFoam * 1.2 + bowFoam * 1.5 + hullFoam * 1.35, 0.0, 1.0) * (0.72 + 0.28 * mottling);
   col = mix(col, vec3(0.96, 0.92, 0.92) * (1.0 - 0.55 * uNight), foam * 0.9);
   // Crépuscule : eau sombre et bleu nuit (le scintillement + le néon des tours ressortent).
   col = mix(col, col * vec3(0.20, 0.30, 0.46) + vec3(0.004, 0.010, 0.020), uNight);
@@ -3000,14 +3007,20 @@ function frame() {
     const kf = 1 - Math.exp(-dt * 9);
     const spInside = Math.min(spd / 9, 1);
     const rev = vForward < 0 ? -1 : 1;
-    const leanZ = state.rudder * 0.30 * spInside * rev;                   // penche DANS le virage
-    const leanX = 0.05 + (fThr - speedF) * 0.16 + (state.air ? -0.20 : 0); // avant aux gaz, arrière en l'air
-    const twistY = -state.rudder * 0.14 * spInside;                       // le buste s'oriente vers l'intérieur
-    const sway = (1 - speedF) * Math.sin(t * 1.1) * 0.022 + rough * speedF * Math.sin(t * 5.3 + state.z) * 0.02;
-    tp.rotation.z += (leanZ + sway - tp.rotation.z) * kf;
+    const leanZ = state.rudder * 0.34 * spInside * rev;                   // penche DANS le virage
+    // VIE PERMANENTE : respiration + léger roulis d'inactivité TOUJOURS présents
+    // (le pilote n'est jamais figé), + absorption de la houle (il encaisse le
+    // tangage vertical du jet) + réaction au clapot.
+    const breath = Math.sin(t * 1.7) * 0.011;
+    const idleRock = (Math.sin(t * 0.9) * 0.03 + Math.sin(t * 2.3 + 1.0) * 0.016) * (1 - speedF * 0.4);
+    const chop = rough * (0.35 + speedF) * Math.sin(t * 6.0 + state.z * 0.5) * 0.05;
+    const heave = Math.max(-0.16, Math.min(0.16, -state.vy * 0.024));     // encaisse la houle
+    const leanX = 0.05 + (fThr - speedF) * 0.18 + heave + chop + (state.air ? -0.22 : 0);
+    const twistY = -state.rudder * 0.16 * spInside + Math.sin(t * 1.25) * 0.02;
+    tp.rotation.z += (leanZ + idleRock + chop * 0.6 - tp.rotation.z) * kf;
     tp.rotation.x += (leanX - tp.rotation.x) * kf;
     tp.rotation.y += (twistY - tp.rotation.y) * kf;
-    const crouch = (state.air ? 0.045 : 0) - Math.min(camJolt * 0.05 + camImpact * 0.12, 0.13);
+    const crouch = (state.air ? 0.05 : 0) - Math.min(camJolt * 0.06 + camImpact * 0.13, 0.15) + breath;
     tp.position.y += ((animRefs.torsoBaseY + crouch) - tp.position.y) * (1 - Math.exp(-dt * 12));
     // Tête : se stabilise vers l'horizon (compense gîte/tangage du buste) + regarde le virage
     const hpv = animRefs.headPivot;
@@ -3105,30 +3118,34 @@ function frame() {
   oceanUniforms.uHullSpeed.value = state.air ? 0 : Math.max(0, state.speed);
 
   /* ---- Effets ---- */
+  // La coque fend l'eau dès qu'elle bouge : les gerbes montent vite avec la
+  // vitesse (avant : quasi rien tant qu'on ne planait pas -> le jet semblait
+  // posé sur une surface figée).
+  const moving = Math.min(1, speedF * 4);
   for (const sp of sprays) {
-    // Gerbes en V de proue : liées au PLANAGE (une coque déjaugée fend l'eau et
-    // projette latéralement ; à basse vitesse, presque rien).
-    sp.material.opacity = state.air ? 0 : (0.15 * speedF + 0.55 * planing) * (0.6 + 0.4 * Math.sin(t * 14 + sp.position.x * 9));
-    sp.scale.set(1 + planing * 0.5, 1 + speedF * 1.6 + planing * 0.6, 1);
+    sp.material.opacity = state.air ? 0 : Math.min(0.95, (0.55 * speedF + 0.85 * planing) * moving) * (0.55 + 0.45 * Math.sin(t * 14 + sp.position.x * 9));
+    sp.scale.set(1.25 + planing * 0.7, 1.35 + speedF * 1.9 + planing * 0.7, 1);
   }
-  // Anneau d'écume : collé à la hauteur d'eau LOCALE (pas à la coque) -> il
-  // marque la ligne de flottaison même quand la coque plonge ou déjauge.
+  // Anneau d'écume : collé à la ligne de flottaison LOCALE -> il assoit la coque
+  // dans l'eau même à l'arrêt (l'eau bouillonne toujours autour d'une coque).
   if (contactRing) {
     contactRing.visible = !state.air;
     contactRing.position.y = hw - state.y + 0.05;
-    contactRing.material.opacity = (0.26 + 0.22 * Math.min(state.rpm + speedF, 1)) * (0.8 + 0.2 * Math.sin(t * 6.3));
-    const cs = 1 + speedF * 0.3 + Math.sin(t * 4.1) * 0.05;
+    contactRing.material.opacity = (0.5 + 0.35 * Math.min(state.rpm + speedF, 1)) * (0.82 + 0.18 * Math.sin(t * 6.3));
+    const cs = 1.15 + speedF * 0.5 + Math.sin(t * 4.1) * 0.06;
     contactRing.scale.set(cs, 1, cs);
     contactRing.rotation.y = Math.sin(t * 0.7) * 0.25;
   }
   for (const wk of wakes) {
-    wk.material.opacity = state.air ? 0 : speedF * 0.42 * (0.75 + 0.25 * Math.sin(t * 6 + wk.position.x * 5));
-    wk.scale.set(1 + speedF * 0.6, 1, 1 + speedF * 0.8);
+    wk.material.opacity = state.air ? 0 : Math.min(0.9, speedF * 0.7 + 0.12 * moving) * (0.72 + 0.28 * Math.sin(t * 6 + wk.position.x * 5));
+    wk.scale.set(1.2 + speedF * 0.9, 1, 1.2 + speedF * 1.1);
   }
   if (sternWash) {
     // Bout dès que la turbine tourne, collé à la flottaison comme l'anneau
     sternWash.position.y = hw - state.y + 0.07;
-    sternWash.material.opacity = state.air ? 0 : (0.25 * state.rpm + Math.min(Math.abs(state.speed) / 8, 1) * 0.45) * (0.8 + 0.2 * Math.sin(t * 11));
+    sternWash.material.opacity = state.air ? 0 : Math.min(0.95, 0.4 * state.rpm + Math.min(Math.abs(state.speed) / 7, 1) * 0.6) * (0.82 + 0.18 * Math.sin(t * 11));
+    const ws = 1 + Math.min(speedF, 1) * 0.8;
+    sternWash.scale.set(ws, 1, 1 + speedF * 1.4);
   }
   for (const s of splashes) {
     s.age += dt;
@@ -3155,15 +3172,15 @@ function frame() {
   const sternX = state.x - fx * 1.7;
   const sternZ = state.z - fz * 1.7;
   const sternY = waveHeight(sternX, sternZ, t);
-  if (!state.air && Math.abs(state.speed) > 2) {
-    // Émission continue proportionnelle à la vitesse (fine traînée d'écume)
-    const emitPerSec = 5 + speedF * 20;
+  if (!state.air && Math.abs(state.speed) > 0.6) {
+    // Émission continue proportionnelle à la vitesse (traînée d'écume dense)
+    const emitPerSec = 10 + speedF * 34;
     wakeAccum += emitPerSec * dt;
     while (wakeAccum >= 1) {
       wakeAccum -= 1;
-      const jitterX = (Math.random() - 0.5) * 0.35;
-      const jitterZ = (Math.random() - 0.5) * 0.35;
-      spawnWake(sternX + jitterX, sternY, sternZ + jitterZ, 0.6 + speedF * 1.0, 1.8 + speedF * 1.2);
+      const jitterX = (Math.random() - 0.5) * 0.5;
+      const jitterZ = (Math.random() - 0.5) * 0.5;
+      spawnWake(sternX + jitterX, sternY, sternZ + jitterZ, 0.85 + speedF * 1.3, 2.2 + speedF * 1.6);
     }
     // Anneaux d'onde périodiques quand on avance
     if (state.speed > 4) {
