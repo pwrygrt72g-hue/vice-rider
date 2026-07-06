@@ -1501,26 +1501,34 @@ function buildSki() {
      lunettes aviateur. Vu surtout DE DOS en chase -> dos/épaules/cheveux soignés. */
   riderBody = new THREE.Group();
   const zc = z => z * scaleF;
-  const ball = (x, y, z, r, mat, sx, sy, sz, rx) => {
+  // HAUT DU CORPS articulé autour d'un PIVOT AUX HANCHES (torsoPivot) : il se penche,
+  // reporte le poids et absorbe les chocs pendant que bassin + jambes restent plaqués
+  // au jet. Animé dans la boucle -> le pilote SUIT vraiment les mouvements du jetski.
+  const HPY = 0.96, HPZ = zc(0.83);
+  const torsoPivot = new THREE.Group(); torsoPivot.position.set(0, HPY, HPZ);
+  torsoPivot.rotation.order = 'ZXY';
+  const up = new THREE.Group(); up.position.set(0, -HPY, -HPZ); torsoPivot.add(up);
+  riderBody.add(torsoPivot);
+  const ball = (x, y, z, r, mat, sx, sy, sz, rx, parent) => {
     const m = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 14), mat);
     m.position.set(x, y, z); if (sx !== undefined) m.scale.set(sx, sy, sz); if (rx) m.rotation.x = rx;
-    m.castShadow = true; riderBody.add(m); return m;
+    m.castShadow = true; (parent || up).add(m); return m;
   };
-  // --- Bassin (sous le board short) ---
-  ball(0, 0.90, zc(0.87), 0.185, shortsM, 1.2, 0.82, 1.0);
+  // --- Bassin (sous le board short) : PLAQUÉ (hors pivot) ---
+  ball(0, 0.90, zc(0.87), 0.185, shortsM, 1.2, 0.82, 1.0, 0, riderBody);
   // --- Tronc musclé : capsule le long de la colonne, aplatie (épaules larges) ---
   const hipP = new THREE.Vector3(0, 0.96, zc(0.84)), shP = new THREE.Vector3(0, 1.15, zc(0.575));
   const trunk = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, hipP.distanceTo(shP), 14, 24), skinM);
   trunk.position.addVectors(hipP, shP).multiplyScalar(0.5);
   trunk.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(shP, hipP).normalize());
-  trunk.scale.set(1.32, 1.0, 0.8); trunk.castShadow = true; riderBody.add(trunk);
+  trunk.scale.set(1.32, 1.0, 0.8); trunk.castShadow = true; up.add(trunk);
   // Dos (chase) : trapèzes + omoplates + creux de la colonne
   ball(0, 1.14, zc(0.63), 0.14, skinHiM, 1.35, 0.7, 0.7);              // trapèzes
   ball(-0.085, 1.08, zc(0.66), 0.07, skinM, 1.0, 1.2, 0.55);          // omoplate G
   ball(0.085, 1.08, zc(0.66), 0.07, skinM, 1.0, 1.2, 0.55);           // omoplate D
   const spine = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.24, 6, 8), new THREE.MeshStandardMaterial({ color: new THREE.Color(skinColor).multiplyScalar(0.7).getHex(), roughness: 0.55 }));
-  spine.position.set(0, 1.05, zc(0.71)); spine.rotation.x = -0.9; riderBody.add(spine); // sillon vertébral (ombre)
-  // Pecs (larges et plats) + abdos (avant, surtout visibles au garage)
+  spine.position.set(0, 1.05, zc(0.71)); spine.rotation.x = -0.9; up.add(spine); // sillon vertébral (ombre)
+  // Pecs (larges et plats) + abdos
   ball(-0.08, 1.065, zc(0.48), 0.08, skinHiM, 1.25, 0.62, 0.62);
   ball(0.08, 1.065, zc(0.48), 0.08, skinHiM, 1.25, 0.62, 0.62);
   for (let a = 0; a < 3; a++) { ball(-0.045, 1.0 - a * 0.05, zc(0.5 + a * 0.02), 0.03, skinM, 1, 0.8, 0.6); ball(0.045, 1.0 - a * 0.05, zc(0.5 + a * 0.02), 0.03, skinM, 1, 0.8, 0.6); }
@@ -1529,88 +1537,83 @@ function buildSki() {
   ball(0.235, 1.115, zc(0.585), 0.088, skinHiM);
 
   // --- GILET DE SAUVETAGE (PFD) : coque-tube néoprène/nylon clairement PROUD ---
-  // Construit comme un CYLINDRE OUVERT autour de l'axe du tronc, plus large que le
-  // torse (garanti visible), et COURT (taille -> mi-poitrine) : épaules, haut du
-  // torse et bras restent nus (look Miami). Détails : matelassage, zip, col, sangles.
   const vestAxis = new THREE.Vector3().subVectors(shP, hipP).normalize();
   const vestQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), vestAxis);
   const vestCenter = new THREE.Vector3().lerpVectors(hipP, shP, 0.44);
   const vestShell = new THREE.Mesh(new THREE.CylinderGeometry(0.212, 0.205, 0.30, 24, 1, true), vestFabM);
   vestShell.position.copy(vestCenter); vestShell.quaternion.copy(vestQuat);
-  vestShell.scale.set(1.28, 1.0, 0.94); vestShell.castShadow = true; riderBody.add(vestShell);
-  // Matelassage : 2 anneaux de couture autour du tube
+  vestShell.scale.set(1.28, 1.0, 0.94); vestShell.castShadow = true; up.add(vestShell);
   for (let q = 0; q < 2; q++) {
     const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.216, 0.216, 0.014, 24, 1, true), strapM);
     ring.position.copy(vestCenter).addScaledVector(vestAxis, 0.06 - q * 0.12);
-    ring.quaternion.copy(vestQuat); ring.scale.set(1.28, 1.0, 0.94); riderBody.add(ring);
+    ring.quaternion.copy(vestQuat); ring.scale.set(1.28, 1.0, 0.94); up.add(ring);
   }
-  // Bord supérieur + col matelassé (autour de la nuque)
   const vestTop = new THREE.Mesh(new THREE.TorusGeometry(0.20, 0.028, 10, 24), vestFabM2);
-  vestTop.position.copy(vestCenter).addScaledVector(vestAxis, 0.15); vestTop.quaternion.copy(vestQuat); vestTop.scale.set(1.28, 0.94, 1.0); riderBody.add(vestTop);
-  // Fermeture éclair centrale (avant) + curseur : le "devant" du tronc est en -Z penché.
+  vestTop.position.copy(vestCenter).addScaledVector(vestAxis, 0.15); vestTop.quaternion.copy(vestQuat); vestTop.scale.set(1.28, 0.94, 1.0); up.add(vestTop);
   const frontDir = new THREE.Vector3(0, Math.sin(0.62), -Math.cos(0.62)); // ~normale avant du torse
   const zip = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.30, 0.02), buckleM);
-  zip.position.copy(vestCenter).addScaledVector(frontDir, 0.19); zip.quaternion.copy(vestQuat); riderBody.add(zip);
+  zip.position.copy(vestCenter).addScaledVector(frontDir, 0.19); zip.quaternion.copy(vestQuat); up.add(zip);
   const zipTab = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.02), goldM);
-  zipTab.position.copy(vestCenter).addScaledVector(frontDir, 0.20).addScaledVector(vestAxis, 0.08); riderBody.add(zipTab);
-  // Logo au dos
+  zipTab.position.copy(vestCenter).addScaledVector(frontDir, 0.20).addScaledVector(vestAxis, 0.08); up.add(zipTab);
   const vestLogo = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.14), new THREE.MeshBasicMaterial({ map: numberTex, transparent: true }));
   vestLogo.position.copy(vestCenter).addScaledVector(frontDir, -0.205).addScaledVector(vestAxis, 0.02);
-  vestLogo.quaternion.copy(vestQuat); vestLogo.rotateY(Math.PI); riderBody.add(vestLogo);
-  // Sangles d'épaule (PAR-DESSUS les épaules) + sangles/boucles latérales
+  vestLogo.quaternion.copy(vestQuat); vestLogo.rotateY(Math.PI); up.add(vestLogo);
   for (const s of [-1, 1]) {
     const shStrap = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.03, 0.30), vestFabM);
-    shStrap.position.set(0.15 * s, 1.17, zc(0.585)); shStrap.rotation.x = -0.2; shStrap.castShadow = true; riderBody.add(shStrap);
+    shStrap.position.set(0.15 * s, 1.17, zc(0.585)); shStrap.rotation.x = -0.2; shStrap.castShadow = true; up.add(shStrap);
     const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.03), buckleM);
-    buckle.position.copy(vestCenter).addScaledVector(frontDir, 0.17); buckle.position.x = 0.15 * s; riderBody.add(buckle);
+    buckle.position.copy(vestCenter).addScaledVector(frontDir, 0.17); buckle.position.x = 0.15 * s; up.add(buckle);
   }
 
-  // --- Cou (avec ombre du sterno) + TÊTE ---
+  // --- Cou + TÊTE (la tête est un sous-groupe : elle se stabilise à l'horizon) ---
   const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.07, 0.12, 14), skinM);
-  neck.position.set(0, 1.22, zc(0.55)); neck.rotation.x = 0.2; riderBody.add(neck);
+  neck.position.set(0, 1.22, zc(0.55)); neck.rotation.x = 0.2; up.add(neck);
+  const headPivot = new THREE.Group(); headPivot.position.set(0, 1.27, zc(0.52)); up.add(headPivot);
+  const hp = z => z; // les enfants de headPivot sont exprimés en delta autour du cou
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.108, 24, 20), skinM);
-  head.position.set(0, 1.31, zc(0.50)); head.scale.set(0.92, 1.05, 1.0); head.castShadow = true; riderBody.add(head);
-  ball(0, 1.255, zc(0.44), 0.06, skinM, 0.85, 0.8, 0.7);                // mâchoire/menton
-  ball(0, 1.30, zc(0.415), 0.028, skinM, 0.8, 0.7, 1.0);               // nez
-  for (const s of [-1, 1]) ball(0.10 * s, 1.305, zc(0.505), 0.028, skinM, 0.5, 1.0, 0.8); // oreilles
-  // Cheveux 80s : volume qui coiffe l'arrière et les côtés (très visible de dos)
+  head.position.set(0, 0.04, zc(-0.02)); head.scale.set(0.92, 1.05, 1.0); head.castShadow = true; headPivot.add(head);
+  const jaw = new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 12), skinM); jaw.position.set(0, -0.015, zc(-0.08)); jaw.scale.set(0.85, 0.8, 0.7); headPivot.add(jaw);
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.028, 14, 10), skinM); nose.position.set(0, 0.03, zc(-0.105)); nose.scale.set(0.8, 0.7, 1.0); headPivot.add(nose);
+  for (const s of [-1, 1]) { const ear = new THREE.Mesh(new THREE.SphereGeometry(0.028, 12, 10), skinM); ear.position.set(0.10 * s, 0.035, zc(-0.015)); ear.scale.set(0.5, 1.0, 0.8); headPivot.add(ear); }
   const hairTop = new THREE.Mesh(new THREE.SphereGeometry(0.122, 20, 16, 0, TWO_PI, 0, Math.PI * 0.62), hairM2);
-  hairTop.position.set(0, 1.318, zc(0.505)); hairTop.scale.set(0.98, 1.08, 1.05); hairTop.castShadow = true; riderBody.add(hairTop);
+  hairTop.position.set(0, 0.048, zc(-0.015)); hairTop.scale.set(0.98, 1.08, 1.05); hairTop.castShadow = true; headPivot.add(hairTop);
   const hairBack = new THREE.Mesh(new THREE.SphereGeometry(0.11, 18, 14), hairM2);
-  hairBack.position.set(0, 1.30, zc(0.565)); hairBack.scale.set(0.95, 1.0, 0.7); riderBody.add(hairBack);
-  for (const s of [-1, 1]) { const sb = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.05, 6, 8), hairM2); sb.position.set(0.095 * s, 1.27, zc(0.5)); riderBody.add(sb); } // pattes
-  // Lunettes AVIATEUR : verres miroir + monture dorée + branches vers les oreilles
+  hairBack.position.set(0, 0.03, zc(0.045)); hairBack.scale.set(0.95, 1.0, 0.7); headPivot.add(hairBack);
+  for (const s of [-1, 1]) { const sb = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.05, 6, 8), hairM2); sb.position.set(0.095 * s, 0.0, zc(-0.02)); headPivot.add(sb); }
   for (const s of [-1, 1]) {
     const lens = new THREE.Mesh(new THREE.CircleGeometry(0.038, 20), lensM);
-    lens.position.set(0.042 * s, 1.315, zc(0.398)); lens.rotation.y = Math.PI + 0.1 * s; riderBody.add(lens);
+    lens.position.set(0.042 * s, 0.045, zc(-0.122)); lens.rotation.y = Math.PI + 0.1 * s; headPivot.add(lens);
     const rim = new THREE.Mesh(new THREE.TorusGeometry(0.038, 0.005, 8, 20), goldM);
-    rim.position.copy(lens.position); rim.position.z += 0.001; rim.rotation.y = lens.rotation.y; riderBody.add(rim);
+    rim.position.copy(lens.position); rim.position.z += 0.001; rim.rotation.y = lens.rotation.y; headPivot.add(rim);
     const temple = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.13, 6), goldM);
-    temple.position.set(0.075 * s, 1.318, zc(0.46)); temple.rotation.set(0, 0, Math.PI / 2); temple.rotation.y = 0.2; riderBody.add(temple);
+    temple.position.set(0.075 * s, 0.048, zc(-0.06)); temple.rotation.set(0, 0.2, Math.PI / 2); headPivot.add(temple);
   }
   const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.006, 0.006), goldM);
-  bridge.position.set(0, 1.322, zc(0.398)); riderBody.add(bridge);
+  bridge.position.set(0, 0.052, zc(-0.122)); headPivot.add(bridge);
 
-  // --- BRAS (manquaient !) : deltoïde -> biceps -> avant-bras -> gant sur le guidon ---
+  // --- BRAS : deltoïde -> biceps -> avant-bras -> gant. Meshes sous riderBody (NON
+  //     penchés) + une ANCRE d'épaule dans le pivot du torse. Chaque frame on résout
+  //     une IK 2 os (épaule mobile -> poignée FIXE sur le guidon) : les mains restent
+  //     sur les poignées quand le pilote penche/reporte le poids. ---
+  const armRefs = [];
   for (const s of [-1, 1]) {
-    const shoulder = new THREE.Vector3(0.235 * s, 1.11, zc(0.585));
-    const elbow = new THREE.Vector3(0.40 * s, 0.965, zc(0.14));
-    const wrist = new THREE.Vector3(0.455 * s, 0.83, zc(-0.16));
-    limbMesh(riderBody, shoulder, elbow, 0.062, 0.052, skinM);        // biceps/triceps
-    ball((shoulder.x + elbow.x) / 2 + 0.01 * s, (shoulder.y + elbow.y) / 2 + 0.02, (shoulder.z + elbow.z) / 2, 0.05, skinHiM, 1, 1.3, 1); // renflement biceps
-    ball(elbow.x, elbow.y, elbow.z, 0.05, skinM);                     // coude
-    limbMesh(riderBody, elbow, wrist, 0.05, 0.04, skinM);             // avant-bras
-    ball(elbow.x + (wrist.x - elbow.x) * 0.3, elbow.y + (wrist.y - elbow.y) * 0.3, elbow.z + (wrist.z - elbow.z) * 0.3, 0.045, skinHiM, 1.1, 1.3, 1.1); // brachio-radial
-    // Gant qui agrippe la poignée (poing fermé néoprène)
-    const fist = new THREE.Mesh(new THREE.SphereGeometry(0.055, 14, 12), gloveM);
-    fist.position.copy(wrist).add(new THREE.Vector3(0.005 * s, -0.01, -0.03)); fist.scale.set(1.0, 0.95, 1.25); fist.castShadow = true; riderBody.add(fist);
-    const knuck = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.028, 0.075), gloveM);
-    knuck.position.copy(fist.position).add(new THREE.Vector3(0, 0.03, -0.02)); riderBody.add(knuck);
-    const cuffG = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.042, 0.05, 12), gloveAcc);
-    cuffG.position.copy(wrist).add(new THREE.Vector3(0, 0.02, 0.05));
-    cuffG.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(wrist, elbow).normalize());
-    riderBody.add(cuffG);
+    const shV = new THREE.Vector3(0.235 * s, 1.11, zc(0.585));
+    const elV = new THREE.Vector3(0.40 * s, 0.965, zc(0.14));
+    const wrV = new THREE.Vector3(0.455 * s, 0.83, zc(-0.16));
+    const shAnchor = new THREE.Object3D(); shAnchor.position.copy(shV); up.add(shAnchor); // suit le torse
+    const upper = limbMesh(riderBody, shV, elV, 0.062, 0.052, skinM);
+    const biceps = ball(0, 0, 0, 0.05, skinHiM, 1, 1.3, 1, 0, riderBody);
+    const elbowB = ball(0, 0, 0, 0.05, skinM, undefined, undefined, undefined, 0, riderBody);
+    const fore = limbMesh(riderBody, elV, wrV, 0.05, 0.04, skinM);
+    const brach = ball(0, 0, 0, 0.045, skinHiM, 1.1, 1.3, 1.1, 0, riderBody);
+    const fist = new THREE.Mesh(new THREE.SphereGeometry(0.055, 14, 12), gloveM); fist.scale.set(1.0, 0.95, 1.25); fist.castShadow = true; riderBody.add(fist);
+    const knuck = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.028, 0.075), gloveM); riderBody.add(knuck);
+    const cuffG = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.042, 0.05, 12), gloveAcc); riderBody.add(cuffG);
+    armRefs.push({ s, upper, biceps, elbowB, fore, brach, fist, knuck, cuffG, shAnchor,
+      grip: wrV.clone(), L1: shV.distanceTo(elV), L2: elV.distanceTo(wrV) });
   }
+  animRefs.torsoPivot = torsoPivot; animRefs.headPivot = headPivot; animRefs.arms = armRefs;
+  animRefs.torsoBaseY = HPY; animRefs.up = up;
   riderBody.visible = false;
   ski.add(riderBody);
 
@@ -2509,6 +2512,15 @@ const CARDINALS = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
 /* ================= BOUCLE ================= */
 const chaseTarget = new THREE.Vector3();
+// Vecteurs de travail réutilisables pour l'IK des bras du pilote (évite le GC/frame).
+const _ikS = new THREE.Vector3(), _ikE = new THREE.Vector3(), _ikAxis = new THREE.Vector3(),
+  _ikPole = new THREE.Vector3(), _ikPerp = new THREE.Vector3(), _ikRest = new THREE.Vector3(),
+  _ikUp = new THREE.Vector3(0, 1, 0), _ikDir = new THREE.Vector3(), _ikMid = new THREE.Vector3();
+const _ikQuat = new THREE.Quaternion();
+function setBone(mesh, p1, p2) {
+  _ikMid.addVectors(p1, p2).multiplyScalar(0.5); mesh.position.copy(_ikMid);
+  _ikDir.subVectors(p2, p1).normalize(); mesh.quaternion.setFromUnitVectors(_ikUp, _ikDir);
+}
 let last = performance.now();
 let simTime = 0;
 let gaugeTick = 0;
@@ -2839,10 +2851,50 @@ function frame() {
     for (const f of animRefs.lFingers) f.rotation.x = 4.17 + (down ? 0.4 : 0);
     if (animRefs.rThumb) animRefs.rThumb.position.y = 0.148 - Math.max(0, state.throttle) * 0.012;
   }
-  // Le pilote contre-penche dans les virages et se ramasse dans les sauts (moto)
-  if (riderBody && riderBody.visible) {
-    riderBody.rotation.z = -state.roll * 0.45;
-    riderBody.rotation.x = -state.throttle * 0.05 + (state.air ? -0.12 : 0);
+  /* ---- PILOTE VIVANT (3e personne) : body english + IK des bras ----
+     Le haut du corps pivote aux hanches (penché dans le virage, poids reporté aux
+     gaz/freins, ramassé dans les sauts, absorption des chocs), la tête se stabilise
+     à l'horizon, et les bras sont résolus en IK pour garder les mains sur le guidon. */
+  if (riderBody && riderBody.visible && animRefs && animRefs.torsoPivot) {
+    const tp = animRefs.torsoPivot;
+    const kf = 1 - Math.exp(-dt * 9);
+    const spInside = Math.min(spd / 9, 1);
+    const rev = vForward < 0 ? -1 : 1;
+    const leanZ = state.rudder * 0.30 * spInside * rev;                   // penche DANS le virage
+    const leanX = 0.05 + (fThr - speedF) * 0.16 + (state.air ? -0.20 : 0); // avant aux gaz, arrière en l'air
+    const twistY = -state.rudder * 0.14 * spInside;                       // le buste s'oriente vers l'intérieur
+    const sway = (1 - speedF) * Math.sin(t * 1.1) * 0.022 + rough * speedF * Math.sin(t * 5.3 + state.z) * 0.02;
+    tp.rotation.z += (leanZ + sway - tp.rotation.z) * kf;
+    tp.rotation.x += (leanX - tp.rotation.x) * kf;
+    tp.rotation.y += (twistY - tp.rotation.y) * kf;
+    const crouch = (state.air ? 0.045 : 0) - Math.min(camJolt * 0.05 + camImpact * 0.12, 0.13);
+    tp.position.y += ((animRefs.torsoBaseY + crouch) - tp.position.y) * (1 - Math.exp(-dt * 12));
+    // Tête : se stabilise vers l'horizon (compense gîte/tangage du buste) + regarde le virage
+    const hpv = animRefs.headPivot;
+    if (hpv) { hpv.rotation.z = -tp.rotation.z * 0.65; hpv.rotation.x = -tp.rotation.x * 0.4 + (state.air ? 0.12 : 0); hpv.rotation.y = -state.rudder * 0.2 * spInside; }
+    // --- IK 2 os : épaule (suit le buste, tournée autour des hanches) -> poignée FIXE ---
+    _ikRest.set(0, animRefs.torsoBaseY, tp.position.z);                   // point de pivot (hanches)
+    for (const a of animRefs.arms) {
+      _ikS.copy(a.shAnchor.position).sub(_ikRest).applyEuler(tp.rotation).add(tp.position); // épaule
+      const G = a.grip;
+      let d = _ikS.distanceTo(G);
+      const dmin = Math.abs(a.L1 - a.L2) + 0.002, dmax = a.L1 + a.L2 - 0.002;
+      d = Math.max(dmin, Math.min(dmax, d));
+      const aLen = (d * d + a.L1 * a.L1 - a.L2 * a.L2) / (2 * d);
+      const h = Math.sqrt(Math.max(0, a.L1 * a.L1 - aLen * aLen));
+      _ikAxis.subVectors(G, _ikS); if (_ikAxis.lengthSq() < 1e-6) _ikAxis.set(0, -1, 0); _ikAxis.setLength(1);
+      _ikPole.set(0.4 * a.s, -1, 0.55).normalize();                       // coude vers le bas-extérieur-arrière
+      _ikPerp.copy(_ikPole).addScaledVector(_ikAxis, -_ikPole.dot(_ikAxis));
+      if (_ikPerp.lengthSq() < 1e-6) _ikPerp.set(0, -1, 0); _ikPerp.setLength(1);
+      _ikE.copy(_ikS).addScaledVector(_ikAxis, aLen).addScaledVector(_ikPerp, h); // coude
+      setBone(a.upper, _ikS, _ikE);
+      setBone(a.fore, _ikE, G);
+      a.biceps.position.lerpVectors(_ikS, _ikE, 0.5).y += 0.015; a.biceps.quaternion.copy(a.upper.quaternion);
+      a.elbowB.position.copy(_ikE);
+      a.brach.position.lerpVectors(_ikE, G, 0.35); a.brach.quaternion.copy(a.fore.quaternion);
+      a.fist.position.copy(G); a.knuck.position.copy(G).addScaledVector(_ikPerp, 0.03);
+      a.cuffG.position.lerpVectors(_ikE, G, 0.82); a.cuffG.quaternion.copy(a.fore.quaternion);
+    }
   }
 
   // Soleil + ombre suivent le jetski
