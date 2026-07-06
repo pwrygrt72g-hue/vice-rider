@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=35';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=35';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=35';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=35';
+import { TWO_PI, smooth01, hex } from './util.js?v=36';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=36';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=36';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=36';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v35 · sans trainee avant';
+const BUILD = 'v36 · jetski remodele';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1295,16 +1295,19 @@ function updateRealModelColors() {
 let gaugeTex = null, gctx = null;
 
 function hullShape(widthF, lengthF) {
+  // Plan de coque PWC : proue EFFILÉE (pointe fine à -z), flancs galbés avec une
+  // ligne de chine marquée vers -0.2L, tableau arrière large et net (+z).
   const s = new THREE.Shape();
   const w = widthF, L = lengthF;
-  s.moveTo(0, -2.05 * L);
-  s.quadraticCurveTo(0.32 * w, -1.88 * L, 0.52 * w, -1.3 * L);
-  s.quadraticCurveTo(0.69 * w, -0.65 * L, 0.67 * w, 0.15 * L);
-  s.quadraticCurveTo(0.66 * w, 0.9 * L, 0.58 * w, 1.5 * L);
-  s.lineTo(-0.58 * w, 1.5 * L);
-  s.quadraticCurveTo(-0.66 * w, 0.9 * L, -0.67 * w, 0.15 * L);
-  s.quadraticCurveTo(-0.69 * w, -0.65 * L, -0.52 * w, -1.3 * L);
-  s.quadraticCurveTo(-0.32 * w, -1.88 * L, 0, -2.05 * L);
+  s.moveTo(0, -2.18 * L);
+  s.quadraticCurveTo(0.16 * w, -2.02 * L, 0.38 * w, -1.55 * L);
+  s.quadraticCurveTo(0.60 * w, -1.0 * L, 0.66 * w, -0.18 * L);   // chine
+  s.quadraticCurveTo(0.685 * w, 0.62 * L, 0.60 * w, 1.42 * L);
+  s.lineTo(0.52 * w, 1.5 * L);                                   // coin de tableau
+  s.lineTo(-0.52 * w, 1.5 * L);
+  s.quadraticCurveTo(-0.60 * w, 0.62 * L, -0.685 * w, -0.18 * L);
+  s.quadraticCurveTo(-0.66 * w, -1.0 * L, -0.38 * w, -1.55 * L);
+  s.quadraticCurveTo(-0.16 * w, -2.02 * L, 0, -2.18 * L);
   return s;
 }
 function hullLayer(widthF, lengthF, depth, mat, y) {
@@ -1386,39 +1389,76 @@ function buildSki() {
 
   const scaleF = cfg.id === 'spark' ? 0.88 : 1.0;
 
-  // Coque en trois couches extrudées à bords arrondis
-  ski.add(hullLayer(1.0 * scaleF, scaleF, 0.3, hullM, 0.0));
-  const stripe = hullLayer(1.04 * scaleF, 1.005 * scaleF, 0.045, accM, 0.3);
-  ski.add(stripe);
-  ski.add(hullLayer(0.94 * scaleF, 0.985 * scaleF, 0.24, deckM, 0.345));
-  const hood = hullLayer(0.66 * scaleF, 0.62 * scaleF, 0.15, deckM, 0.585);
-  hood.position.z = -0.75 * scaleF;
-  ski.add(hood);
+  const S = scaleF;
+  const wellM = new THREE.MeshStandardMaterial({ color: 0x0c0d11, roughness: 0.98 });
+  const matM = new THREE.MeshStandardMaterial({ color: 0x191b21, roughness: 1.0 });
+  const stitchM = new THREE.MeshStandardMaterial({ color: 0x3a3d45, roughness: 0.8 });
 
-  // Selle
-  const seat = new THREE.Mesh(new THREE.CapsuleGeometry(0.21 * scaleF, 1.0 * scaleF, 10, 24).rotateX(Math.PI / 2), seatM);
-  seat.position.set(0, 0.72, 0.72 * scaleF);
-  seat.scale.set(1.25, 0.75, 1);
-  seat.castShadow = true;
-  ski.add(seat);
-
-  // Tapis de pieds, tuyère, sponsons, poignée arrière
-  for (const sx of [-1, 1]) {
-    const mat = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.03, 1.3 * scaleF), rubber);
-    mat.position.set(0.42 * sx * scaleF, 0.585, 0.55 * scaleF);
-    mat.receiveShadow = true;
-    ski.add(mat);
-    const sponson = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.7 * scaleF), accM);
-    sponson.position.set(0.66 * sx * scaleF, 0.16, 1.05 * scaleF);
-    ski.add(sponson);
+  // ===================== COQUE (carène planante) =====================
+  ski.add(hullLayer(1.0 * S, S, 0.36, hullM, 0.0));                 // corps de carène
+  ski.add(hullLayer(1.055 * S, 1.01 * S, 0.05, accM, 0.36));        // liston / rub-rail (accent)
+  ski.add(hullLayer(0.92 * S, 0.975 * S, 0.20, deckM, 0.41));       // pont
+  // Strakes de chine : lignes qui fendent l'eau le long de la carène
+  for (const sx of [-1, 1]) for (const k of [0, 1]) {
+    const strake = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.045, 2.1 * S), accM);
+    strake.position.set((0.5 + k * 0.11) * sx * S, 0.13 - k * 0.09, -0.1 * S);
+    strake.rotation.z = sx * 0.5; ski.add(strake);
   }
-  const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 0.3, 14).rotateX(Math.PI / 2), chrome);
-  nozzle.position.set(0, 0.14, 1.62 * scaleF);
-  ski.add(nozzle);
-  const handleRear = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.025, 8, 16), chrome);
-  handleRear.rotation.x = Math.PI / 2;
-  handleRear.position.set(0, 0.6, 1.42 * scaleF);
-  ski.add(handleRear);
+
+  // ===================== PONT SCULPTÉ (avant) =====================
+  // Nez de proue effilé et RELEVÉ
+  const bowNose = new THREE.Mesh(new THREE.CapsuleGeometry(0.15 * S, 0.72 * S, 8, 18).rotateX(Math.PI / 2), deckM);
+  bowNose.position.set(0, 0.6, -1.5 * S); bowNose.rotation.x = -0.3; bowNose.scale.set(1.35, 0.66, 1.15); bowNose.castShadow = true; ski.add(bowNose);
+  // Capot avant bombé (compartiment moteur) — teinte pont, avec un panneau
+  // sombre sur le dessus (color-blocking = les formes se lisent).
+  const hood = new THREE.Mesh(new THREE.SphereGeometry(0.35 * S, 22, 14), deckM);
+  hood.position.set(0, 0.58, -0.9 * S); hood.scale.set(1.08, 0.6, 1.5); hood.castShadow = true; ski.add(hood);
+  const hoodPanel = new THREE.Mesh(new THREE.SphereGeometry(0.29 * S, 18, 12), accM);
+  hoodPanel.position.set(0, 0.66, -0.95 * S); hoodPanel.scale.set(0.78, 0.42, 1.35); ski.add(hoodPanel);
+  // Nacelle de console (sombre) : monte du pont vers le guidon
+  const nacelle = new THREE.Mesh(new THREE.BoxGeometry(0.46 * S, 0.46, 0.68 * S), accM);
+  nacelle.position.set(0, 0.74, -0.5 * S); nacelle.rotation.x = 0.2; nacelle.castShadow = true; ski.add(nacelle);
+  // Œil de proue chromé
+  const bowEye = new THREE.Mesh(new THREE.TorusGeometry(0.038, 0.011, 6, 14), chrome);
+  bowEye.rotation.x = Math.PI / 2; bowEye.position.set(0, 0.36, -1.98 * S); ski.add(bowEye);
+
+  // ===================== REPOSE-PIEDS + GUNWALES =====================
+  for (const sx of [-1, 1]) {
+    const well = new THREE.Mesh(new THREE.BoxGeometry(0.4 * S, 0.06, 1.55 * S), wellM);
+    well.position.set(0.42 * sx * S, 0.55, 0.55 * S); well.receiveShadow = true; ski.add(well);
+    const trac = new THREE.Mesh(new THREE.BoxGeometry(0.34 * S, 0.03, 1.45 * S), matM);
+    trac.position.set(0.42 * sx * S, 0.585, 0.55 * S); ski.add(trac);
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.1 * S, 0.15, 1.7 * S), deckM);
+    gun.position.set(0.66 * sx * S, 0.62, 0.45 * S); gun.castShadow = true; ski.add(gun);
+    const gunCap = new THREE.Mesh(new THREE.BoxGeometry(0.12 * S, 0.04, 1.7 * S), rubber);
+    gunCap.position.set(0.66 * sx * S, 0.7, 0.45 * S); ski.add(gunCap);
+  }
+
+  // ===================== SELLE 2 NIVEAUX =====================
+  const seatFront = new THREE.Mesh(new THREE.CapsuleGeometry(0.2 * S, 0.48 * S, 10, 22).rotateX(Math.PI / 2), seatM);
+  seatFront.position.set(0, 0.74, 0.42 * S); seatFront.scale.set(1.2, 0.72, 1); seatFront.castShadow = true; ski.add(seatFront);
+  const seatRear = new THREE.Mesh(new THREE.CapsuleGeometry(0.23 * S, 0.5 * S, 10, 22).rotateX(Math.PI / 2), seatM);
+  seatRear.position.set(0, 0.8, 1.02 * S); seatRear.scale.set(1.24, 0.92, 1); seatRear.castShadow = true; ski.add(seatRear);
+  for (const zx of [0.2, 0.55, 0.9, 1.25]) { const st = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.012, 0.4 * S), stitchM); st.position.set(0, 0.93, zx * S); ski.add(st); }
+
+  // ===================== ARRIÈRE (plateforme, tuyère, admission) =====================
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(0.92 * S, 0.08, 0.52 * S), deckM);
+  platform.position.set(0, 0.5, 1.55 * S); platform.castShadow = true; ski.add(platform);
+  const platMat = new THREE.Mesh(new THREE.BoxGeometry(0.82 * S, 0.03, 0.44 * S), matM);
+  platMat.position.set(0, 0.54, 1.55 * S); ski.add(platMat);
+  const handleRear = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.022, 8, 18), chrome);
+  handleRear.rotation.x = Math.PI / 2; handleRear.position.set(0, 0.62, 1.52 * S); ski.add(handleRear);
+  const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.34, 16).rotateX(Math.PI / 2), chrome);
+  nozzle.position.set(0, 0.2, 1.66 * S); ski.add(nozzle);
+  const nozzleCone = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.14, 12).rotateX(Math.PI / 2), rubber);
+  nozzleCone.position.set(0, 0.2, 1.8 * S); ski.add(nozzleCone);
+  const intake = new THREE.Mesh(new THREE.BoxGeometry(0.3 * S, 0.04, 0.5 * S), rubber);
+  intake.position.set(0, 0.02, 1.0 * S); ski.add(intake);
+  for (let g = 0; g < 4; g++) { const bar = new THREE.Mesh(new THREE.BoxGeometry(0.28 * S, 0.05, 0.02), chrome); bar.position.set(0, 0.03, (0.82 + g * 0.1) * S); ski.add(bar); }
+  for (const sx of [-1, 1]) {
+    const sponson = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.7 * S), accM);
+    sponson.position.set(0.68 * sx * S, 0.14, 1.05 * S); sponson.rotation.z = sx * 0.15; ski.add(sponson);
+  }
 
   // Décalcos de marque sur les flancs
   const decal = decalTexture(cfg.brand, cfg.name, '#' + cfg.colors.accent.toString(16).padStart(6, '0'));
