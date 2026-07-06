@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=36';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=36';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=36';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=36';
+import { TWO_PI, smooth01, hex } from './util.js?v=37';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=37';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=37';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=37';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v36 · jetski remodele';
+const BUILD = 'v37 · marques + pilote style';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1471,6 +1471,36 @@ function buildSki() {
     ski.add(p);
   }
 
+  // ===================== MARQUES / LIVRÉE =====================
+  const trimCss = '#' + cfg.colors.trim.toString(16).padStart(6, '0');
+  const trimM = new THREE.MeshStandardMaterial({ color: cfg.colors.trim, roughness: 0.35, metalness: 0.3 });
+  // Bande de livrée le long du pont (chaque côté)
+  for (const sx of [-1, 1]) {
+    const stripe2 = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.055, 2.5 * S), trimM);
+    stripe2.position.set(0.605 * sx * S, 0.5, -0.02 * S); stripe2.rotation.x = 0.02; ski.add(stripe2);
+  }
+  // Badge de marque sur la nacelle (face pilote)
+  const badgeTex = decalTexture(cfg.brand, '', trimCss);
+  const badge = new THREE.Mesh(new THREE.PlaneGeometry(0.42 * S, 0.105 * S),
+    new THREE.MeshBasicMaterial({ map: badgeTex, transparent: true, depthWrite: false }));
+  badge.position.set(0, 0.9, -0.83 * S); badge.rotation.x = -0.32; ski.add(badge);
+  // Décalco du modèle sur le capot arrière (visible de dos en chase)
+  const rearTex = decalTexture(cfg.brand, cfg.name, trimCss);
+  const rearDecal = new THREE.Mesh(new THREE.PlaneGeometry(0.72 * S, 0.18 * S),
+    new THREE.MeshBasicMaterial({ map: rearTex, transparent: true, depthWrite: false }));
+  rearDecal.position.set(0, 0.7, 1.35 * S); rearDecal.rotation.set(-0.25, Math.PI, 0); ski.add(rearDecal);
+  // Numéro de coque « 86 » type course sur la proue (chaque côté)
+  const numCv = document.createElement('canvas'); numCv.width = 128; numCv.height = 128;
+  const nctx = numCv.getContext('2d');
+  nctx.fillStyle = trimCss; nctx.font = 'italic 900 104px "Avenir Next", sans-serif';
+  nctx.textAlign = 'center'; nctx.textBaseline = 'middle'; nctx.fillText('86', 64, 68);
+  const numTex = new THREE.CanvasTexture(numCv); numTex.colorSpace = THREE.SRGBColorSpace;
+  for (const sx of [-1, 1]) {
+    const num = new THREE.Mesh(new THREE.PlaneGeometry(0.24 * S, 0.24 * S),
+      new THREE.MeshBasicMaterial({ map: numTex, transparent: true, depthWrite: false }));
+    num.position.set(0.5 * sx * S, 0.44, -1.35 * S); num.rotation.y = sx > 0 ? Math.PI / 2 : -Math.PI / 2; ski.add(num);
+  }
+
   // Console + compteur à rouleaux
   const consoleBox = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.36, 0.6), deckM);
   consoleBox.position.set(0, 0.95, -0.5 * scaleF);
@@ -1692,9 +1722,23 @@ function buildSki() {
   ball(-0.08, 1.065, zc(0.48), 0.08, skinHiM, 1.25, 0.62, 0.62);
   ball(0.08, 1.065, zc(0.48), 0.08, skinHiM, 1.25, 0.62, 0.62);
   for (let a = 0; a < 3; a++) { ball(-0.045, 1.0 - a * 0.05, zc(0.5 + a * 0.02), 0.03, skinM, 1, 0.8, 0.6); ball(0.045, 1.0 - a * 0.05, zc(0.5 + a * 0.02), 0.03, skinM, 1, 0.8, 0.6); }
-  // Deltoïdes
-  ball(-0.235, 1.115, zc(0.585), 0.088, skinHiM);
-  ball(0.235, 1.115, zc(0.585), 0.088, skinHiM);
+  // Deltoïdes ÉLARGIS (V-taper athlétique) + grands dorsaux
+  ball(-0.258, 1.12, zc(0.585), 0.096, skinHiM);
+  ball(0.258, 1.12, zc(0.585), 0.096, skinHiM);
+  ball(-0.17, 1.0, zc(0.66), 0.075, skinM, 1.0, 1.6, 0.7);   // lat gauche
+  ball(0.17, 1.0, zc(0.66), 0.075, skinM, 1.0, 1.6, 0.7);    // lat droit
+  // Tatouage tribal sur l'omoplate droite (signature, visible de dos en chase)
+  const tatCv = document.createElement('canvas'); tatCv.width = 128; tatCv.height = 128;
+  const tctx = tatCv.getContext('2d'); tctx.clearRect(0, 0, 128, 128);
+  tctx.strokeStyle = 'rgba(18,12,22,0.92)'; tctx.lineCap = 'round';
+  tctx.lineWidth = 10; tctx.beginPath(); tctx.moveTo(34, 18); tctx.bezierCurveTo(74, 40, 42, 82, 84, 112); tctx.stroke();
+  tctx.lineWidth = 8; tctx.beginPath(); tctx.moveTo(58, 14); tctx.bezierCurveTo(98, 46, 72, 86, 100, 108); tctx.stroke();
+  tctx.lineWidth = 5; tctx.beginPath(); tctx.moveTo(42, 56); tctx.bezierCurveTo(62, 60, 56, 76, 30, 92); tctx.stroke();
+  const tatTex = new THREE.CanvasTexture(tatCv); tatTex.colorSpace = THREE.SRGBColorSpace;
+  const tattoo = new THREE.Mesh(new THREE.PlaneGeometry(0.13, 0.16),
+    new THREE.MeshBasicMaterial({ map: tatTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }));
+  // Sur le deltoïde arrière droit (peau nue, jamais couverte par le gilet)
+  tattoo.position.set(0.245, 1.13, zc(0.61)); tattoo.rotation.set(0.15, -0.5, 0.15); up.add(tattoo);
 
   // --- GILET DE SAUVETAGE (PFD) : coque-tube néoprène/nylon clairement PROUD ---
   const vestAxis = new THREE.Vector3().subVectors(shP, hipP).normalize();
@@ -1796,6 +1840,7 @@ function buildSki() {
   animRefs.torsoBaseY = HPY; animRefs.up = up;
   riderBody.visible = false;
   ski.add(riderBody);
+  window.__rider = riderBody;   // hook d'inspection
 
   /* ---- Jambes : cuisses en board short + genoux + mollets bronzés + chaussons ---- */
   for (const s of [-1, 1]) {
