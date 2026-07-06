@@ -7,10 +7,10 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=28';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=28';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=28';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=28';
+import { TWO_PI, smooth01, hex } from './util.js?v=29';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=29';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=29';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=29';
 
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
 
