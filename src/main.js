@@ -1249,8 +1249,27 @@ function buildSki() {
   const mirrorGlass = new THREE.MeshPhysicalMaterial({ color: 0x2a3644, metalness: 0.9, roughness: 0.06, clearcoat: 1.0, envMapIntensity: 1.4 });
   const suitM = new THREE.MeshStandardMaterial({ color: suitCfg.c, roughness: 0.75 });
   const cuffM = new THREE.MeshStandardMaterial({ color: 0x1a1d24, roughness: 0.7 }); // bracelet néoprène sombre (plus discret que l'accent vif)
-  // Peau bronzée légèrement satinée (reflet mouillé de la course).
-  const skinM = new THREE.MeshPhysicalMaterial({ color: skinColor, roughness: 0.5, metalness: 0.0, sheen: 0.5, sheenRoughness: 0.55, sheenColor: new THREE.Color(0xffe4cc), clearcoat: 0.22, clearcoatRoughness: 0.45, envMapIntensity: 0.6 });
+  // Peau bronzée mouillée : PBR + reflet spéculaire humide (clearcoat) + pseudo-SSS
+  // (sheen chaud) pour éviter l'aspect plastique. Base de tout le pilote Miami.
+  const skinM = new THREE.MeshPhysicalMaterial({ color: skinColor, roughness: 0.44, metalness: 0.0, sheen: 0.6, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xffd9b0), clearcoat: 0.35, clearcoatRoughness: 0.42, envMapIntensity: 0.7 });
+  // Peau des zones bombées (épaules/dos) légèrement plus claire = highlights musculaires.
+  const skinHiM = skinM.clone(); skinHiM.color = new THREE.Color(skinColor).lerp(new THREE.Color(0xffffff), 0.12);
+  // Gants néoprène (mains) : caoutchouc sombre mat avec léger satiné.
+  const gloveM = new THREE.MeshPhysicalMaterial({ color: 0x15171d, roughness: 0.62, metalness: 0.0, sheen: 0.3, sheenColor: new THREE.Color(0x2a2f38), clearcoat: 0.2, clearcoatRoughness: 0.6 });
+  const gloveAcc = new THREE.MeshStandardMaterial({ color: suitCfg.c, roughness: 0.55 }); // liseré coloré du gant
+  // Gilet de sauvetage : mousse gainée nylon (couleur combinaison) + sangles + boucles.
+  const vestFabM = new THREE.MeshStandardMaterial({ color: suitCfg.c, roughness: 0.62, metalness: 0.0 });
+  const vestFabM2 = new THREE.MeshStandardMaterial({ color: suitCfg.c2, roughness: 0.6 });
+  const strapM = new THREE.MeshStandardMaterial({ color: 0x14161b, roughness: 0.7 });
+  const buckleM = new THREE.MeshStandardMaterial({ color: 0x0c0d11, roughness: 0.35, metalness: 0.2 });
+  // Lunettes aviateur : verres miroir fumés + monture dorée (Miami 1986).
+  const lensM = new THREE.MeshPhysicalMaterial({ color: 0x0a0e16, metalness: 0.6, roughness: 0.06, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 1.6 });
+  const goldM = new THREE.MeshStandardMaterial({ color: 0xd8b24a, metalness: 0.95, roughness: 0.22 });
+  // Cheveux 80s brun foncé (satinés).
+  const hairM2 = new THREE.MeshStandardMaterial({ color: 0x2a1c12, roughness: 0.72, metalness: 0.0 });
+  // Board short (couleur combinaison, tissu mat).
+  const shortsM = new THREE.MeshStandardMaterial({ color: suitCfg.c, roughness: 0.7 });
+  const shortsM2 = new THREE.MeshStandardMaterial({ color: suitCfg.c2, roughness: 0.68 });
 
   const scaleF = cfg.id === 'spark' ? 0.88 : 1.0;
 
@@ -1478,62 +1497,145 @@ function buildSki() {
     if (s > 0) animRefs.rThumb = th2;
   }
 
-  /* ---- Corps du pilote (mode 3e personne, style motocross) ---- */
+  /* ================= PILOTE MIAMI (3e personne) : torse nu bronzé, gilet ouvert,
+     lunettes aviateur. Vu surtout DE DOS en chase -> dos/épaules/cheveux soignés. */
   riderBody = new THREE.Group();
-  const helmetMat = new THREE.MeshStandardMaterial({ color: suitCfg.c, roughness: 0.32, metalness: 0.1, envMapIntensity: 0.6 });
-  const visorMat = new THREE.MeshStandardMaterial({ color: 0x0e1014, metalness: 0.75, roughness: 0.12, envMapIntensity: 0.9 });
-  const vestMat = new THREE.MeshStandardMaterial({ color: suitCfg.c2, roughness: 0.55 });
-  const hips = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.30), suitM);
-  hips.position.set(0, 0.9, 0.82 * scaleF); hips.rotation.x = 0.15; hips.castShadow = true;
-  riderBody.add(hips);
-  const sp1 = new THREE.Vector3(0, 0.92, 0.80 * scaleF), sp2 = new THREE.Vector3(0, 1.1, 0.56 * scaleF);
-  const back = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, sp1.distanceTo(sp2), 8, 16), suitM);
-  back.position.addVectors(sp1, sp2).multiplyScalar(0.5);
-  back.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(sp2, sp1).normalize());
-  back.castShadow = true; riderBody.add(back);
-  const vest = new THREE.Mesh(new THREE.CapsuleGeometry(0.185, 0.22, 8, 16), vestMat);
-  vest.position.set(0, 1.0, 0.66 * scaleF); vest.rotation.x = 0.7; vest.castShadow = true;
-  riderBody.add(vest);
-  const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.22), suitM);
-  yoke.position.set(0, 1.08, 0.56 * scaleF); yoke.rotation.x = 0.2; riderBody.add(yoke);
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.065, 0.1, 10), skinM);
-  neck.position.set(0, 1.16, 0.53 * scaleF); riderBody.add(neck);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.115, 20, 16), skinM);
-  head.position.set(0, 1.25, 0.5 * scaleF); riderBody.add(head);
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.145, 24, 18), helmetMat);
-  helmet.position.copy(head.position); helmet.scale.set(1, 1.05, 1.08); helmet.castShadow = true;
-  riderBody.add(helmet);
-  const helmStripe = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.17, 0.31), vestMat);
-  helmStripe.position.set(0, 1.31, 0.5 * scaleF); riderBody.add(helmStripe);
-  const visor = new THREE.Mesh(new THREE.SphereGeometry(0.15, 20, 10, -0.7, 1.4, 1.15, 0.7), visorMat);
-  visor.position.copy(head.position); visor.rotation.y = Math.PI; riderBody.add(visor);
-  const chin = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.075, 0.12), helmetMat);
-  chin.position.set(0, 1.19, 0.40 * scaleF); chin.rotation.x = -0.2; riderBody.add(chin);
-  const numPlate = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.22), new THREE.MeshBasicMaterial({ map: numberTex, transparent: true }));
-  numPlate.position.set(0, 1.0, 0.9 * scaleF); riderBody.add(numPlate);
+  const zc = z => z * scaleF;
+  const ball = (x, y, z, r, mat, sx, sy, sz, rx) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 14), mat);
+    m.position.set(x, y, z); if (sx !== undefined) m.scale.set(sx, sy, sz); if (rx) m.rotation.x = rx;
+    m.castShadow = true; riderBody.add(m); return m;
+  };
+  // --- Bassin (sous le board short) ---
+  ball(0, 0.90, zc(0.87), 0.185, shortsM, 1.2, 0.82, 1.0);
+  // --- Tronc musclé : capsule le long de la colonne, aplatie (épaules larges) ---
+  const hipP = new THREE.Vector3(0, 0.96, zc(0.84)), shP = new THREE.Vector3(0, 1.15, zc(0.575));
+  const trunk = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, hipP.distanceTo(shP), 14, 24), skinM);
+  trunk.position.addVectors(hipP, shP).multiplyScalar(0.5);
+  trunk.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(shP, hipP).normalize());
+  trunk.scale.set(1.32, 1.0, 0.8); trunk.castShadow = true; riderBody.add(trunk);
+  // Dos (chase) : trapèzes + omoplates + creux de la colonne
+  ball(0, 1.14, zc(0.63), 0.14, skinHiM, 1.35, 0.7, 0.7);              // trapèzes
+  ball(-0.085, 1.08, zc(0.66), 0.07, skinM, 1.0, 1.2, 0.55);          // omoplate G
+  ball(0.085, 1.08, zc(0.66), 0.07, skinM, 1.0, 1.2, 0.55);           // omoplate D
+  const spine = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.24, 6, 8), new THREE.MeshStandardMaterial({ color: new THREE.Color(skinColor).multiplyScalar(0.7).getHex(), roughness: 0.55 }));
+  spine.position.set(0, 1.05, zc(0.71)); spine.rotation.x = -0.9; riderBody.add(spine); // sillon vertébral (ombre)
+  // Pecs (larges et plats) + abdos (avant, surtout visibles au garage)
+  ball(-0.08, 1.065, zc(0.48), 0.08, skinHiM, 1.25, 0.62, 0.62);
+  ball(0.08, 1.065, zc(0.48), 0.08, skinHiM, 1.25, 0.62, 0.62);
+  for (let a = 0; a < 3; a++) { ball(-0.045, 1.0 - a * 0.05, zc(0.5 + a * 0.02), 0.03, skinM, 1, 0.8, 0.6); ball(0.045, 1.0 - a * 0.05, zc(0.5 + a * 0.02), 0.03, skinM, 1, 0.8, 0.6); }
+  // Deltoïdes
+  ball(-0.235, 1.115, zc(0.585), 0.088, skinHiM);
+  ball(0.235, 1.115, zc(0.585), 0.088, skinHiM);
+
+  // --- GILET DE SAUVETAGE (PFD) : coque-tube néoprène/nylon clairement PROUD ---
+  // Construit comme un CYLINDRE OUVERT autour de l'axe du tronc, plus large que le
+  // torse (garanti visible), et COURT (taille -> mi-poitrine) : épaules, haut du
+  // torse et bras restent nus (look Miami). Détails : matelassage, zip, col, sangles.
+  const vestAxis = new THREE.Vector3().subVectors(shP, hipP).normalize();
+  const vestQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), vestAxis);
+  const vestCenter = new THREE.Vector3().lerpVectors(hipP, shP, 0.44);
+  const vestShell = new THREE.Mesh(new THREE.CylinderGeometry(0.212, 0.205, 0.30, 24, 1, true), vestFabM);
+  vestShell.position.copy(vestCenter); vestShell.quaternion.copy(vestQuat);
+  vestShell.scale.set(1.28, 1.0, 0.94); vestShell.castShadow = true; riderBody.add(vestShell);
+  // Matelassage : 2 anneaux de couture autour du tube
+  for (let q = 0; q < 2; q++) {
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.216, 0.216, 0.014, 24, 1, true), strapM);
+    ring.position.copy(vestCenter).addScaledVector(vestAxis, 0.06 - q * 0.12);
+    ring.quaternion.copy(vestQuat); ring.scale.set(1.28, 1.0, 0.94); riderBody.add(ring);
+  }
+  // Bord supérieur + col matelassé (autour de la nuque)
+  const vestTop = new THREE.Mesh(new THREE.TorusGeometry(0.20, 0.028, 10, 24), vestFabM2);
+  vestTop.position.copy(vestCenter).addScaledVector(vestAxis, 0.15); vestTop.quaternion.copy(vestQuat); vestTop.scale.set(1.28, 0.94, 1.0); riderBody.add(vestTop);
+  // Fermeture éclair centrale (avant) + curseur : le "devant" du tronc est en -Z penché.
+  const frontDir = new THREE.Vector3(0, Math.sin(0.62), -Math.cos(0.62)); // ~normale avant du torse
+  const zip = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.30, 0.02), buckleM);
+  zip.position.copy(vestCenter).addScaledVector(frontDir, 0.19); zip.quaternion.copy(vestQuat); riderBody.add(zip);
+  const zipTab = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.02), goldM);
+  zipTab.position.copy(vestCenter).addScaledVector(frontDir, 0.20).addScaledVector(vestAxis, 0.08); riderBody.add(zipTab);
+  // Logo au dos
+  const vestLogo = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.14), new THREE.MeshBasicMaterial({ map: numberTex, transparent: true }));
+  vestLogo.position.copy(vestCenter).addScaledVector(frontDir, -0.205).addScaledVector(vestAxis, 0.02);
+  vestLogo.quaternion.copy(vestQuat); vestLogo.rotateY(Math.PI); riderBody.add(vestLogo);
+  // Sangles d'épaule (PAR-DESSUS les épaules) + sangles/boucles latérales
+  for (const s of [-1, 1]) {
+    const shStrap = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.03, 0.30), vestFabM);
+    shStrap.position.set(0.15 * s, 1.17, zc(0.585)); shStrap.rotation.x = -0.2; shStrap.castShadow = true; riderBody.add(shStrap);
+    const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.03), buckleM);
+    buckle.position.copy(vestCenter).addScaledVector(frontDir, 0.17); buckle.position.x = 0.15 * s; riderBody.add(buckle);
+  }
+
+  // --- Cou (avec ombre du sterno) + TÊTE ---
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.07, 0.12, 14), skinM);
+  neck.position.set(0, 1.22, zc(0.55)); neck.rotation.x = 0.2; riderBody.add(neck);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.108, 24, 20), skinM);
+  head.position.set(0, 1.31, zc(0.50)); head.scale.set(0.92, 1.05, 1.0); head.castShadow = true; riderBody.add(head);
+  ball(0, 1.255, zc(0.44), 0.06, skinM, 0.85, 0.8, 0.7);                // mâchoire/menton
+  ball(0, 1.30, zc(0.415), 0.028, skinM, 0.8, 0.7, 1.0);               // nez
+  for (const s of [-1, 1]) ball(0.10 * s, 1.305, zc(0.505), 0.028, skinM, 0.5, 1.0, 0.8); // oreilles
+  // Cheveux 80s : volume qui coiffe l'arrière et les côtés (très visible de dos)
+  const hairTop = new THREE.Mesh(new THREE.SphereGeometry(0.122, 20, 16, 0, TWO_PI, 0, Math.PI * 0.62), hairM2);
+  hairTop.position.set(0, 1.318, zc(0.505)); hairTop.scale.set(0.98, 1.08, 1.05); hairTop.castShadow = true; riderBody.add(hairTop);
+  const hairBack = new THREE.Mesh(new THREE.SphereGeometry(0.11, 18, 14), hairM2);
+  hairBack.position.set(0, 1.30, zc(0.565)); hairBack.scale.set(0.95, 1.0, 0.7); riderBody.add(hairBack);
+  for (const s of [-1, 1]) { const sb = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.05, 6, 8), hairM2); sb.position.set(0.095 * s, 1.27, zc(0.5)); riderBody.add(sb); } // pattes
+  // Lunettes AVIATEUR : verres miroir + monture dorée + branches vers les oreilles
+  for (const s of [-1, 1]) {
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.038, 20), lensM);
+    lens.position.set(0.042 * s, 1.315, zc(0.398)); lens.rotation.y = Math.PI + 0.1 * s; riderBody.add(lens);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.038, 0.005, 8, 20), goldM);
+    rim.position.copy(lens.position); rim.position.z += 0.001; rim.rotation.y = lens.rotation.y; riderBody.add(rim);
+    const temple = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.13, 6), goldM);
+    temple.position.set(0.075 * s, 1.318, zc(0.46)); temple.rotation.set(0, 0, Math.PI / 2); temple.rotation.y = 0.2; riderBody.add(temple);
+  }
+  const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.006, 0.006), goldM);
+  bridge.position.set(0, 1.322, zc(0.398)); riderBody.add(bridge);
+
+  // --- BRAS (manquaient !) : deltoïde -> biceps -> avant-bras -> gant sur le guidon ---
+  for (const s of [-1, 1]) {
+    const shoulder = new THREE.Vector3(0.235 * s, 1.11, zc(0.585));
+    const elbow = new THREE.Vector3(0.40 * s, 0.965, zc(0.14));
+    const wrist = new THREE.Vector3(0.455 * s, 0.83, zc(-0.16));
+    limbMesh(riderBody, shoulder, elbow, 0.062, 0.052, skinM);        // biceps/triceps
+    ball((shoulder.x + elbow.x) / 2 + 0.01 * s, (shoulder.y + elbow.y) / 2 + 0.02, (shoulder.z + elbow.z) / 2, 0.05, skinHiM, 1, 1.3, 1); // renflement biceps
+    ball(elbow.x, elbow.y, elbow.z, 0.05, skinM);                     // coude
+    limbMesh(riderBody, elbow, wrist, 0.05, 0.04, skinM);             // avant-bras
+    ball(elbow.x + (wrist.x - elbow.x) * 0.3, elbow.y + (wrist.y - elbow.y) * 0.3, elbow.z + (wrist.z - elbow.z) * 0.3, 0.045, skinHiM, 1.1, 1.3, 1.1); // brachio-radial
+    // Gant qui agrippe la poignée (poing fermé néoprène)
+    const fist = new THREE.Mesh(new THREE.SphereGeometry(0.055, 14, 12), gloveM);
+    fist.position.copy(wrist).add(new THREE.Vector3(0.005 * s, -0.01, -0.03)); fist.scale.set(1.0, 0.95, 1.25); fist.castShadow = true; riderBody.add(fist);
+    const knuck = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.028, 0.075), gloveM);
+    knuck.position.copy(fist.position).add(new THREE.Vector3(0, 0.03, -0.02)); riderBody.add(knuck);
+    const cuffG = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.042, 0.05, 12), gloveAcc);
+    cuffG.position.copy(wrist).add(new THREE.Vector3(0, 0.02, 0.05));
+    cuffG.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(wrist, elbow).normalize());
+    riderBody.add(cuffG);
+  }
   riderBody.visible = false;
   ski.add(riderBody);
 
-  /* ---- Jambes ---- */
+  /* ---- Jambes : cuisses en board short + genoux + mollets bronzés + chaussons ---- */
   for (const s of [-1, 1]) {
-    const hip = new THREE.Vector3(0.2 * s, 0.72, 0.95 * scaleF);
-    const knee = new THREE.Vector3(0.3 * s, 0.86, 0.32 * scaleF);
-    const foot = new THREE.Vector3(0.4 * s, 0.62, 0.5 * scaleF);
-    const thighL = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, hip.distanceTo(knee), 12), suitM);
-    thighL.position.addVectors(hip, knee).multiplyScalar(0.5);
-    thighL.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(knee, hip).normalize());
-    thighL.castShadow = true;
-    ski.add(thighL);
-    const kneeB = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), suitM);
-    kneeB.position.copy(knee);
-    ski.add(kneeB);
-    const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.06, knee.distanceTo(foot), 10), suitM);
-    shin.position.addVectors(knee, foot).multiplyScalar(0.5);
-    shin.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(foot, knee).normalize());
-    ski.add(shin);
-    const bootie = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.07, 0.26), new THREE.MeshStandardMaterial({ color: 0x191b20, roughness: 0.9 }));
-    bootie.position.set(0.41 * s, 0.615, 0.42 * scaleF);
-    ski.add(bootie);
+    const hip = new THREE.Vector3(0.2 * s, 0.74, zc(0.95));
+    const knee = new THREE.Vector3(0.31 * s, 0.87, zc(0.30));
+    const foot = new THREE.Vector3(0.4 * s, 0.6, zc(0.5));
+    // Cuisse (board short) : conique + renflement quadriceps
+    const thigh = limbMesh(ski, hip, knee, 0.10, 0.075, shortsM);
+    const quad = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 12), shortsM);
+    quad.position.lerpVectors(hip, knee, 0.45).add(new THREE.Vector3(0, 0.0, -0.02)); quad.scale.set(1, 1.4, 1); ski.add(quad);
+    const hem = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.078, 0.03, 14), shortsM2); // ourlet du short
+    hem.position.copy(knee).lerp(hip, 0.12);
+    hem.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(knee, hip).normalize()); ski.add(hem);
+    const kneeB = new THREE.Mesh(new THREE.SphereGeometry(0.062, 14, 12), skinM); kneeB.position.copy(knee); ski.add(kneeB);
+    // Mollet bronzé + tibia
+    limbMesh(ski, knee, foot, 0.058, 0.04, skinM);
+    const calf = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 10), skinHiM);
+    calf.position.lerpVectors(knee, foot, 0.35).add(new THREE.Vector3(0, 0, 0.03)); calf.scale.set(1, 1.5, 1); ski.add(calf);
+    // Chausson néoprène
+    const bootie = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.075, 0.24), new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.85 }));
+    bootie.position.set(0.41 * s, 0.6, zc(0.44)); bootie.castShadow = true; ski.add(bootie);
+    const sole = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.25), gloveAcc);
+    sole.position.set(0.41 * s, 0.565, zc(0.44)); ski.add(sole);
   }
 
   /* ---- Effets d'eau attachés ---- */
