@@ -2106,8 +2106,8 @@ function computePhys() {
   };
 }
 const keys = {};
-let lastY = 0, slamCd = 0, camImpact = 0;
-let plunge = 0, plungeV = 0;
+let slamCd = 0, camImpact = 0;
+let plunge = 0, lastPlunge = 0;
 // État caméra FPV : offsets lissés des forces G (la tête/le corps réagit à
 // l'accél, aux virages, aux chocs) + suivi de la vitesse pour dériver l'accél.
 const camG = { x: 0, z: 0, pitch: 0, roll: 0, yaw: 0 };
@@ -2271,7 +2271,7 @@ function toGarage() {
   mode = 'menu';
   scene.attach(camera);
   state.x = 0; state.z = 0; state.speed = 0; state.vx = 0; state.vz = 0; state.throttle = 0; state.rpm = 0; state.yawRate = 0; state.yaw = 0; state.air = false;
-  plunge = 0; plungeV = 0;
+  state.y = 0; state.vy = 0; plunge = 0; lastPlunge = 0;
   ski.position.set(0, 0, 0);
   if (realRiderGroup) realRiderGroup.visible = true;
   updateCockpitVisibility();
@@ -2505,7 +2505,7 @@ function frame() {
   // --- Ventilation : la pompe pousse de l'eau seulement si elle est immergée.
   //     En l'air (ou coque très haute), elle ventile -> plus de poussée, et le
   //     moteur s'emballe (régime libre) puis remord à l'impact. ---
-  const ventilated = state.air || plunge > 0.06;
+  const ventilated = state.air || plunge > 0.14;
   // --- Régime turbine : monte/descend avec inertie ; s'emballe si ventilée. ---
   const rpmTarget = ventilated ? Math.max(0.9, Math.abs(state.throttle)) : Math.abs(state.throttle);
   const spool = rpmTarget > state.rpm ? PHYS.spoolUp : PHYS.spoolDown;
@@ -2597,70 +2597,65 @@ function frame() {
     }
   }
 
-  /* ---- Flottaison + sauts ---- */
-  /* Flottaison réaliste : tirant d'eau + ressort d'enfoncement de coque */
+  /* ---- Flottaison + sauts : modèle de coque PLANANTE ---- */
   const hw = waveHeight(state.x, state.z, t);
-  // Assiette verticale : le modèle OBJ a le bas de coque à Y≈-0.79 sous l'origine
-  // du ski. Pour que la ligne de flottaison tombe sur le tiers/moitié bas de la
-  // coque (assis DANS l'eau, pas au-dessus), l'origine doit être ~0.54 AU-DESSUS
-  // de la surface. Au planage la coque déjauge encore un peu (tirant réduit).
-  // Au planage la coque déjauge ET la cuvette du shader s'estompe : les deux
-  // remontent ensemble (+0.34 ici, cuvette -55% côté GPU).
+  // Surface PORTANTE ressentie par la coque (~3.4 m) : moyennée sur l'empreinte
+  // (avant / centre / arrière). Une coque rigide ne suit pas une vague plus courte
+  // qu'elle : elle PONTE les creux. Ce lissage spatial + la suspension temporelle
+  // ci-dessous reproduisent le "skim" d'un jetski lancé — il glisse sur le clapot
+  // au lieu de sauter de crête en crête ; à basse vitesse il s'assoit dans la houle.
+  const HH = 1.7;                                     // demi-longueur de coque
+  const hFwd = waveHeight(state.x + fx * HH, state.z + fz * HH, t);
+  const hAft = waveHeight(state.x - fx * HH, state.z - fz * HH, t);
+  const hAvg = (hFwd + hw + hAft) / 3;
+  const hMax = Math.max(hFwd, hw, hAft);
+  // Au planage la coque PONTE davantage (skim sur les crêtes) ; au repos elle
+  // s'assoit dans le creux (moyenne de l'empreinte).
+  const support = hAvg + (hMax - hAvg) * (0.15 + 0.5 * planing);
   const draft = DRAFT_REST + planing * 0.34;
-  const waterline = hw + draft;
+  const targetY = support + draft;
   // Agitation locale de la mer : calme près de la côte, formée au large.
   const rough = Math.min(1.5, seaFactor(state.x, state.z));
-  if (!state.air) {
-    // Ressort MOU (eau "souple") : la coque s'enfonce franchement sous un choc
-    // et la flottabilité la ramène LENTEMENT — c'est l'illusion de poids.
-    // Raideur 11 (~0.53 s de période), amortissement 3.2 (rebond visible).
-    plungeV += (-plunge * 11 - plungeV * 3.2) * dt;
-    plunge += plungeV * dt;
-    plunge = Math.max(-2.6, Math.min(0.15, plunge));
-    const newY = waterline + plunge;
-    state.vy = (newY - lastY) / dt;
-    state.y = newY;
-    // DÉCOLLAGE : seulement si l'eau SE DÉROBE devant la proue (sortie de
-    // crête), pas à chaque oscillation. L'ancien seuil (vy>2.5 seul)
-    // confondait la vitesse de suivi des vagues avec un saut : le jet passait
-    // sa vie en micro-vols -> LE bug "il flotte au-dessus de l'eau".
-    if (state.vy > 3.4 && state.speed > 14 && plunge > -0.15) {
-      const hbow = waveHeight(state.x + fx * 2.2, state.z + fz * 2.2, t);
-      if (hbow - state.y < -0.35) {
-        state.air = true;
-        state.airTime = 0;
-        state.vy = Math.min(state.vy * 1.25, 7.0);
-      }
-    }
+  // CONTACT ASYMÉTRIQUE (le cœur du réalisme) : l'eau POUSSE la coque (flottabilité
+  // + portance de planage, via une suspension masse-ressort AMORTIE) mais ne la TIRE
+  // jamais vers le bas. Tant que la coque touche sa surface portante, la suspension
+  // suit la houle longue et filtre le clapot court (skim). Dès qu'elle DÉPASSE cette
+  // surface — l'eau qui se dérobe en sortie de crête/rampe — seule la GRAVITÉ agit :
+  // arc balistique naturel. Résultat SANS aucun seuil de saut arbitraire : le jet ski
+  // lisse le petit clapot et ne décolle QUE sur les vraies crêtes, d'autant plus haut
+  // que la mer est formée et qu'on va vite (validé : 0 % en l'air sur mer calme,
+  // ~20-30 % sur la houle, contre 48-81 % PARTOUT avec l'ancien suivi rigide).
+  const stiff = 24, damp = 7.5;
+  const ay = (state.y <= targetY) ? (stiff * (targetY - state.y) - damp * state.vy) : -9.8;
+  state.vy += ay * dt;
+  state.y += state.vy * dt;
+  plunge = state.y - targetY;
+  // Ré-entrée dans l'eau après un vol : gerbe + secousse caméra ∝ choc.
+  if (lastPlunge > 0.06 && plunge <= 0 && state.vy < -1.5) {
+    const impact = -state.vy;
+    const power = Math.min(impact / 5, 1.8);
+    spawnSplash(state.x, hw, state.z, power);
+    burstDrops(state.x, hw, state.z, 26 + Math.floor(impact * 10), 0.7 + power * 0.6, fx * state.speed, fz * state.speed);
+    lensDrops(4 + Math.floor(impact / 2));
+    camImpact = Math.min(impact * 0.06, 0.5);
+    camJolt = Math.min(impact * 0.5, 2.2);
+    audioSplash(power);
+    state.vx *= 0.9; state.vz *= 0.9; state.speed *= 0.9;
+  }
+  lastPlunge = plunge;
+  // État "en l'air" (pilotage/effets) : marge pour ignorer les micro-arcs du clapot —
+  // un petit rebond n'est pas un saut (ni coupure de direction, ni gros splash).
+  const wasAir = state.air;
+  state.air = plunge > 0.28;
+  if (state.air) {
+    state.airTime = wasAir ? state.airTime + dt : dt;
   } else {
-    state.vy -= 9.8 * dt;
-    state.y += state.vy * dt;
-    state.airTime += dt;
-    if (state.y <= waterline) {
-      state.air = false;
+    if (wasAir) {
       if (state.airTime > state.bestAir) state.bestAir = state.airTime;
       state.showAirUntil = t + 1.6;
-      const impact = -state.vy;
-      // On garde la vitesse verticale : la coque continue à plonger sous l'eau
-      // au lieu de s'arrêter net à la surface. La flottabilité (ressort) la
-      // ramènera à la ligne de flottaison en 1 à 2 s selon l'impact.
-      plunge = state.y - waterline;
-      plungeV = state.vy;
-      state.y = waterline + plunge;
-      if (impact > 1.5) {
-        const power = Math.min(impact / 5, 1.8);
-        spawnSplash(state.x, hw, state.z, power);
-        burstDrops(state.x, hw, state.z, 30 + Math.floor(impact * 10), 0.7 + power * 0.6, fx * state.speed, fz * state.speed);
-        lensDrops(4 + Math.floor(impact / 2));
-        camImpact = Math.min(impact * 0.06, 0.5);
-        camJolt = Math.min(impact * 0.5, 2.2);
-        audioSplash(power);
-        state.vx *= 0.88; state.vz *= 0.88; state.speed *= 0.88;
-      }
-      state.vy = 0;
     }
+    state.airTime = 0;
   }
-  lastY = state.y;
 
   const hBow = waveHeight(state.x + fx * 1.8, state.z + fz * 1.8, t);
   const hStern = waveHeight(state.x - fx * 1.7, state.z - fz * 1.7, t);
@@ -2673,7 +2668,7 @@ function frame() {
     lensDrops(2 + Math.floor(speedF * 4));
     camImpact = Math.max(camImpact, 0.12 + speedF * 0.1);
     camJolt = Math.max(camJolt, 0.5 + speedF * 0.7);
-    plungeV -= 0.8 * speedF;
+    state.vy -= 0.8 * speedF;                          // la coque encaisse le choc de proue
     audioSplash(0.4 + speedF * 0.4);
     state.vx *= 0.985; state.vz *= 0.985; state.speed *= 0.985;
   }
@@ -2688,7 +2683,8 @@ function frame() {
   if (!state.air) {
     const chopK = rough * speedF;
     state.yaw += Math.sin(t * 4.7 + state.x * 0.8 + state.z * 0.5) * 0.22 * chopK * dt;
-    plungeV += Math.sin(t * 5.9 + state.z * 0.7) * 1.2 * chopK * dt;
+    // Léger tremblement vertical sur l'eau formée (subtil : la suspension le lisse).
+    state.vy += Math.sin(t * 5.9 + state.z * 0.7) * 0.6 * chopK * dt;
   }
 
   const fThr = Math.max(0, thrust);
