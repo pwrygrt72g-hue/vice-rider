@@ -6,7 +6,7 @@
 
    Zone côtière : grand plateau calme (marina protégée) ; il faut prendre le
    large pour la houle, et encore plus loin pour les très grosses vagues. */
-import { TWO_PI } from './util.js?v=32';
+import { TWO_PI } from './util.js?v=33';
 
 /** [dirX, dirZ, amplitude(raideur), longueur d'onde] — miroir GLSL uWaves[8]. */
 export const WAVES = [

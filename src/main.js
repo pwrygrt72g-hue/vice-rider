@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=32';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=32';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=32';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=32';
+import { TWO_PI, smooth01, hex } from './util.js?v=33';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=33';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=33';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=33';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v32 · pilote+monde premium';
+const BUILD = 'v33 · HUD compteur neon';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -2625,8 +2625,8 @@ let frames = 0, fpsTime = 0, fps = 60, lowFpsTime = 0;
 /* ================= HUD refs ================= */
 const hudSpeed = document.getElementById('hud-speed');
 const hudHeading = document.getElementById('hud-heading');
-const hudThr = document.getElementById('hud-thr');
-const hudThrPct = document.getElementById('hud-thr-pct');
+const spFill = document.getElementById('sp-fill');   // arc de vitesse (compteur)
+const spThr = document.getElementById('sp-thr');     // arc de gaz (intérieur)
 const hudBest = document.getElementById('hud-best');
 const hudAir = document.getElementById('hud-air');
 const chalPanel = document.getElementById('chal');
@@ -3317,13 +3317,19 @@ function frame() {
   /* ---- HUD ---- */
   const kmh = state.speed * 3.6;
   gaugeTick++;
-  if (gaugeTick % 2 === 0) drawOdo(Math.abs(kmh), state.throttle, MODELS.find(m => m.id === sel.ski).brand, kmh < -0.5);
-  hudSpeed.textContent = (kmh < -0.5 ? 'R ' : '') + Math.round(Math.abs(kmh)) + ' km/h';
+  const skiModel = MODELS.find(m => m.id === sel.ski);
+  if (gaugeTick % 2 === 0) drawOdo(Math.abs(kmh), state.throttle, skiModel.brand, kmh < -0.5);
+  hudSpeed.textContent = (kmh < -0.5 ? 'R' : '') + Math.round(Math.abs(kmh));
   let hdg = ((-state.yaw * 180 / Math.PI) % 360 + 360) % 360;
   hudHeading.textContent = String(Math.round(hdg)).padStart(3, '0') + '° ' + CARDINALS[Math.round(hdg / 45) % 8];
-  hudThrPct.textContent = Math.round(state.throttle * 100) + '%';
-  hudThr.style.width = Math.max(0, state.throttle * 100) + '%';
-  hudThr.style.background = state.throttle < 0 ? '#ff9c1a' : '#ff5c8a';
+  // Compteur circulaire : arc de vitesse (0->vitesse max du modèle) + arc de gaz.
+  // pathLength=100 => l'arc de 270° vaut 75 unités.
+  const sf = Math.min(1, Math.abs(kmh) / ((skiModel && skiModel.top) || 110));
+  spFill.style.strokeDasharray = (75 * sf).toFixed(1) + ' 100';
+  spFill.style.stroke = sf > 0.82 ? '#ff2f63' : (sf > 0.5 ? '#ff5c8a' : '#ff92b6');
+  const tf = Math.min(1, Math.abs(state.throttle));
+  spThr.style.strokeDasharray = (75 * tf).toFixed(1) + ' 100';
+  spThr.style.stroke = state.throttle < 0 ? 'rgba(255,156,26,0.95)' : 'rgba(53,224,224,0.95)';
   hudBest.textContent = state.bestAir.toFixed(2) + ' s';
   if (state.air) {
     hudAir.style.opacity = '1';
