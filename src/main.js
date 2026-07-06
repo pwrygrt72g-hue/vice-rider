@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=31';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=31';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=31';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=31';
+import { TWO_PI, smooth01, hex } from './util.js?v=32';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=32';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=32';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=32';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v31 · skyline Miami Art-Deco';
+const BUILD = 'v32 · pilote+monde premium';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -512,6 +512,35 @@ const rockMat = new THREE.MeshStandardMaterial({ color: 0x6a6560, roughness: 0.8
 const frondMat = new THREE.MeshStandardMaterial({ color: 0x2c6e35, roughness: 0.85, side: THREE.DoubleSide });
 const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7a5c3d, roughness: 0.9 });
 const woodMat = new THREE.MeshStandardMaterial({ color: 0x8a6a48, roughness: 0.9 });
+const thatchMat = new THREE.MeshStandardMaterial({ color: 0xbf9450, roughness: 0.96, flatShading: true });
+const coconutMat = new THREE.MeshStandardMaterial({ color: 0x54371f, roughness: 0.8 });
+// Parasols Miami : nappe pastel + rayures (couleurs vives = accents de plage)
+const parasolMats = [0xff5a7a, 0x2fd0e0, 0xffc23a, 0xff7a3a, 0xa06bff]
+  .map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.55, side: THREE.DoubleSide }));
+
+// Paillote tiki : 4 poteaux + plateforme + toit de chaume conique à deux niveaux
+function makeTiki(parent, x, z) {
+  const t = new THREE.Group();
+  for (const dx of [-1, 1]) for (const dz of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 2.3, 7), trunkMat);
+    post.position.set(dx * 1.15, 1.15, dz * 1.15); post.castShadow = true; t.add(post);
+  }
+  const plat = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.16, 3.0), woodMat);
+  plat.position.y = 2.3; t.add(plat);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(2.55, 1.5, 8), thatchMat);
+  roof.position.y = 3.15; roof.castShadow = true; t.add(roof);
+  const roof2 = new THREE.Mesh(new THREE.ConeGeometry(1.55, 1.0, 8), thatchMat);
+  roof2.position.y = 3.95; t.add(roof2);
+  t.position.set(x, 0, z); t.rotation.y = Math.random() * TWO_PI;
+  parent.add(t);
+}
+// Parasol de plage : mât + nappe conique colorée
+function makeParasol(parent, x, z) {
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 2.3, 6), woodMat);
+  pole.position.set(x, 1.15, z); parent.add(pole);
+  const top = new THREE.Mesh(new THREE.ConeGeometry(1.35, 0.72, 14), parasolMats[(Math.random() * parasolMats.length) | 0]);
+  top.position.set(x, 2.35, z); top.castShadow = true; parent.add(top);
+}
 
 function makePalm(g, px, pz, h) {
   const lean = (Math.random() - 0.5) * 0.5;
@@ -537,6 +566,15 @@ function makePalm(g, px, pz, h) {
     frond.rotation.z = -0.25 - Math.random() * 0.2;
     frond.translateX(1.35);
     g.add(frond);
+  }
+  // Grappe de noix de coco sous la couronne (60% des palmiers)
+  if (Math.random() < 0.6) {
+    for (let n = 0; n < 3; n++) {
+      const a = (n / 3) * TWO_PI;
+      const nut = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), coconutMat);
+      nut.position.copy(top).add(new THREE.Vector3(Math.cos(a) * 0.18, -0.22, Math.sin(a) * 0.18));
+      g.add(nut);
+    }
   }
 }
 function makeIsland(r) {
@@ -573,6 +611,14 @@ function makeIsland(r) {
     const pr = r * (0.25 + Math.random() * 0.4);
     makePalm(g, Math.cos(ang) * pr, Math.sin(ang) * pr, 4.5 + Math.random() * 2.5);
   }
+  // Paillote tiki (une île sur deux) au centre
+  if (Math.random() < 0.55) makeTiki(g, (Math.random() - 0.5) * r * 0.5, (Math.random() - 0.5) * r * 0.5);
+  // Parasols colorés sur le sable (accents Miami)
+  const paras = 1 + Math.floor(Math.random() * 3);
+  for (let p = 0; p < paras; p++) {
+    const ang = Math.random() * TWO_PI, pr = r * (0.7 + Math.random() * 0.28);
+    makeParasol(g, Math.cos(ang) * pr, Math.sin(ang) * pr);
+  }
   scene.add(g);
   return g;
 }
@@ -592,12 +638,12 @@ function makeDock(g, r) {
   dock.rotation.y = Math.random() * TWO_PI;
   g.add(dock);
 }
-for (let i = 0; i < 5; i++) {
+for (let i = 0; i < 7; i++) {
   const r = 16 + Math.random() * 26;
-  const ang = (i / 5) * TWO_PI + Math.random();
-  const dist = 260 + Math.random() * 340;
+  const ang = (i / 7) * TWO_PI + Math.random();
+  const dist = 240 + Math.random() * 380;
   const g = makeIsland(r);
-  if (i === 0) makeDock(g, r);
+  if (i === 0 || i === 3) makeDock(g, r);
   g.position.set(Math.cos(ang) * dist, 0, Math.sin(ang) * dist);
   palmIslands.push({ g, r });
 }
@@ -1550,6 +1596,13 @@ function buildSki() {
     th2.rotation.x = 0.17;
     barGroup.add(th2);
     if (s > 0) animRefs.rThumb = th2;
+    // Gant néoprène SANS DOIGTS (cohérent avec les gants du pilote 3e pers.) :
+    // dossière sombre sur le dos de la main + sangle de serrage colorée. Les
+    // doigts (peau) dépassent vers la poignée -> lecture "gant de sport".
+    const gBack = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.03, 0.088), gloveM);
+    gBack.position.set(0.452 * s, 0.176, 0.122); gBack.rotation.x = -0.75; gBack.castShadow = true; barGroup.add(gBack);
+    const gStrap = new THREE.Mesh(new THREE.BoxGeometry(0.084, 0.02, 0.03), gloveAcc);
+    gStrap.position.set(0.452 * s, 0.166, 0.168); gStrap.rotation.x = -0.95; barGroup.add(gStrap);
   }
 
   /* ================= PILOTE MIAMI (3e personne) : torse nu bronzé, gilet ouvert,
@@ -1645,6 +1698,26 @@ function buildSki() {
   }
   const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.006, 0.006), goldM);
   bridge.position.set(0, 0.052, zc(-0.122)); headPivot.add(bridge);
+  // --- Signature Miami : chaîne en or au cou (visible nuque/épaules en chase) ---
+  const chain = new THREE.Mesh(new THREE.TorusGeometry(0.082, 0.0075, 8, 28), goldM);
+  chain.position.set(0, 1.155, zc(0.56)); chain.rotation.x = 1.35; chain.scale.set(1.05, 1, 0.9); up.add(chain);
+  const pendant = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.032, 0.01), goldM);
+  pendant.position.set(0, 1.095, zc(0.475)); up.add(pendant);
+  // --- Bandeau néon coral sur le front (iconique + masque la couture des cheveux) ---
+  const bandMat = new THREE.MeshStandardMaterial({ color: 0xff5a7a, roughness: 0.45, emissive: 0x30060f, emissiveIntensity: 0.5 });
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.017, 10, 26), bandMat);
+  band.position.set(0, 0.09, zc(-0.01)); band.rotation.x = 0.12; band.scale.set(0.98, 1, 1.04); headPivot.add(band);
+  // --- Mèches au vent : elles se rabattent vers l'arrière avec la vitesse (animées) ---
+  const hairTufts = [];
+  for (let ht = 0; ht < 6; ht++) {
+    const a = (ht / 5 - 0.5) * 1.3;
+    const tuft = new THREE.Mesh(new THREE.CapsuleGeometry(0.014, 0.085 + Math.random() * 0.04, 5, 8), hairM2);
+    tuft.position.set(Math.sin(a) * 0.075, 0.075, zc(0.05));
+    tuft.rotation.set(1.15, 0, a * 0.55);
+    headPivot.add(tuft);
+    hairTufts.push({ mesh: tuft, baseX: 1.15, z: a * 0.55, ph: ht * 1.1 });
+  }
+  animRefs.hairTufts = hairTufts;
 
   // --- BRAS : deltoïde -> biceps -> avant-bras -> gant. Meshes sous riderBody (NON
   //     penchés) + une ANCRE d'épaule dans le pivot du torse. Chaque frame on résout
@@ -2939,6 +3012,15 @@ function frame() {
     // Tête : se stabilise vers l'horizon (compense gîte/tangage du buste) + regarde le virage
     const hpv = animRefs.headPivot;
     if (hpv) { hpv.rotation.z = -tp.rotation.z * 0.65; hpv.rotation.x = -tp.rotation.x * 0.4 + (state.air ? 0.12 : 0); hpv.rotation.y = -state.rudder * 0.2 * spInside; }
+    // Mèches au vent : flottement + rabat vers l'arrière proportionnel à la vitesse
+    if (animRefs.hairTufts) {
+      const windBack = speedF * 0.5;
+      for (const ht of animRefs.hairTufts) {
+        const flut = Math.sin(t * (8 + speedF * 12) + ht.ph) * (0.05 + speedF * 0.14);
+        ht.mesh.rotation.x = ht.baseX + windBack + flut;
+        ht.mesh.rotation.z = ht.z + Math.sin(t * 6.2 + ht.ph) * 0.06 * (0.3 + speedF);
+      }
+    }
     // --- IK 2 os : épaule (suit le buste, tournée autour des hanches) -> poignée FIXE ---
     _ikRest.set(0, animRefs.torsoBaseY, tp.position.z);                   // point de pivot (hanches)
     for (const a of animRefs.arms) {
@@ -3005,9 +3087,9 @@ function frame() {
       camG.roll + bobX * 0.5
     );
   } else {
-    chaseTarget.set(state.x - fx * 6.6 - rx * state.rudder * 1.2, state.y + 2.45, state.z - fz * 6.6 - rz * state.rudder * 1.2);
+    chaseTarget.set(state.x - fx * 5.9 - rx * state.rudder * 1.15, state.y + 2.2, state.z - fz * 5.9 - rz * state.rudder * 1.15);
     camera.position.lerp(chaseTarget, 1 - Math.exp(-dt * 4.5));
-    camera.lookAt(state.x + fx * 4, state.y + 1.1, state.z + fz * 4);
+    camera.lookAt(state.x + fx * 3.6, state.y + 1.2, state.z + fz * 3.6);
   }
   const targetFov = 74 + 11 * speedF;
   if (Math.abs(camera.fov - targetFov) > 0.1) {
