@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=39';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=39';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=39';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=39';
+import { TWO_PI, smooth01, hex } from './util.js?v=40';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=40';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=40';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=40';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v39 · fix pilote garage';
+const BUILD = 'v40 · deux-tons + livree + chrome';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1394,10 +1394,12 @@ function buildSki() {
   const matM = new THREE.MeshStandardMaterial({ color: 0x191b21, roughness: 1.0 });
   const stitchM = new THREE.MeshStandardMaterial({ color: 0x3a3d45, roughness: 0.8 });
 
-  // ===================== COQUE (carène planante) =====================
-  ski.add(hullLayer(1.0 * S, S, 0.36, hullM, 0.0));                 // corps de carène
-  ski.add(hullLayer(1.055 * S, 1.01 * S, 0.05, accM, 0.36));        // liston / rub-rail (accent)
-  ski.add(hullLayer(0.92 * S, 0.975 * S, 0.20, deckM, 0.41));       // pont
+  const trimGel = new THREE.MeshPhysicalMaterial({ color: cfg.colors.trim, metalness: 0.2, roughness: 0.3, clearcoat: 1.0, clearcoatRoughness: 0.1, envMapIntensity: 1.0 });
+  // ===================== COQUE (carène planante, DEUX-TONS) =====================
+  ski.add(hullLayer(1.0 * S, S, 0.36, hullM, 0.0));                 // carène BASSE = teinte hull (sombre)
+  ski.add(hullLayer(1.06 * S, 1.012 * S, 0.028, trimGel, 0.335));   // filet de livrée clair (trim)
+  ski.add(hullLayer(1.05 * S, 1.008 * S, 0.05, chrome, 0.365));     // liston CHROMÉ (bond line)
+  ski.add(hullLayer(0.92 * S, 0.975 * S, 0.20, deckM, 0.42));       // pont = teinte deck (colorée)
   // Strakes de chine : lignes qui fendent l'eau le long de la carène
   for (const sx of [-1, 1]) for (const k of [0, 1]) {
     const strake = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.045, 2.1 * S), accM);
@@ -1460,14 +1462,23 @@ function buildSki() {
     sponson.position.set(0.68 * sx * S, 0.14, 1.05 * S); sponson.rotation.z = sx * 0.15; ski.add(sponson);
   }
 
-  // Décalcos de marque sur les flancs
-  const decal = decalTexture(cfg.brand, cfg.name, '#' + cfg.colors.accent.toString(16).padStart(6, '0'));
+  // LIVRÉE GRAPHIQUE sur les flancs : swoosh deux-tons dynamique + marque + modèle
+  const livCss = '#' + cfg.colors.trim.toString(16).padStart(6, '0');
+  const livAcc = '#' + cfg.colors.accent.toString(16).padStart(6, '0');
+  const livCv = document.createElement('canvas'); livCv.width = 640; livCv.height = 200;
+  const lc = livCv.getContext('2d'); lc.clearRect(0, 0, 640, 200);
+  lc.fillStyle = livCss; lc.beginPath(); lc.moveTo(0, 152); lc.lineTo(640, 58); lc.lineTo(640, 104); lc.lineTo(0, 200); lc.closePath(); lc.fill();
+  lc.fillStyle = livAcc; lc.globalAlpha = 0.9; lc.beginPath(); lc.moveTo(0, 128); lc.lineTo(640, 36); lc.lineTo(640, 54); lc.lineTo(0, 146); lc.closePath(); lc.fill(); lc.globalAlpha = 1;
+  lc.font = 'italic 900 64px "Avenir Next", sans-serif'; lc.textAlign = 'left'; lc.fillStyle = livCss;
+  lc.fillText(cfg.brand.toUpperCase(), 26, 74);
+  lc.font = 'italic 700 42px "Avenir Next", sans-serif'; lc.fillStyle = 'rgba(255,255,255,0.95)';
+  lc.fillText(cfg.name, 28, 128);
+  const livTex = new THREE.CanvasTexture(livCv); livTex.colorSpace = THREE.SRGBColorSpace; livTex.anisotropy = 4;
   for (const sx of [-1, 1]) {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(1.3 * scaleF, 0.32 * scaleF),
-      new THREE.MeshBasicMaterial({ map: decal, transparent: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2 }));
-    p.position.set(0.665 * sx * scaleF, 0.32, 0.05);
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(1.9 * S, 0.58 * S),
+      new THREE.MeshBasicMaterial({ map: livTex, transparent: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2 }));
+    p.position.set(0.66 * sx * S, 0.36, 0.05);
     p.rotation.y = sx > 0 ? Math.PI / 2 : -Math.PI / 2;
-    if (sx < 0) p.scale.x = 1;
     ski.add(p);
   }
 
@@ -1499,6 +1510,30 @@ function buildSki() {
     const num = new THREE.Mesh(new THREE.PlaneGeometry(0.24 * S, 0.24 * S),
       new THREE.MeshBasicMaterial({ map: numTex, transparent: true, depthWrite: false }));
     num.position.set(0.5 * sx * S, 0.44, -1.35 * S); num.rotation.y = sx > 0 ? Math.PI / 2 : -Math.PI / 2; ski.add(num);
+  }
+
+  // ===================== DÉTAILS PRODUIT (panneaux + chrome) =====================
+  const panelM = new THREE.MeshStandardMaterial({ color: 0x08090c, roughness: 0.9 });
+  // Lignes de tôle (panel lines) sur le capot avant
+  for (const pz of [-1.25, -1.05, -0.7]) {
+    const pl = new THREE.Mesh(new THREE.BoxGeometry(0.5 * S, 0.012, 0.02), panelM);
+    pl.position.set(0, 0.66, pz * S); ski.add(pl);
+  }
+  // Filet chromé le long du capot moteur
+  const hoodChrome = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.02, 0.9 * S), chrome);
+  hoodChrome.position.set(0, 0.72, -0.9 * S); ski.add(hoodChrome);
+  // Bouchon d'essence chromé
+  const fuelCap = new THREE.Mesh(new THREE.CylinderGeometry(0.05 * S, 0.05 * S, 0.03, 16), chrome);
+  fuelCap.position.set(0.15 * S, 0.66, 0.18 * S); ski.add(fuelCap);
+  // Taquets d'amarrage chromés (proue + poupe)
+  for (const cz of [-1.15, 1.3]) {
+    const cleat = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.12 * S, 8).rotateZ(Math.PI / 2), chrome);
+    cleat.position.set(0, 0.56, cz * S); ski.add(cleat);
+  }
+  // Grilles d'aération chromées sur les flancs du capot
+  for (const sx of [-1, 1]) for (let v = 0; v < 3; v++) {
+    const vent = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.015, 0.16 * S), chrome);
+    vent.position.set(0.34 * sx * S, 0.6 - v * 0.045, -0.75 * S); vent.rotation.z = sx * 0.2; ski.add(vent);
   }
 
   // Console + compteur à rouleaux
