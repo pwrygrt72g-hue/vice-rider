@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=37';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=37';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=37';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=37';
+import { TWO_PI, smooth01, hex } from './util.js?v=38';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=38';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=38';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=38';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v37 · marques + pilote style';
+const BUILD = 'v38 · 3 vues camera';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1899,7 +1899,7 @@ function buildSki() {
 function rebuildSki() {
   buildSki();
   if (realModel) realModel.visible = true;
-  if (realRiderGroup) realRiderGroup.visible = (typeof camMode !== 'undefined' && camMode === 'chase');
+  if (realRiderGroup) realRiderGroup.visible = (typeof camMode !== 'undefined' && camMode !== 'fpv');
   updateRealModelColors();
 }
 
@@ -1991,7 +1991,7 @@ function fitImported(obj, opts) {
     alignRideModel();
     refreshModelMode();
     realRiderGroup = attachRealRider(holder);
-    if (realRiderGroup) realRiderGroup.visible = camMode === 'chase';
+    if (realRiderGroup) realRiderGroup.visible = camMode !== 'fpv';
     console.info('[Vice Rider] Modèle réel intégré (garage + pilotage) :', label);
   }
   function loadGlb(url) {
@@ -2618,17 +2618,20 @@ function toGarage() {
   if (audio) { audio.eGain.gain.value = 0; audio.nGain.gain.value = 0; }
 }
 function toggleCam() {
+  // Cycle 3 vues : chase 6 m -> chase 2 m -> FPV -> chase 6 m
+  const order = ['chase', 'chaseNear', 'fpv'];
+  const wasFpv = camMode === 'fpv';
+  const i = order.indexOf(camMode);
+  camMode = order[(i + 1) % order.length];
   if (camMode === 'fpv') {
-    camMode = 'chase';
-    scene.attach(camera);
-  } else {
-    camMode = 'fpv';
     ski.add(camera);
     camera.position.copy(CAM_BASE);
     camera.rotation.set(-0.17, 0, 0);
+  } else if (wasFpv) {
+    scene.attach(camera);   // on repasse en caméra monde
   }
-  if (riderBody) riderBody.visible = camMode === 'chase' && !realModel;
-  if (realRiderGroup) realRiderGroup.visible = camMode === 'chase';
+  if (riderBody) riderBody.visible = camMode !== 'fpv' && !realModel;
+  if (realRiderGroup) realRiderGroup.visible = camMode !== 'fpv';
   updateCockpitVisibility();
 }
 
@@ -3190,9 +3193,14 @@ function frame() {
       camG.roll + bobX * 0.5
     );
   } else {
-    chaseTarget.set(state.x - fx * 5.9 - rx * state.rudder * 1.15, state.y + 2.2, state.z - fz * 5.9 - rz * state.rudder * 1.15);
-    camera.position.lerp(chaseTarget, 1 - Math.exp(-dt * 4.5));
-    camera.lookAt(state.x + fx * 3.6, state.y + 1.2, state.z + fz * 3.6);
+    // Deux distances de chase : proche (2 m, met le pilote/jet en valeur) ou
+    // large (6 m, meilleure lecture de la trajectoire).
+    const near = camMode === 'chaseNear';
+    const dist = near ? 2.4 : 5.9;
+    const rud = near ? 0.6 : 1.15;
+    chaseTarget.set(state.x - fx * dist - rx * state.rudder * rud, state.y + (near ? 1.5 : 2.2), state.z - fz * dist - rz * state.rudder * rud);
+    camera.position.lerp(chaseTarget, 1 - Math.exp(-dt * (near ? 6.5 : 4.5)));
+    camera.lookAt(state.x + fx * (near ? 1.1 : 3.6), state.y + (near ? 1.15 : 1.2), state.z + fz * (near ? 1.1 : 3.6));
   }
   const targetFov = 74 + 11 * speedF;
   if (Math.abs(camera.fov - targetFov) > 0.1) {
