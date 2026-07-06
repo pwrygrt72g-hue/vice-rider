@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=38';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=38';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=38';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=38';
+import { TWO_PI, smooth01, hex } from './util.js?v=39';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=39';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=39';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=39';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v38 · 3 vues camera';
+const BUILD = 'v39 · fix pilote garage';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -3095,7 +3095,7 @@ function frame() {
      Le haut du corps pivote aux hanches (penché dans le virage, poids reporté aux
      gaz/freins, ramassé dans les sauts, absorption des chocs), la tête se stabilise
      à l'horizon, et les bras sont résolus en IK pour garder les mains sur le guidon. */
-  if (riderBody && riderBody.visible && animRefs && animRefs.torsoPivot) {
+  if (mode === 'ride' && riderBody && riderBody.visible && animRefs && animRefs.torsoPivot) {
     const tp = animRefs.torsoPivot;
     const kf = 1 - Math.exp(-dt * 9);
     const spInside = Math.min(spd / 9, 1);
