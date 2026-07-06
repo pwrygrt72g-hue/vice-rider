@@ -2625,10 +2625,13 @@ function frame() {
   // lisse le petit clapot et ne décolle QUE sur les vraies crêtes, d'autant plus haut
   // que la mer est formée et qu'on va vite (validé : 0 % en l'air sur mer calme,
   // ~20-30 % sur la houle, contre 48-81 % PARTOUT avec l'ancien suivi rigide).
-  const stiff = 24, damp = 7.5;
+  const stiff = 32, damp = 9.0;
   const ay = (state.y <= targetY) ? (stiff * (targetY - state.y) - damp * state.vy) : -9.8;
   state.vy += ay * dt;
   state.y += state.vy * dt;
+  // Butée de flottabilité : la coque ne s'enfonce jamais de plus de ~0.8 m sous sa
+  // ligne de flottaison (fini l'effet "coule" sur les chocs/atterrissages).
+  if (state.y < targetY - 0.8) { state.y = targetY - 0.8; if (state.vy < 0) state.vy = 0; }
   plunge = state.y - targetY;
   // Ré-entrée dans l'eau après un vol : gerbe + secousse caméra ∝ choc.
   if (lastPlunge > 0.06 && plunge <= 0 && state.vy < -1.5) {
@@ -2668,7 +2671,7 @@ function frame() {
     lensDrops(2 + Math.floor(speedF * 4));
     camImpact = Math.max(camImpact, 0.12 + speedF * 0.1);
     camJolt = Math.max(camJolt, 0.5 + speedF * 0.7);
-    state.vy -= 0.8 * speedF;                          // la coque encaisse le choc de proue
+    state.vy -= 0.5 * speedF;                          // la coque encaisse le choc de proue
     audioSplash(0.4 + speedF * 0.4);
     state.vx *= 0.985; state.vz *= 0.985; state.speed *= 0.985;
   }
@@ -2684,22 +2687,25 @@ function frame() {
     const chopK = rough * speedF;
     state.yaw += Math.sin(t * 4.7 + state.x * 0.8 + state.z * 0.5) * 0.22 * chopK * dt;
     // Léger tremblement vertical sur l'eau formée (subtil : la suspension le lisse).
-    state.vy += Math.sin(t * 5.9 + state.z * 0.7) * 0.6 * chopK * dt;
+    state.vy += Math.sin(t * 5.9 + state.z * 0.7) * 0.35 * chopK * dt;
   }
 
   const fThr = Math.max(0, thrust);
   let targetPitch, targetRoll;
   if (state.air) {
-    targetPitch = Math.max(-0.45, Math.min(0.45, -Math.atan2(state.vy, Math.max(spd, 6)) * 0.8));
+    // En l'air, le nez suit le vecteur vitesse : HAUT en montée, BAS en descente.
+    targetPitch = Math.max(-0.45, Math.min(0.45, Math.atan2(state.vy, Math.max(spd, 6)) * 0.8));
     targetRoll = -state.rudder * 0.15;
   } else {
-    // Cabrage au hole-shot (proue haute quand on remet les gaz), puis quand on
-    // lâche à vitesse la proue pique et la coque laboure l'eau : le terme
-    // (fThr - speedF) fait les deux d'un coup, sans état supplémentaire.
-    targetPitch = Math.atan2(hStern - hBow, 3.5) * 1.15 - (fThr - speedF) * 0.20 + 0.02;
+    // ASSIETTE QUI ÉPOUSE LA VAGUE (+pitch = nez HAUT, vérifié en FPV) : proue HAUTE
+    // en montant la face (hBow > hStern), proue BASSE en redescendant l'arrière de la
+    // vague. + cabrage au hole-shot (le nez se lève quand on remet les gaz) et plongée
+    // quand on lâche à vitesse. Le terme (fThr - speedF) fait les deux d'un coup.
+    targetPitch = Math.atan2(hBow - hStern, 3.5) * 1.25 + (fThr - speedF) * 0.20 + 0.02;
     // Un jetski se couche DANS le virage (le carre intérieur mord) : roulis dans
     // le sens de la barre, d'autant plus marqué qu'on va vite et qu'on est au gaz.
-    targetRoll = -state.rudder * 0.72 * Math.min(spd / 12, 1) * (0.4 + 0.6 * fThr) * (vForward < 0 ? -1 : 1) + Math.atan2(hRight - hLeft, 1.3) * 0.42;
+    // + gîte qui suit la pente latérale de la vague (bord haut = tribord relevé).
+    targetRoll = -state.rudder * 0.72 * Math.min(spd / 12, 1) * (0.4 + 0.6 * fThr) * (vForward < 0 ? -1 : 1) + Math.atan2(hRight - hLeft, 1.3) * 0.6;
     // Clapot : roulis/tangage désordonnés à vitesse sur l'eau formée.
     const chop = rough * speedF;
     targetRoll += Math.sin(t * 3.9 + state.x * 0.5) * 0.05 * chop;
@@ -2709,7 +2715,9 @@ function frame() {
     targetRoll += Math.sin(t * 1.05) * 0.045 * idle;
     targetPitch += Math.sin(t * 0.85 + 1.3) * 0.035 * idle;
   }
-  const sFast = 1 - Math.exp(-dt * 6);
+  // Suivi RAPIDE de l'assiette : la coque se conforme à la surface en quasi temps réel
+  // (sinon le tangage est en retard de phase et paraît "décollé" de l'eau).
+  const sFast = 1 - Math.exp(-dt * 10);
   state.pitch += (targetPitch - state.pitch) * sFast;
   state.roll += (targetRoll - state.roll) * sFast;
 
