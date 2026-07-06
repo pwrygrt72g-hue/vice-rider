@@ -12,6 +12,12 @@ import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=29';
 import { WAVES, seaFactor, waveHeight } from './sea.js?v=29';
 import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=29';
 
+// Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
+// (sinon = cache navigateur -> recharge en navigation privée).
+const BUILD = 'v29 · pilote anime';
+console.info('[Vice Rider] BUILD', BUILD);
+{ const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
+
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
 
 /* ================= MENU DOM ================= */
