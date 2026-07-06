@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=29';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=29';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=29';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=29';
+import { TWO_PI, smooth01, hex } from './util.js?v=30';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=30';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=30';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=30';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v29 · pilote anime';
+const BUILD = 'v30 · demarre en vue chase';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -2355,12 +2355,14 @@ document.getElementById('btn-ride').addEventListener('click', startRide);
 function startRide() {
   computePhys();
   mode = 'ride';
-  camMode = 'fpv';
+  // On démarre en vue CHASE (3e personne) pour montrer le pilote Miami tout de
+  // suite : le cockpit FPV reste dispo d'une touche 'C'. Avant, le jeu ouvrait en
+  // FPV -> le pilote n'était jamais visible sans presser C (source de confusion).
+  camMode = 'chase';
   ski.visible = true;
-  ski.add(camera);
-  camera.position.copy(CAM_BASE);
-  camera.rotation.set(-0.17, 0, 0);
-  if (realRiderGroup) realRiderGroup.visible = false;
+  scene.attach(camera);
+  if (riderBody) riderBody.visible = !realModel;
+  if (realRiderGroup) realRiderGroup.visible = true;
   updateCockpitVisibility();
   setSeaLifeVisible(true);
   document.getElementById('menu').classList.add('hidden');
