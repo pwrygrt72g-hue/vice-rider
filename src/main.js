@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=40';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=40';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=40';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=40';
+import { TWO_PI, smooth01, hex } from './util.js?v=41';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=41';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=41';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=41';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v40 · deux-tons + livree + chrome';
+const BUILD = 'v41 · modele fait-main partout';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1995,7 +1995,11 @@ function fitImported(obj, opts) {
 (function tryLoadModel() {
   const objUrl = './vendor/models/jetski.obj';
   const glbUrl = './vendor/models/jetski.glb';
-  // Priorité au .glb s'il existe, sinon .obj
+  // DÉSACTIVÉ : on utilise TOUJOURS le jet ski procédural fait main. Avant, un
+  // jetski.obj importé se chargeait en async et REMPLAÇAIT le modèle procédural
+  // (garage = fait main tant que l'OBJ n'était pas chargé, puis ride = OBJ importé).
+  return;
+  // eslint-disable-next-line no-unreachable
   fetch(glbUrl, { method: 'HEAD' }).then(res => {
     if (res.ok) return loadGlb(glbUrl);
     return fetch(objUrl, { method: 'HEAD' }).then(r => { if (r.ok) loadObj(objUrl); });
