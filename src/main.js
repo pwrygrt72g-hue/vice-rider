@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=30';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=30';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=30';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=30';
+import { TWO_PI, smooth01, hex } from './util.js?v=31';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=31';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=31';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=31';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v30 · demarre en vue chase';
+const BUILD = 'v31 · skyline Miami Art-Deco';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -379,24 +379,37 @@ buildOcean(384);
    (néon chaud / cyan / rose émissifs) pour qu'ils BRILLENT contre le ciel hazy
    au lieu d'être des boîtes noires. Teintes pastel Miami variées. */
 const skyline = new THREE.Group();
-// Texture de façade : fenêtres allumées, bakée une fois puis clonée par tour
-// (repeat variable = densité de fenêtres). Sert de map ET d'emissiveMap.
+// === SKYLINE MIAMI — formes AUTHORED (redans Art-Déco, couronnes néon, antennes)
+// et pilotage JOUR/NUIT : le jour, façades en verre sombre (fenêtres à peine
+// éclairées) ; la nuit, fenêtres + néons + reflets dans l'eau s'allument. On
+// construit d'abord les FORMES, puis les matériaux, puis la lumière (méthode AAA).
+// Facteurs d'intensité jour/nuit (le jeu démarre de jour) :
+const WIN_DAY = 0.20, WIN_NIGHT = 2.5;      // émissif des fenêtres
+const REFL_DAY = 0.08, REFL_NIGHT = 0.92;   // opacité des reflets néon sur l'eau
+const towerWindowMats = [], neonTrims = [], beacons = [], towerReflections = [];
+// Texture de façade : grille de fenêtres haute densité (lit à distance comme un
+// scintillement de ville, pas un damier), mix chaud/froid, quelques étages sombres
+// (mécaniques). Bakée une fois puis clonée par tour (repeat = densité).
 const towerTex = (() => {
-  const cv = document.createElement('canvas'); cv.width = 64; cv.height = 128;
+  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 256;
   const g = cv.getContext('2d');
-  g.fillStyle = '#0b0912'; g.fillRect(0, 0, 64, 128);
-  // Grille GROSSES fenêtres 4 col x 9 rangs, marges fines : survit à la
-  // minification à distance (ne se moyenne pas en gris). ~62% allumées, néon Miami.
-  const lit = ['#ffd39a', '#ffc07a', '#8febff', '#35e0e0', '#ff8fb4', '#fff2d8'];
-  const cols = 4, rows = 9, mx = 3, my = 3;
-  const cw = (64 - mx * (cols + 1)) / cols, ch = (128 - my * (rows + 1)) / rows;
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    const x = mx + c * (cw + mx), y = my + r * (ch + my);
-    if (Math.random() < 0.62) {
-      g.fillStyle = lit[(Math.random() * lit.length) | 0];
-      g.globalAlpha = 0.8 + Math.random() * 0.2;   // allumées ~opaques
-    } else { g.fillStyle = '#0a0812'; g.globalAlpha = 1; }
-    g.fillRect(x, y, cw, ch);
+  g.fillStyle = '#0a0812'; g.fillRect(0, 0, 128, 256);
+  const warm = ['#ffd39a', '#ffc07a', '#ffb060', '#fff2d8'];
+  const cool = ['#8febff', '#35e0e0', '#9be8ff', '#bfefff'];
+  const cols = 7, rows = 20, mx = 3, my = 3;
+  const cw = (128 - mx * (cols + 1)) / cols, ch = (256 - my * (rows + 1)) / rows;
+  const coolBias = Math.random();                 // chaque tour tire vers chaud OU froid
+  for (let r = 0; r < rows; r++) {
+    const darkFloor = Math.random() < 0.14;        // étage technique éteint
+    for (let c = 0; c < cols; c++) {
+      const x = mx + c * (cw + mx), y = my + r * (ch + my);
+      if (!darkFloor && Math.random() < 0.5) {
+        const pal = Math.random() < coolBias ? cool : warm;
+        g.fillStyle = pal[(Math.random() * pal.length) | 0];
+        g.globalAlpha = 0.72 + Math.random() * 0.28;
+      } else { g.fillStyle = '#0a0812'; g.globalAlpha = 1; }
+      g.fillRect(x, y, cw, ch);
+    }
   }
   g.globalAlpha = 1;
   const t = new THREE.CanvasTexture(cv);
@@ -404,18 +417,18 @@ const towerTex = (() => {
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 })();
-// Corps sombres = silhouette crépusculaire ; les fenêtres émissives portent la
-// couleur (et captent le bloom). Teintes pastel Miami à peine perceptibles.
-const towerTints = [0x141020, 0x181228, 0x161426, 0x1c1224, 0x121424];
-// Traînée verticale douce pour les reflets néon dans l'eau (bright en haut = ligne
-// d'eau, s'estompe vers le bas ; bords latéraux adoucis).
+// Corps en verre crépusculaire (slate/bleu nuit) : lisibles comme des tours le
+// jour, sombres la nuit pour laisser les fenêtres émissives dominer.
+const towerTints = [0x232a3d, 0x2a2438, 0x1f2a3a, 0x2d2740, 0x202a38];
+const reflHues = [0xffb060, 0x9be8ff, 0xff6fa6, 0x8fe0ff, 0xffd08a];
+// Traînée verticale douce pour les reflets néon dans l'eau.
 const reflStreakTex = (() => {
   const cv = document.createElement('canvas'); cv.width = 32; cv.height = 128;
   const g = cv.getContext('2d');
   for (let y = 0; y < 128; y++) {
-    const vy = Math.pow(1 - y / 128, 1.6);            // fort en haut, fondu en bas
+    const vy = Math.pow(1 - y / 128, 1.6);
     for (let x = 0; x < 32; x++) {
-      const vx = 1 - Math.abs(x - 15.5) / 15.5;        // adoucit les bords
+      const vx = 1 - Math.abs(x - 15.5) / 15.5;
       const a = Math.max(0, vy * vx * vx);
       g.fillStyle = `rgba(255,255,255,${a})`;
       g.fillRect(x, y, 1, 1);
@@ -424,35 +437,71 @@ const reflStreakTex = (() => {
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 })();
-const reflHues = [0xffb060, 0x9be8ff, 0xff6fa6, 0x8fe0ff, 0xffd08a];
-const towerReflections = [];
-for (let i = 0; i < 16; i++) {
-  const w = 26 + Math.random() * 40;
-  const h = 46 + Math.random() * 120;
+const towerMat = (tint, w, h) => {
   const tex = towerTex.clone(); tex.needsUpdate = true;
-  // Fenêtres LISIBLES à distance : ~1 colonne / 14 m, ~1 rang / 12 m (grosses).
-  tex.repeat.set(Math.max(1, Math.round(w / 14)), Math.max(2, Math.round(h / 12)));
-  const mat = new THREE.MeshLambertMaterial({
-    color: towerTints[i % towerTints.length],
-    map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 2.1
+  tex.repeat.set(Math.max(2, Math.round(w / 8)), Math.max(4, Math.round(h / 9)));
+  const m = new THREE.MeshStandardMaterial({
+    color: tint, map: tex, emissive: 0xffffff, emissiveMap: tex,
+    emissiveIntensity: WIN_DAY, roughness: 0.5, metalness: 0.25
   });
-  const tw = new THREE.Mesh(new THREE.BoxGeometry(w, h, 24), mat);
-  const tx = 950 + Math.random() * 140, tz = -440 + i * 58 + Math.random() * 22;
-  tw.position.set(tx, h / 2, tz);
-  skyline.add(tw);
-  // Reflet néon sur l'eau : sprite additif, sommet à la ligne d'eau, étiré vers le bas.
+  towerWindowMats.push(m);
+  return m;
+};
+function makeTower(i) {
+  const grp = new THREE.Group();
+  const w = 24 + Math.random() * 46;
+  const d = 18 + Math.random() * 22;
+  const h = 52 + Math.random() * 135;
+  const tint = towerTints[i % towerTints.length];
+  const hue = reflHues[i % reflHues.length];
+  // Corps principal
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), towerMat(tint, w, h));
+  body.position.y = h / 2; grp.add(body);
+  // Redans Art-Déco : 0 à 2 étages qui rétrécissent en montant (couronne étagée)
+  let cy = h, cw = w, cd = d;
+  const tiers = Math.random() < 0.62 ? (Math.random() < 0.4 ? 2 : 1) : 0;
+  for (let s = 0; s < tiers; s++) {
+    cw *= 0.66; cd *= 0.66;
+    const th = h * (0.14 + Math.random() * 0.12);
+    const tier = new THREE.Mesh(new THREE.BoxGeometry(cw, th, cd), towerMat(tint, cw, th));
+    tier.position.y = cy + th / 2; grp.add(tier);
+    cy += th;
+  }
+  // Bandeau néon de couronne (tube Art-Déco lumineux) — plus vif la nuit
+  const trimMat = new THREE.MeshBasicMaterial({ color: hue, toneMapped: false });
+  const trim = new THREE.Mesh(new THREE.BoxGeometry(cw * 1.03, 1.8, cd * 1.03), trimMat);
+  trim.position.y = cy - 0.9; grp.add(trim);
+  const cDay = new THREE.Color(hue).multiplyScalar(0.42);
+  neonTrims.push({ mat: trimMat, day: cDay, night: new THREE.Color(hue) });
+  trimMat.color.copy(cDay);
+  // Antenne + feu d'aviation rouge clignotant (50%)
+  if (Math.random() < 0.5) {
+    const ah = 7 + Math.random() * 24;
+    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 1.1, ah, 6),
+      new THREE.MeshStandardMaterial({ color: 0x1c2230, roughness: 0.6, metalness: 0.4 }));
+    ant.position.y = cy + ah / 2; grp.add(ant);
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xff2a2a, toneMapped: false, transparent: true }));
+    beacon.position.y = cy + ah + 1; grp.add(beacon);
+    beacons.push(beacon);
+  }
+  const tx = 950 + Math.random() * 170;
+  const tz = -440 + i * 58 + Math.random() * 22;
+  grp.position.set(tx, 0, tz);
+  skyline.add(grp);
+  // Reflet néon sur l'eau (sprite additif, sommet à la ligne d'eau, étiré vers le bas)
   const refl = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: reflStreakTex, color: reflHues[i % reflHues.length],
-    blending: THREE.AdditiveBlending, transparent: true, depthTest: false,
-    depthWrite: false, opacity: 0.9
+    map: reflStreakTex, color: hue, blending: THREE.AdditiveBlending,
+    transparent: true, depthTest: false, depthWrite: false, opacity: REFL_DAY
   }));
-  const rh = h * 0.55, rw = w * 0.7;
+  const rh = h * 0.6, rw = w * 0.75;
   refl.scale.set(rw, rh, 1);
   refl.position.set(tx, -rh * 0.5 + 1.5, tz);
   refl.renderOrder = 3;
   skyline.add(refl);
   towerReflections.push(refl);
 }
+for (let i = 0; i < 18; i++) makeTower(i);
 scene.add(skyline);
 
 const palmIslands = [];
@@ -2475,6 +2524,10 @@ function setNight(on) {
   oceanUniforms.uFogColor.value = on ? NIGHT_FOG : FOG_COLOR;
   const btn = document.getElementById('btn-night');
   if (btn) btn.textContent = on ? '☀️' : '🌙';
+  // Skyline : fenêtres, néons de couronne et reflets sur l'eau s'allument la nuit.
+  for (const m of towerWindowMats) m.emissiveIntensity = on ? WIN_NIGHT : WIN_DAY;
+  for (const t of neonTrims) t.mat.color.copy(on ? t.night : t.day);
+  for (const r of towerReflections) r.material.opacity = on ? REFL_NIGHT : REFL_DAY;
   applyNightBloom();
 }
 setupComposer();
@@ -2697,6 +2750,12 @@ function frame() {
   }
   const skd = Math.hypot(state.x - (skyline.position.x + 950), state.z - skyline.position.z);
   if (skd > 2600) skyline.position.set(state.x + fx * 1000 - 950, 0, state.z + fz * 1000);
+  // Feux d'aviation rouges : clignotement lent et décalé par tour.
+  for (let b = 0; b < beacons.length; b++) {
+    const bl = 0.55 + 0.45 * Math.sin(t * 3.0 + b * 1.7);
+    beacons[b].scale.setScalar(0.7 + bl * 0.6);
+    beacons[b].material.opacity = bl;
+  }
 
   // Rochers isolés : collision dure + recyclage
   for (const rk of seaRocks) {
