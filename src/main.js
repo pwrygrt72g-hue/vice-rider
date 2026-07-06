@@ -75,13 +75,17 @@ sun.shadow.bias = -0.002;
 scene.add(sun);
 scene.add(sun.target);
 
+/* Grade jour<->nuit partagé par le ciel, l'eau et l'ambiance (0 = plein jour,
+   1 = crépuscule Miami où le néon prend le dessus). Basculé par setNight(). */
+const uNight = { value: 0 };
+
 /* ================= CIEL ================= */
 function makeSkyMaterial(graded) {
   return new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uSunDir: { value: sunDir } },
+    uniforms: { uSunDir: { value: sunDir }, uNight },
     vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: `precision highp float; uniform vec3 uSunDir; varying vec3 vDir;
+    fragmentShader: `precision highp float; uniform vec3 uSunDir; uniform float uNight; varying vec3 vDir;
 ${SKY_FUNC}
 void main(){
   vec3 dir = normalize(vDir);
@@ -89,6 +93,10 @@ void main(){
   float sd = max(dot(dir, uSunDir), 0.0);
   col += vec3(1.0, 0.72, 0.45) * smoothstep(0.9995, 0.99985, sd) * 1.5;
   col += vec3(1.0, 0.5, 0.35) * pow(sd, 80.0) * 0.3;
+  // Crépuscule : assombrit et bleuit le ciel, ne garde qu'une braise près du soleil.
+  vec3 night = col * vec3(0.14, 0.18, 0.32) + vec3(0.008, 0.010, 0.026);
+  night += vec3(0.9, 0.4, 0.25) * pow(sd, 40.0) * 0.15;
+  col = mix(col, night, uNight);
   gl_FragColor = vec4(col, 1.0);
   ${graded ? '#include <tonemapping_fragment>\n#include <colorspace_fragment>' : ''}
 }` });
@@ -160,13 +168,20 @@ new RGBELoader().setDataType(THREE.FloatType).load('./vendor/textures/sunset_pur
   // --- La sphère céleste devient la photo (même formule que le reflet eau) ---
   sky.material = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uEnvTex: { value: hdr }, uEnvRot: { value: rot } },
+    uniforms: { uEnvTex: { value: hdr }, uEnvRot: { value: rot }, uNight, uSunDir: { value: sunDir } },
     vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
     fragmentShader: `precision highp float;
-uniform sampler2D uEnvTex; uniform float uEnvRot; varying vec3 vDir;
+uniform sampler2D uEnvTex; uniform float uEnvRot; uniform float uNight; uniform vec3 uSunDir; varying vec3 vDir;
 ${ENV_FUNC}
 void main(){
-  vec3 col = envSample(uEnvTex, normalize(vDir), uEnvRot);
+  vec3 dir = normalize(vDir);
+  vec3 col = envSample(uEnvTex, dir, uEnvRot);
+  // Crépuscule Miami : la photo sunset est assombrie/bleuie, une braise subsiste
+  // à l'horizon côté soleil.
+  float sd = max(dot(dir, uSunDir), 0.0);
+  vec3 night = col * vec3(0.13, 0.17, 0.30) + vec3(0.010, 0.012, 0.030);
+  night += vec3(0.85, 0.38, 0.24) * pow(sd, 22.0) * 0.20;
+  col = mix(col, night, uNight);
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -201,7 +216,8 @@ const oceanUniforms = {
   uHullSpeed: { value: 0 },
   uEnvTex: { value: new THREE.DataTexture(new Uint8Array([120, 120, 140, 255]), 1, 1) },
   uEnvRot: { value: 0 },
-  uUseEnv: { value: 0 }
+  uUseEnv: { value: 0 },
+  uNight
 };
 oceanUniforms.uEnvTex.value.needsUpdate = true;
 const oceanMaterial = new THREE.ShaderMaterial({
@@ -269,7 +285,7 @@ void main(){
 }`,
   fragmentShader: `precision highp float;
 uniform vec3 uSunDir; uniform vec3 uDeepColor; uniform vec3 uShallowColor; uniform vec3 uFogColor; uniform float uTime;
-uniform sampler2D uNormalMap; uniform sampler2D uEnvTex; uniform float uEnvRot; uniform float uUseEnv;
+uniform sampler2D uNormalMap; uniform sampler2D uEnvTex; uniform float uEnvRot; uniform float uUseEnv; uniform float uNight;
 uniform vec3 uHullPos; uniform vec3 uHullFwd; uniform float uHullSpeed;
 varying vec3 vNormal; varying vec3 vWorldPos; varying float vHeight; varying float vHullPush; varying float vFold;
 ${SKY_FUNC}
@@ -294,11 +310,30 @@ void main(){
   vec3 refl = uUseEnv > 0.5
     ? envSample(uEnvTex, normalize(rdir), uEnvRot)
     : skyColor(normalize(rdir), uSunDir);
-  vec3 col = mix(base, refl, 0.08 + fresnel * 0.5);
+  // Compression douce (knee Reinhard) des très hautes lumières du reflet :
+  // empêche le ciel près du soleil de réfléchir en une NAPPE BLANCHE uniforme
+  // à l'horizon. Les valeurs < 0.8 restent intactes (couleur sunset préservée),
+  // seules les HDR brûlantes du disque solaire sont ramenées à ~1.
+  refl /= (1.0 + max(vec3(0.0), refl - 0.7) * 1.15);
+  vec3 col = mix(base, refl, 0.07 + fresnel * 0.42);
   float sunR = max(dot(rdir, uSunDir), 0.0);
-  col += vec3(1.0, 0.72, 0.5) * pow(sunR, 420.0) * 1.2;
-  col += vec3(1.0, 0.55, 0.38) * pow(sunR, 64.0) * 0.55;
-  col += vec3(1.0, 0.45, 0.35) * pow(sunR, 24.0) * 0.12;
+  // --- SUN GLITTER : chemin scintillant du soleil sur l'eau ---
+  // Champ de micro-facettes hautes fréquences (2 octaves animées) qui, contrairement
+  // aux normales fines, ne s'estompe PAS au loin -> casse le reflet en une myriade
+  // d'éclats au lieu d'un miroir plat. Seuil dur = points épars (vraie houle scintille
+  // par petits triangles de vague face au soleil).
+  vec2 gpos = vWorldPos.xz;
+  float spark = noise2(gpos * 2.3 + uTime * 1.7) * noise2(gpos.yx * 2.9 - uTime * 1.3)
+              + noise2(gpos * 5.3 - uTime * 2.1) * noise2(gpos.yx * 4.7 + uTime * 1.9);
+  spark = spark * 0.5 + 0.5;                          // 0..1
+  float glint = smoothstep(0.60, 0.97, spark);        // éclats épars
+  float gfade = smoothstep(1500.0, 350.0, distN);     // atténue au loin (anti-alias)
+  float glitter = glint * pow(sunR, 7.0) * gfade;
+  // Disque adouci + halo serré + tapis de scintillement large. Le cœur du soleil
+  // est volontairement moins intense/plus étalé (fini le point brûlant à l'horizon).
+  col += vec3(1.0, 0.80, 0.56) * pow(sunR, 240.0) * 0.55;
+  col += vec3(1.0, 0.62, 0.42) * pow(sunR, 48.0) * 0.26 * (0.35 + 0.65 * glint);
+  col += vec3(1.0, 0.86, 0.62) * glitter * 1.35 * (1.0 - 0.5 * uNight);
   float steep = 1.0 - n.y;
   float mottling = 0.55 + 0.45 * noise2(vWorldPos.xz * 1.7 + uTime * 0.9) * noise2(vWorldPos.zx * 2.3 - uTime * 0.7);
   float crestFoam = smoothstep(1.4, 2.6, vHeight + (mottling - 0.5) * 1.4);
@@ -315,7 +350,9 @@ void main(){
   float eDH = sqrt((alongH * alongH) / 4.84 + sideH * sideH);
   float hullFoam = exp(-eDH * eDH * 0.9) * (0.5 + 0.6 * min(uHullSpeed / 12.0, 1.0)) * (0.55 + 0.45 * mottling);
   float foam = clamp(crestFoam * 0.6 + slopeFoam * 0.5 + jacFoam * 1.2 + bowFoam * 1.4 + hullFoam * 1.15, 0.0, 1.0) * (0.7 + 0.3 * mottling);
-  col = mix(col, vec3(0.96, 0.92, 0.92), foam * 0.9);
+  col = mix(col, vec3(0.96, 0.92, 0.92) * (1.0 - 0.55 * uNight), foam * 0.9);
+  // Crépuscule : eau sombre et bleu nuit (le scintillement + le néon des tours ressortent).
+  col = mix(col, col * vec3(0.20, 0.30, 0.46) + vec3(0.004, 0.010, 0.020), uNight);
   float dist = length(cameraPosition - vWorldPos);
   col = mix(col, uFogColor, smoothstep(250.0, 1500.0, dist));
   gl_FragColor = vec4(col, 1.0);
@@ -331,15 +368,84 @@ function buildOcean(segs) {
 }
 buildOcean(384);
 
-/* ================= DÉCOR ================= */
+/* ================= DÉCOR — SKYLINE MIAMI 1986 =================
+   Gratte-ciels au crépuscule : façade sombre + grille de fenêtres allumées
+   (néon chaud / cyan / rose émissifs) pour qu'ils BRILLENT contre le ciel hazy
+   au lieu d'être des boîtes noires. Teintes pastel Miami variées. */
 const skyline = new THREE.Group();
-const towerMat = new THREE.MeshLambertMaterial({ color: 0x2a2438 });
-for (let i = 0; i < 14; i++) {
+// Texture de façade : fenêtres allumées, bakée une fois puis clonée par tour
+// (repeat variable = densité de fenêtres). Sert de map ET d'emissiveMap.
+const towerTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = 64; cv.height = 128;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#0b0912'; g.fillRect(0, 0, 64, 128);
+  // Grille GROSSES fenêtres 4 col x 9 rangs, marges fines : survit à la
+  // minification à distance (ne se moyenne pas en gris). ~62% allumées, néon Miami.
+  const lit = ['#ffd39a', '#ffc07a', '#8febff', '#35e0e0', '#ff8fb4', '#fff2d8'];
+  const cols = 4, rows = 9, mx = 3, my = 3;
+  const cw = (64 - mx * (cols + 1)) / cols, ch = (128 - my * (rows + 1)) / rows;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const x = mx + c * (cw + mx), y = my + r * (ch + my);
+    if (Math.random() < 0.62) {
+      g.fillStyle = lit[(Math.random() * lit.length) | 0];
+      g.globalAlpha = 0.8 + Math.random() * 0.2;   // allumées ~opaques
+    } else { g.fillStyle = '#0a0812'; g.globalAlpha = 1; }
+    g.fillRect(x, y, cw, ch);
+  }
+  g.globalAlpha = 1;
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+// Corps sombres = silhouette crépusculaire ; les fenêtres émissives portent la
+// couleur (et captent le bloom). Teintes pastel Miami à peine perceptibles.
+const towerTints = [0x141020, 0x181228, 0x161426, 0x1c1224, 0x121424];
+// Traînée verticale douce pour les reflets néon dans l'eau (bright en haut = ligne
+// d'eau, s'estompe vers le bas ; bords latéraux adoucis).
+const reflStreakTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = 32; cv.height = 128;
+  const g = cv.getContext('2d');
+  for (let y = 0; y < 128; y++) {
+    const vy = Math.pow(1 - y / 128, 1.6);            // fort en haut, fondu en bas
+    for (let x = 0; x < 32; x++) {
+      const vx = 1 - Math.abs(x - 15.5) / 15.5;        // adoucit les bords
+      const a = Math.max(0, vy * vx * vx);
+      g.fillStyle = `rgba(255,255,255,${a})`;
+      g.fillRect(x, y, 1, 1);
+    }
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const reflHues = [0xffb060, 0x9be8ff, 0xff6fa6, 0x8fe0ff, 0xffd08a];
+const towerReflections = [];
+for (let i = 0; i < 16; i++) {
   const w = 26 + Math.random() * 40;
-  const h = 40 + Math.random() * 110;
-  const tw = new THREE.Mesh(new THREE.BoxGeometry(w, h, 24), towerMat);
-  tw.position.set(950 + Math.random() * 120, h / 2, -420 + i * 62 + Math.random() * 20);
+  const h = 46 + Math.random() * 120;
+  const tex = towerTex.clone(); tex.needsUpdate = true;
+  // Fenêtres LISIBLES à distance : ~1 colonne / 14 m, ~1 rang / 12 m (grosses).
+  tex.repeat.set(Math.max(1, Math.round(w / 14)), Math.max(2, Math.round(h / 12)));
+  const mat = new THREE.MeshLambertMaterial({
+    color: towerTints[i % towerTints.length],
+    map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 2.1
+  });
+  const tw = new THREE.Mesh(new THREE.BoxGeometry(w, h, 24), mat);
+  const tx = 950 + Math.random() * 140, tz = -440 + i * 58 + Math.random() * 22;
+  tw.position.set(tx, h / 2, tz);
   skyline.add(tw);
+  // Reflet néon sur l'eau : sprite additif, sommet à la ligne d'eau, étiré vers le bas.
+  const refl = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: reflStreakTex, color: reflHues[i % reflHues.length],
+    blending: THREE.AdditiveBlending, transparent: true, depthTest: false,
+    depthWrite: false, opacity: 0.9
+  }));
+  const rh = h * 0.55, rw = w * 0.7;
+  refl.scale.set(rw, rh, 1);
+  refl.position.set(tx, -rh * 0.5 + 1.5, tz);
+  refl.renderOrder = 3;
+  skyline.add(refl);
+  towerReflections.push(refl);
 }
 scene.add(skyline);
 
@@ -830,7 +936,22 @@ function updateDrops(dt, t) {
    l'arrière en éventail étroit. L'eau quitte la tuyère à ~la vitesse du jet
    vers l'arrière, donc en espace-monde elle reste quasi sur place et MONTE :
    on n'ajoute pas la vitesse du ski, juste up + un peu d'arrière. */
-const ROOST_N = 640;
+// Brume douce et plumeuse (cœur diffus, bords très fondus) : superposées et
+// nombreuses, les particules se fondent en gerbe d'eau continue plutôt qu'en
+// pastilles rondes distinctes.
+const mistSprite = (() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,0.55)');
+  g.addColorStop(0.35, 'rgba(244,252,255,0.28)');
+  g.addColorStop(0.7, 'rgba(232,244,250,0.08)');
+  g.addColorStop(1, 'rgba(232,244,250,0)');
+  c.fillStyle = g; c.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+})();
+const ROOST_N = 1000;
 const roostPos = new Float32Array(ROOST_N * 3);
 const roostVel = [];
 const roostLife = new Float32Array(ROOST_N);
@@ -838,7 +959,7 @@ for (let i = 0; i < ROOST_N; i++) { roostPos[i * 3 + 1] = -100; roostVel.push(ne
 const roostGeo = new THREE.BufferGeometry();
 roostGeo.setAttribute('position', new THREE.BufferAttribute(roostPos, 3));
 const roostPoints = new THREE.Points(roostGeo, new THREE.PointsMaterial({
-  size: 0.34, map: dropSprite, transparent: true, opacity: 0.85, depthWrite: false, sizeAttenuation: true, color: 0xf4fcff
+  size: 0.62, map: mistSprite, transparent: true, opacity: 0.6, depthWrite: false, sizeAttenuation: true, color: 0xf4fcff
 }));
 roostPoints.frustumCulled = false;
 scene.add(roostPoints);
@@ -846,7 +967,7 @@ let roostCursor = 0, roostAccum = 0;
 function emitRoost(dt, t, fx, fz, rx, rz, speedF) {
   // Débit et hauteur ∝ régime turbine et vitesse (plein pot = geyser).
   const power = state.rpm * (0.35 + 0.65 * speedF);
-  const rate = (60 + 300 * speedF) * state.rpm;
+  const rate = (110 + 480 * speedF) * state.rpm;
   roostAccum += rate * dt;
   const sx = state.x - fx * 1.8, sz = state.z - fz * 1.8;
   const sy = waveHeight(sx, sz, t);
@@ -2009,7 +2130,7 @@ function updateFilm(t, sf, wet) {
   u.uSun.value[1] = _sunProj.y * 0.5 + 0.5;
   u.uSun.value[2] = _camDir.dot(sunDir);
 }
-window.__vice = { state, keys, toggleCam: () => toggleCam(), islands: palmIslands, gate, CH, DEFIS, enterDefi, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
+window.__vice = { state, keys, toggleCam: () => toggleCam(), setNight: v => setNight(v), islands: palmIslands, gate, CH, DEFIS, enterDefi, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
 window.__align = (o) => { Object.assign(MODEL_RIDE, o || {}); alignRideModel(); return { ...MODEL_RIDE }; };
 window.__analyzeModel = () => {
   if (!realModel) return 'no model';
@@ -2094,6 +2215,7 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'escape' && mode === 'ride') { toGarage(); return; }
   if (k === 'c' && mode === 'ride') { toggleCam(); return; }
+  if (k === 'n') { setNight(!isNight); return; }
   if (['w', 'a', 's', 'd', 'z', 'q', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
     keys[k] = true;
     if (mode === 'ride') e.preventDefault();
@@ -2114,6 +2236,8 @@ bindBtn('btn-fast', 'w'); bindBtn('btn-slow', 's'); bindBtn('btn-port', 'a'); bi
 bindBtn('t-fast', 'w'); bindBtn('t-slow', 's'); bindBtn('t-left', 'a'); bindBtn('t-right', 'd');
 const touchPad = document.getElementById('touch');
 document.getElementById('btn-cam').addEventListener('click', () => { if (mode === 'ride') toggleCam(); });
+const btnNight = document.getElementById('btn-night');
+if (btnNight) btnNight.addEventListener('click', () => setNight(!isNight));
 document.getElementById('btn-garage').addEventListener('click', toGarage);
 document.getElementById('btn-ride').addEventListener('click', startRide);
 
@@ -2203,9 +2327,42 @@ function setupComposer() {
   if (bloomOn) {
     bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.22, 0.5, 0.9);
     composer.addPass(bloomPass);
+    applyNightBloom();   // réapplique le bloom "nuit" après un changement de qualité
   }
   filmPass = new ShaderPass(FilmShader);
   composer.addPass(filmPass);
+}
+
+/* ================= JOUR / CRÉPUSCULE MIAMI =================
+   Bascule un grade "nuit" global : exposition, soleil, ambiance, brouillard,
+   bloom et le grade uNight (ciel + eau). Le néon des tours et leurs reflets
+   dans l'eau prennent alors toute leur ampleur. */
+const NIGHT_FOG = new THREE.Color(0x131a30);
+let isNight = false;
+const dayState = { exposure: 0.95, sunI: sun.intensity, hemiI: hemi.intensity,
+  sunC: sun.color.clone(), hemiC: hemi.color.clone(), hemiG: hemi.groundColor.clone() };
+function applyNightBloom() {
+  if (!bloomPass) return;
+  bloomPass.strength = isNight ? 0.5 : 0.22;
+  bloomPass.threshold = isNight ? 0.58 : 0.9;
+  bloomPass.radius = isNight ? 0.7 : 0.5;
+}
+function setNight(on) {
+  // Capture l'état "jour" vivant au moment de basculer (le HDRI a pu mettre à
+  // jour la couleur du soleil/brouillard après le chargement).
+  if (on && !isNight) { dayState.sunC.copy(sun.color); dayState.hemiC.copy(hemi.color); dayState.hemiG.copy(hemi.groundColor); }
+  isNight = on;
+  uNight.value = on ? 1 : 0;
+  renderer.toneMappingExposure = on ? 0.5 : dayState.exposure;
+  sun.intensity = on ? 0.45 : dayState.sunI;
+  hemi.intensity = on ? 0.5 : dayState.hemiI;
+  if (on) { sun.color.set(0x9db4ff); hemi.color.set(0x3a4a80); hemi.groundColor.set(0x0a1226); }
+  else { sun.color.copy(dayState.sunC); hemi.color.copy(dayState.hemiC); hemi.groundColor.copy(dayState.hemiG); }
+  scene.fog.color.copy(on ? NIGHT_FOG : FOG_COLOR);
+  oceanUniforms.uFogColor.value = on ? NIGHT_FOG : FOG_COLOR;
+  const btn = document.getElementById('btn-night');
+  if (btn) btn.textContent = on ? '☀️' : '🌙';
+  applyNightBloom();
 }
 setupComposer();
 
