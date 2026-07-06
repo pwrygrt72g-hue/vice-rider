@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=34';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=34';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=34';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=34';
+import { TWO_PI, smooth01, hex } from './util.js?v=35';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=35';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=35';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=35';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v34 · eau+pilote vivants';
+const BUILD = 'v35 · sans trainee avant';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -277,12 +277,12 @@ void main(){
   float bowV = 0.0;
   if (uHullSpeed > 0.3) {
     float vShape = alongF * 0.55 - abs(sideF);
-    bowV = smoothstep(0.0, 1.4, vShape) * smoothstep(9.0, 2.0, alongF) * min(uHullSpeed / 8.0, 1.4);
-    bowV *= exp(-abs(sideF) * abs(sideF) / 12.0);
+    bowV = smoothstep(0.0, 1.4, vShape) * smoothstep(3.5, 0.8, alongF) * min(uHullSpeed / 8.0, 1.0);
+    bowV *= exp(-abs(sideF) * abs(sideF) / 9.0);
   }
   // (Le halo de contact coque/eau est calculé PAR PIXEL dans le fragment
   // shader — indépendant de la grille, donc petit et net, sans popping.)
-  float hullPush = bowV * 1.05;
+  float hullPush = bowV * 0.32;   // vague de proue TRÈS discrète (plus de long trait devant)
   disp.y += hullPush;
   vec3 p = wp + disp;
   vNormal = normalize(cross(binormal, tangent));
@@ -345,7 +345,7 @@ void main(){
   float crestFoam = smoothstep(1.4, 2.6, vHeight + (mottling - 0.5) * 1.4);
   float slopeFoam = smoothstep(0.16, 0.4, steep) * smoothstep(0.2, 1.4, vHeight);
   float jacFoam = smoothstep(0.72, 0.42, vFold) * (0.6 + 0.4 * mottling);
-  float bowFoam = smoothstep(0.15, 0.7, vHullPush) * (0.75 + 0.25 * mottling);
+  float bowFoam = smoothstep(0.45, 0.95, vHullPush) * (0.7 + 0.3 * mottling);
   // Halo de contact coque/eau PER-PIXEL : petite ellipse d'eau churnée qui
   // épouse la coque (~1 m autour), bords rongés par le bruit. Précis quel que
   // soit le pas de la grille (contrairement à un calcul au sommet).
@@ -358,11 +358,16 @@ void main(){
   // traînée d'écume qui s'évase derrière (sillage en trompette qui grandit avec
   // la vitesse). Rendu 100% par-pixel -> net quelle que soit la grille.
   float contact = exp(-eDH * eDH * 0.6) * (0.85 + 0.75 * min(uHullSpeed / 10.0, 1.0));
-  float behind = max(0.0, -alongH);
-  float halfW = 0.9 + 0.16 * behind;
-  float wakeTrail = exp(-(sideH * sideH) / (halfW * halfW)) * smoothstep(34.0, 1.0, behind) * min(uHullSpeed / 5.0, 1.0);
-  float hullFoam = (contact + wakeTrail * 1.05) * (0.6 + 0.4 * mottling);
-  float foam = clamp(crestFoam * 0.6 + slopeFoam * 0.5 + jacFoam * 1.2 + bowFoam * 1.5 + hullFoam * 1.35, 0.0, 1.0) * (0.72 + 0.28 * mottling);
+  // behind > 0 DERRIÈRE la coque, < 0 devant. Le sillage ne doit exister QUE
+  // derrière : fenêtre qui monte depuis la coque (fondu dès la poupe) puis
+  // s'estompe au loin. (BUG corrigé : avant, tous les pixels avant retombaient
+  // à behind=0 et s'allumaient -> long trait blanc devant le jet.)
+  float behind = -alongH;
+  float trailWin = smoothstep(0.6, 4.0, behind) * smoothstep(34.0, 11.0, behind);
+  float halfW = 0.9 + 0.16 * max(behind, 0.0);
+  float wakeTrail = exp(-(sideH * sideH) / (halfW * halfW)) * trailWin * min(uHullSpeed / 5.0, 1.0);
+  float hullFoam = (contact + wakeTrail * 1.1) * (0.6 + 0.4 * mottling);
+  float foam = clamp(crestFoam * 0.6 + slopeFoam * 0.5 + jacFoam * 1.2 + bowFoam * 0.35 + hullFoam * 1.35, 0.0, 1.0) * (0.72 + 0.28 * mottling);
   col = mix(col, vec3(0.96, 0.92, 0.92) * (1.0 - 0.55 * uNight), foam * 0.9);
   // Crépuscule : eau sombre et bleu nuit (le scintillement + le néon des tours ressortent).
   col = mix(col, col * vec3(0.20, 0.30, 0.46) + vec3(0.004, 0.010, 0.020), uNight);
@@ -3123,8 +3128,9 @@ function frame() {
   // posé sur une surface figée).
   const moving = Math.min(1, speedF * 4);
   for (const sp of sprays) {
-    sp.material.opacity = state.air ? 0 : Math.min(0.95, (0.55 * speedF + 0.85 * planing) * moving) * (0.55 + 0.45 * Math.sin(t * 14 + sp.position.x * 9));
-    sp.scale.set(1.25 + planing * 0.7, 1.35 + speedF * 1.9 + planing * 0.7, 1);
+    // Petite gerbe LATÉRALE de proue (courte) — surtout pas un long trait devant.
+    sp.material.opacity = state.air ? 0 : Math.min(0.55, (0.35 * speedF + 0.6 * planing) * moving) * (0.55 + 0.45 * Math.sin(t * 14 + sp.position.x * 9));
+    sp.scale.set(1.0 + planing * 0.35, 0.8 + speedF * 0.4 + planing * 0.3, 1);
   }
   // Anneau d'écume : collé à la ligne de flottaison LOCALE -> il assoit la coque
   // dans l'eau même à l'arrêt (l'eau bouillonne toujours autour d'une coque).
