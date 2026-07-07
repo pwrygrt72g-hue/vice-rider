@@ -160,7 +160,7 @@
     </div>
     <div class="menu-cols">
       <div class="menu-group">
-        <h3>Jetski &mdash; modèles réels</h3>
+        <h3>Jet skis</h3>
         <div class="cards" id="cards-ski"></div>
       </div>
       <div class="menu-group">
@@ -173,7 +173,8 @@
       </div>
     </div>
     <button id="btn-ride">RIDE</button>
-    <div class="help">W gaz &middot; A / D virage &middot; S frein &middot; C changer de vue &middot; Échap garage</div>
+    <button id="btn-boost" style="margin-top:2px; background:transparent; color:#ffd23c; border:1.5px solid rgba(255,210,60,0.6); border-radius:12px; padding:9px 26px; font-size:13px; font-weight:700; letter-spacing:2px; cursor:pointer;">🎁 TURBO DÉPART</button>
+    <div class="help">W gaz &middot; A / D virage &middot; S frein &middot; C changer de vue &middot; Échap garage &middot; en l'air : A/D vrille, W/S salto</div>
   </div>
 
   <div id="hud" class="hidden">
@@ -201,9 +202,12 @@
     </div>
   </div>
 </div>
+<!-- SDK CrazyGames (pubs + événements de partie). Absent hors CrazyGames -> le jeu
+     tourne quand même en standalone (toutes les intégrations ont un fallback). -->
+<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.js" } }
 </script>
-<script type="module" src="./src/main.js?v=44"></script>
+<script type="module" src="./src/main.js?v=45"></script>
 </body>
 </html>

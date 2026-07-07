@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=44';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=44';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=44';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=44';
+import { TWO_PI, smooth01, hex } from './util.js?v=45';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=45';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=45';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=45';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v44 · fixes review';
+const BUILD = 'v45 · WAVE-DOO + CrazyGames';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -2151,7 +2151,7 @@ function fitImported(obj, opts) {
   }
   function loadGlb(url) {
     const draco = new DRACOLoader();
-    draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
+    draco.setDecoderPath('./vendor/jsm/libs/draco/');   // local (jamais atteint : loader désactivé) — pas de CDN externe
     const loader = new GLTFLoader();
     loader.setDRACOLoader(draco);
     loader.load(url, gltf => finalize(fitImported(gltf.scene, { targetLen: 4.2 }), url),
@@ -2632,6 +2632,57 @@ function audioSplash(power) {
   g.setValueAtTime(Math.min(0.3 * power, 0.4), now);
   g.exponentialRampToValueAtTime(0.001, now + 0.5);
 }
+
+/* ================= INTÉGRATION CRAZYGAMES (pubs + événements) =================
+   Le SDK n'existe que sur crazygames.com ; partout ailleurs (GitHub Pages, local)
+   window.CrazyGames est absent -> tout est en fallback et le jeu tourne normalement.
+   Règle CrazyGames : pendant une pub, on COUPE le son (master à 0) et on met le jeu
+   en pause. On reprend à la fin (ou en cas d'erreur). */
+const CG = { sdk: null, ready: false, env: 'disabled', lastAdMs: -999999, ridesStarted: 0, boostNextRide: false };
+let adPaused = false;
+async function initCrazyGames() {
+  try {
+    const S = window.CrazyGames && window.CrazyGames.SDK;
+    if (!S) return;
+    await S.init();
+    CG.sdk = S; CG.ready = true;
+    try { CG.env = S.environment || 'disabled'; } catch (e) { CG.env = 'disabled'; }
+    cgCall(s => s.game.loadingStart());   // encadre le chargement (loadingStop appelé au boot)
+  } catch (e) { CG.sdk = null; }
+}
+function cgCall(fn) { try { if (CG.sdk) fn(CG.sdk); } catch (e) { /* no-op */ } }
+function cgLoadingStop() { cgCall(s => s.game.loadingStop()); }
+function cgGameplayStart() { cgCall(s => s.game.gameplayStart()); }
+function cgGameplayStop() { cgCall(s => s.game.gameplayStop()); }
+function cgHappytime() { cgCall(s => s.game.happytime()); }
+function adSilence(on) {
+  adPaused = on;
+  if (audio) audio.master.gain.setTargetAtTime(on ? 0 : 0.9, audio.ctx.currentTime, 0.05);
+}
+// Pub interstitielle entre deux runs (jamais au 1er run, cooldown 100 s).
+function cgInterstitial() {
+  if (!CG.sdk || CG.env === 'disabled' || CG.ridesStarted <= 1) return;
+  const now = performance.now();
+  if (now - CG.lastAdMs < 100000) return;
+  CG.lastAdMs = now;
+  cgCall(s => s.ad.requestAd('midgame', {
+    adStarted: () => adSilence(true),
+    adFinished: () => adSilence(false),
+    adError: () => adSilence(false)
+  }));
+}
+// Pub récompensée : accorde `onReward` à la fin. En standalone (pas de SDK), on
+// accorde direct (il n'y a de toute façon aucune pub à regarder).
+function cgRewarded(onReward) {
+  // Hors CrazyGames (SDK absent ou désactivé) : aucune pub à montrer -> récompense directe.
+  if (!CG.sdk || CG.env === 'disabled') { onReward(); return; }
+  CG.lastAdMs = performance.now();
+  cgCall(s => s.ad.requestAd('rewarded', {
+    adStarted: () => adSilence(true),
+    adFinished: () => { adSilence(false); onReward(); },
+    adError: () => { adSilence(false); }
+  }));
+}
 document.getElementById('btn-mute').addEventListener('click', () => {
   muted = !muted;
   document.getElementById('btn-mute').textContent = muted ? '🔇' : '🔊';
@@ -2872,6 +2923,18 @@ const btnNight = document.getElementById('btn-night');
 if (btnNight) btnNight.addEventListener('click', () => setNight(!isNight));
 document.getElementById('btn-garage').addEventListener('click', toGarage);
 document.getElementById('btn-ride').addEventListener('click', startRide);
+// TURBO DÉPART : le joueur regarde une pub récompensée -> son prochain run démarre boosté.
+{
+  const bb = document.getElementById('btn-boost');
+  if (bb) bb.addEventListener('click', () => {
+    if (CG.boostNextRide) return;   // déjà armé
+    cgRewarded(() => {
+      CG.boostNextRide = true;
+      bb.textContent = '✓ BOOST ARMÉ';
+      bb.style.borderColor = '#35e0e0';
+    });
+  });
+}
 
 function startRide() {
   computePhys();
@@ -2901,8 +2964,22 @@ function startRide() {
   placeGate(0, -1);
   gate.visible = true;
   chalPanel.style.display = 'block';
+  // CrazyGames : signale le début de partie + pub interstitielle entre les runs.
+  CG.ridesStarted++;
+  cgInterstitial();
+  cgGameplayStart();
+  // TURBO DÉPART (récompense de pub) : lance le run pied au plancher.
+  if (CG.boostNextRide) {
+    CG.boostNextRide = false;
+    state.rpm = 1.0; state.throttle = 1;
+    const bf = 24, bfx = -Math.sin(state.yaw), bfz = -Math.cos(state.yaw);
+    state.vx = bfx * bf; state.vz = bfz * bf; state.speed = bf;
+    const bb = document.getElementById('btn-boost');
+    if (bb) { bb.textContent = '🎁 TURBO DÉPART'; bb.style.borderColor = 'rgba(255,210,60,0.6)'; }
+  }
 }
 function toGarage() {
+  cgGameplayStop();   // CrazyGames : fin de partie
   mode = 'menu';
   scene.attach(camera);
   state.x = 0; state.z = 0; state.speed = 0; state.vx = 0; state.vz = 0; state.throttle = 0; state.rpm = 0; state.yawRate = 0; state.yaw = 0; state.air = false;
@@ -3074,6 +3151,9 @@ function frame() {
   let dt = Math.min((now - last) / 1000, 0.05);
   if (dt <= 0) dt = 0.016;
   last = now;
+  // Pause pendant une pub CrazyGames : on gèle la simulation (le son est déjà
+  // coupé via le master) mais on continue à rendre l'image figée.
+  if (adPaused) { composer.render(); return; }
   simTime += dt;
   const t = simTime;
   resize(false);
@@ -3808,3 +3888,5 @@ function frame() {
   composer.render();
 }
 requestAnimationFrame(frame);
+// Initialise le SDK CrazyGames puis signale que le jeu est prêt (loadingStop).
+initCrazyGames().then(() => { cgLoadingStop(); });

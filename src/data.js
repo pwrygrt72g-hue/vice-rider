@@ -1,20 +1,21 @@
-/* ================= DONNÉES — modèles réels =================
-   Specs issues des essais presse : vitesse max bridée ~108 km/h
-   (accord constructeurs / US Coast Guard), Spark Trixx ~80 km/h.
+/* ================= DONNÉES — modèles (marques FICTIVES) =================
+   Marques et noms 100 % inventés (WAVE-DOO / MARLIN / RIPTIDE) : aucune
+   référence à un constructeur réel -> jeu commercialisable (CrazyGames, stores).
+   Les specs restent des ordres de grandeur crédibles pour le feeling arcade.
    Données pures : aucune dépendance à three.js ni au DOM. */
 
 export const MODELS = [
-  { id: 'rxpx', kind: 'jetski', brand: 'Sea-Doo', name: 'RXP-X 325', hp: 325, top: 108, weight: 353, style: 'race',
+  { id: 'rxpx', kind: 'jetski', brand: 'WAVE-DOO', name: 'RX-9 Turbo', hp: 325, top: 108, weight: 353, style: 'race',
     colors: { hull: 0x121318, deck: 0xd8232a, accent: 0x0c0d10, seat: 0x1a1c22, trim: 0xe8e8e8 } },
-  { id: 'gtx', kind: 'jetski', brand: 'Sea-Doo', name: 'GTX Limited 300', hp: 300, top: 105, weight: 390, style: 'luxe',
+  { id: 'gtx', kind: 'jetski', brand: 'WAVE-DOO', name: 'Grand Cruiser 300', hp: 300, top: 105, weight: 390, style: 'luxe',
     colors: { hull: 0x2b2f36, deck: 0xd9d5cc, accent: 0xc9a24a, seat: 0x4a3826, trim: 0x2b2f36 } },
-  { id: 'spark', kind: 'jetski', brand: 'Sea-Doo', name: 'Spark Trixx', hp: 90, top: 80, weight: 139, style: 'fun',
+  { id: 'spark', kind: 'jetski', brand: 'WAVE-DOO', name: 'Trixx 90', hp: 90, top: 80, weight: 139, style: 'fun',
     colors: { hull: 0x18b8c9, deck: 0xff7a1a, accent: 0xffd23c, seat: 0x22242a, trim: 0x18b8c9 } },
-  { id: 'gp', kind: 'jetski', brand: 'Yamaha', name: 'GP1800R SVHO', hp: 250, top: 108, weight: 338, style: 'race',
+  { id: 'gp', kind: 'jetski', brand: 'MARLIN', name: 'Blade 1800', hp: 250, top: 108, weight: 338, style: 'race',
     colors: { hull: 0x0a2e6e, deck: 0xf2f4f6, accent: 0x1a5cc9, seat: 0x14161c, trim: 0xd8232a } },
-  { id: 'fx', kind: 'jetski', brand: 'Yamaha', name: 'FX Cruiser SVHO', hp: 250, top: 105, weight: 380, style: 'luxe',
+  { id: 'fx', kind: 'jetski', brand: 'MARLIN', name: 'Cruiser 250', hp: 250, top: 105, weight: 380, style: 'luxe',
     colors: { hull: 0x14161a, deck: 0x9aa3ad, accent: 0x2456b8, seat: 0x3c332a, trim: 0x9aa3ad } },
-  { id: 'ultra', kind: 'jetski', brand: 'Kawasaki', name: 'Ultra 310LX', hp: 310, top: 108, weight: 465, style: 'luxe',
+  { id: 'ultra', kind: 'jetski', brand: 'RIPTIDE', name: 'Storm 310', hp: 310, top: 108, weight: 465, style: 'luxe',
     colors: { hull: 0x0f130f, deck: 0x35a832, accent: 0x0f130f, seat: 0x1c1e22, trim: 0xc2c8cc } }
 ];
 
