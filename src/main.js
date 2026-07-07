@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=50';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=50';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=50';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=50';
+import { TWO_PI, smooth01, hex } from './util.js?v=51';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=51';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=51';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=51';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v50 · boutique tenues 80s';
+const BUILD = 'v51 · plage South Beach';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -766,6 +766,61 @@ for (let i = 0; i < 7; i++) {
   g.position.set(Math.cos(ang) * dist, 0, Math.sin(ang) * dist);
   palmIslands.push({ g, r });
 }
+
+/* ================= FRONT DE MER SOUTH BEACH =================
+   Devant la skyline : une vraie plage (sable + écume), une promenade type Ocean
+   Drive, un strip de bâtiments Art-Déco PASTEL bas (devant les tours) + palmiers
+   et parasols. Ajouté au groupe `skyline` -> recyclé avec lui pour rester à
+   l'horizon face au joueur. Donne le mood Miami depuis l'eau. */
+(function buildBeachfront() {
+  const zC = 55, zLen = 1120;
+  const sand = new THREE.Mesh(new THREE.BoxGeometry(98, 2.4, zLen), sandMat);
+  sand.position.set(902, 0.2, zC); sand.receiveShadow = true; skyline.add(sand);
+  const wet = new THREE.Mesh(new THREE.BoxGeometry(28, 2.0, zLen), wetSandMat);
+  wet.position.set(860, 0.1, zC); skyline.add(wet);
+  const foam = new THREE.Mesh(new THREE.PlaneGeometry(12, zLen).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false }));
+  foam.position.set(848, 1.3, zC); skyline.add(foam);
+  const prom = new THREE.Mesh(new THREE.BoxGeometry(11, 2.4, zLen),
+    new THREE.MeshStandardMaterial({ color: 0xd0c7b6, roughness: 0.92 }));
+  prom.position.set(937, 0.3, zC); skyline.add(prom);
+
+  // Strip Art-Déco pastel (bâtiments BAS, devant les tours) — palette South Beach.
+  const pastel = [[0xf7b3c6, 0xffffff], [0x9fe4d6, 0xfff2c4], [0xffd39a, 0xff9ec2],
+    [0xbfe0ff, 0xffffff], [0xe6d4ff, 0x9fe4d6], [0xfff0b8, 0xff9ec2]];
+  for (let i = 0; i < 15; i++) {
+    const [c, c2] = pastel[i % pastel.length];
+    const w = 40 + Math.random() * 26, h = 11 + Math.random() * 17, d = 22 + Math.random() * 12;
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+      new THREE.MeshStandardMaterial({ color: c, roughness: 0.7, metalness: 0.05 }));
+    body.position.y = h / 2; body.castShadow = true; body.receiveShadow = true; g.add(body);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(w * 1.03, 1.3, d * 1.03),
+      new THREE.MeshStandardMaterial({ color: 0xf6f2ea, roughness: 0.7 }));
+    cap.position.y = h + 0.65; g.add(cap);
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(6, h * 0.5, d * 0.55),
+      new THREE.MeshStandardMaterial({ color: 0xf6f2ea, roughness: 0.7 }));
+    fin.position.y = h + h * 0.25; g.add(fin);
+    // Bandes néon pastel (2 lignes Art-Déco) -> s'allument la nuit via setNight.
+    for (let b = 0; b < 2; b++) {
+      const trimMat = new THREE.MeshBasicMaterial({ color: c2, toneMapped: false });
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(w * 1.015, 0.5, d * 1.015), trimMat);
+      trim.position.y = h * (0.4 + b * 0.32); g.add(trim);
+      const dayC = new THREE.Color(c2).multiplyScalar(0.5); trimMat.color.copy(dayC);
+      neonTrims.push({ mat: trimMat, day: dayC, night: new THREE.Color(c2) });
+    }
+    g.position.set(926 + Math.random() * 8, 1.0, -480 + i * (zLen / 15) + Math.random() * 18);
+    skyline.add(g);
+  }
+
+  // Palmiers le long de la promenade + parasols sur le sable (groupe surélevé au niveau du sable).
+  const props = new THREE.Group(); props.position.y = 1.2; skyline.add(props);
+  for (let i = 0; i < 26; i++) {
+    const pz = -480 + i * (zLen / 26) + (Math.random() - 0.5) * 10;
+    makePalm(props, 895 + Math.random() * 6, pz, 6 + Math.random() * 3);
+    if (i % 2 === 0) makeParasol(props, 879 + Math.random() * 8, pz + 9);
+  }
+})();
 
 /* ---- Rochers isolés en pleine mer (obstacles) ---- */
 const seaRocks = [];
