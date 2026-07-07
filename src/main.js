@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=41';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=41';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=41';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=41';
+import { TWO_PI, smooth01, hex } from './util.js?v=42';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=42';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=42';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=42';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v41 · modele fait-main partout';
+const BUILD = 'v42 · voile+cockpit+logos';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -357,7 +357,7 @@ void main(){
   // Halo de contact TOUJOURS présent (la coque brasse l'eau même à l'arrêt) +
   // traînée d'écume qui s'évase derrière (sillage en trompette qui grandit avec
   // la vitesse). Rendu 100% par-pixel -> net quelle que soit la grille.
-  float contact = exp(-eDH * eDH * 0.6) * (0.85 + 0.75 * min(uHullSpeed / 10.0, 1.0));
+  float contact = exp(-eDH * eDH * 0.95) * (0.4 + 0.7 * min(uHullSpeed / 10.0, 1.0));
   // behind > 0 DERRIÈRE la coque, < 0 devant. Le sillage ne doit exister QUE
   // derrière : fenêtre qui monte depuis la coque (fondu dès la poupe) puis
   // s'estompe au loin. (BUG corrigé : avant, tous les pixels avant retombaient
@@ -1475,9 +1475,9 @@ function buildSki() {
   lc.fillText(cfg.name, 28, 128);
   const livTex = new THREE.CanvasTexture(livCv); livTex.colorSpace = THREE.SRGBColorSpace; livTex.anisotropy = 4;
   for (const sx of [-1, 1]) {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(1.9 * S, 0.58 * S),
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(2.4 * S, 0.72 * S),
       new THREE.MeshBasicMaterial({ map: livTex, transparent: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2 }));
-    p.position.set(0.66 * sx * S, 0.36, 0.05);
+    p.position.set(0.665 * sx * S, 0.4, 0.05);
     p.rotation.y = sx > 0 ? Math.PI / 2 : -Math.PI / 2;
     ski.add(p);
   }
@@ -1490,16 +1490,22 @@ function buildSki() {
     const stripe2 = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.055, 2.5 * S), trimM);
     stripe2.position.set(0.605 * sx * S, 0.5, -0.02 * S); stripe2.rotation.x = 0.02; ski.add(stripe2);
   }
-  // Badge de marque sur la nacelle (face pilote)
+  // GROS badge de marque sur le capot, incliné vers le pilote (visible en FPV)
   const badgeTex = decalTexture(cfg.brand, '', trimCss);
-  const badge = new THREE.Mesh(new THREE.PlaneGeometry(0.42 * S, 0.105 * S),
+  const badge = new THREE.Mesh(new THREE.PlaneGeometry(0.66 * S, 0.165 * S),
     new THREE.MeshBasicMaterial({ map: badgeTex, transparent: true, depthWrite: false }));
-  badge.position.set(0, 0.9, -0.83 * S); badge.rotation.x = -0.32; ski.add(badge);
-  // Décalco du modèle sur le capot arrière (visible de dos en chase)
+  badge.position.set(0, 0.84, -0.76 * S); badge.rotation.x = -0.55; ski.add(badge);
+  // Logo sur le pad central du guidon (bien visible en 1re personne)
+  if (barGroup) {
+    const barLogo = new THREE.Mesh(new THREE.PlaneGeometry(0.22 * S, 0.055 * S),
+      new THREE.MeshBasicMaterial({ map: badgeTex, transparent: true, depthWrite: false }));
+    barLogo.position.set(0, 0.17, 0.135); barLogo.rotation.x = -0.85; barGroup.add(barLogo);
+  }
+  // GROS décalco du modèle sur le capot arrière (visible de dos en chase)
   const rearTex = decalTexture(cfg.brand, cfg.name, trimCss);
-  const rearDecal = new THREE.Mesh(new THREE.PlaneGeometry(0.72 * S, 0.18 * S),
+  const rearDecal = new THREE.Mesh(new THREE.PlaneGeometry(1.0 * S, 0.25 * S),
     new THREE.MeshBasicMaterial({ map: rearTex, transparent: true, depthWrite: false }));
-  rearDecal.position.set(0, 0.7, 1.35 * S); rearDecal.rotation.set(-0.25, Math.PI, 0); ski.add(rearDecal);
+  rearDecal.position.set(0, 0.72, 1.34 * S); rearDecal.rotation.set(-0.25, Math.PI, 0); ski.add(rearDecal);
   // Numéro de coque « 86 » type course sur la proue (chaque côté)
   const numCv = document.createElement('canvas'); numCv.width = 128; numCv.height = 128;
   const nctx = numCv.getContext('2d');
@@ -1579,14 +1585,15 @@ function buildSki() {
   // Renfort central + colliers de serrage (détail réaliste du guidon)
   const clampBlock = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.09), rubber);
   clampBlock.position.set(0, 0.155, 0.1); barGroup.add(clampBlock);
-  // === TABLEAU DE BORD DIGITAL (façon Sea-Doo) : écran incliné vers le pilote ===
-  const dashHousing = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.155, 0.05), new THREE.MeshStandardMaterial({ color: 0x0b0d12, roughness: 0.5 }));
-  dashHousing.position.set(0, 0.225, 0.0); dashHousing.rotation.x = -0.5; barGroup.add(dashHousing);
-  // Écran incliné, décalé LE LONG DE SA NORMALE (sin/cos du tilt) pour éviter le
-  // z-fighting avec le boîtier, et double-face par sécurité d'orientation.
-  const dashScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.255, 0.12),
+  // === TABLEAU DE BORD (façon Sea-Doo) : plus GRAND + cerclage chromé, incliné vers le pilote ===
+  const dashHousing = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.21, 0.06), new THREE.MeshStandardMaterial({ color: 0x0a0c10, roughness: 0.45, metalness: 0.2 }));
+  dashHousing.position.set(0, 0.24, 0.0); dashHousing.rotation.x = -0.5; barGroup.add(dashHousing);
+  const dashBezel = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.18, 0.02), chrome);
+  dashBezel.position.set(0, 0.24 + Math.sin(0.5) * 0.032, Math.cos(0.5) * 0.032); dashBezel.rotation.x = -0.5; barGroup.add(dashBezel);
+  // Écran incliné, décalé LE LONG DE SA NORMALE (sin/cos du tilt) pour éviter le z-fighting.
+  const dashScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.33, 0.155),
     new THREE.MeshBasicMaterial({ map: gaugeTex, side: THREE.DoubleSide, toneMapped: false }));
-  dashScreen.position.set(0, 0.225 + Math.sin(0.5) * 0.028, Math.cos(0.5) * 0.028);
+  dashScreen.position.set(0, 0.24 + Math.sin(0.5) * 0.04, Math.cos(0.5) * 0.04);
   dashScreen.rotation.x = -0.5;
   barGroup.add(dashScreen);
   // Leviers articulés : gâchette de gaz (droite) et frein (gauche), pivot au guidon
@@ -1924,10 +1931,10 @@ function buildSki() {
   // c'est LUI qui assoit visuellement la coque dans l'eau (résolution
   // indépendante de la grille océan, contrairement au shader).
   contactRing = new THREE.Mesh(
-    new THREE.PlaneGeometry(4.4, 5.8).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, opacity: 0.7, depthWrite: false })
+    new THREE.PlaneGeometry(3.0, 3.7).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, opacity: 0.42, depthWrite: false })
   );
-  contactRing.position.set(0, 0.1, 0.15);
+  contactRing.position.set(0, 0.1, 0.2);
   ski.add(contactRing);
   if (realModel) { ski.add(realModel); alignRideModel(); refreshModelMode(); }
 }
@@ -2835,7 +2842,8 @@ function frame() {
     if (contactRing) {
       contactRing.visible = true;
       contactRing.position.y = hw - ski.position.y + 0.05;
-      contactRing.material.opacity = 0.45 + 0.08 * Math.sin(t * 2.2);
+      contactRing.material.opacity = 0.28 + 0.06 * Math.sin(t * 2.2);
+      contactRing.scale.set(0.85, 1, 0.85);
     }
     if (!window.__camFreeze) {
       ski.rotation.y = t * 0.3;
@@ -3269,8 +3277,8 @@ function frame() {
   if (contactRing) {
     contactRing.visible = !state.air;
     contactRing.position.y = hw - state.y + 0.05;
-    contactRing.material.opacity = (0.5 + 0.35 * Math.min(state.rpm + speedF, 1)) * (0.82 + 0.18 * Math.sin(t * 6.3));
-    const cs = 1.15 + speedF * 0.5 + Math.sin(t * 4.1) * 0.06;
+    contactRing.material.opacity = (0.24 + 0.24 * Math.min(state.rpm + speedF, 1)) * (0.85 + 0.15 * Math.sin(t * 6.3));
+    const cs = 0.8 + speedF * 0.35 + Math.sin(t * 4.1) * 0.04;
     contactRing.scale.set(cs, 1, cs);
     contactRing.rotation.y = Math.sin(t * 0.7) * 0.25;
   }
