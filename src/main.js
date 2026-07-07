@@ -7,15 +7,15 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=60';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=60';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=60';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=60';
-import { TUNING } from './tuning.js?v=60';
+import { TWO_PI, smooth01, hex } from './util.js?v=62';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=62';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=62';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=62';
+import { TUNING } from './tuning.js?v=62';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v60 · vibration manette (haptique impacts)';
+const BUILD = 'v62 · reflets skyline vivants (shimmer)';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -639,6 +639,8 @@ function makeTower(i) {
   refl.scale.set(rw, rh, 1);
   refl.position.set(tx, -rh * 0.5 + 1.5, tz);
   refl.renderOrder = 3;
+  // Base pour l'animation "reflet vivant" (shimmer + ondulation, pilotée en frame()).
+  refl.userData = { baseW: rw, baseH: rh, base: REFL_DAY, ph: i * 1.37 };
   skyline.add(refl);
   towerReflections.push(refl);
 }
@@ -3787,7 +3789,7 @@ function applyTOD(n) {
   scene.fog.color.copy(_todFog); _ocFog.copy(_todFog); oceanUniforms.uFogColor.value = _ocFog;
   for (const m of towerWindowMats) m.emissiveIntensity = lerpN(WIN_DAY, WIN_NIGHT, winN);
   for (const t of neonTrims) t.mat.color.copy(_todTrim.copy(t.day).lerp(t.night, winN));
-  for (const r of towerReflections) r.material.opacity = lerpN(REFL_DAY, REFL_NIGHT, reflN);
+  for (const r of towerReflections) r.userData.base = lerpN(REFL_DAY, REFL_NIGHT, reflN);   // opacité de base (shimmer appliqué en frame)
   applyNightBloom();
 }
 function todTarget() {
@@ -4022,6 +4024,7 @@ function frame() {
   state.vx = fx * vForward + rx * vLat;
   state.vz = fz * vForward + rz * vLat;
   state.speed = vForward;                                       // signé, pour HUD/effets
+  const prevX = state.x, prevZ = state.z;                       // position AVANT le pas (collision balayée)
   state.x += state.vx * dt;
   state.z += state.vz * dt;
 
@@ -4038,16 +4041,25 @@ function frame() {
   state.yawRate += (targetYawRate - state.yawRate) * (1 - Math.exp(-dt * PHYS.yawResp));
   state.yaw -= state.yawRate * dt;
 
-  /* DÉFLEXION d'obstacle : repousse hors du cercle, retire la vitesse RENTRANTE
-     (avec rebond `rest`) et garde la tangentielle (`slide`) → frôlement = glisse,
-     choc frontal = rebond. Gerbe/secousse ∝ vitesse d'impact normale. Renvoie true
-     s'il y a eu contact. fx/fz = repère avant courant (pour resync de state.speed). */
+  /* DÉFLEXION d'obstacle BALAYÉE (swept) : on teste le SEGMENT [position avant →
+     après] contre le cercle de l'obstacle, pas seulement le point d'arrivée →
+     anti-tunneling (un jet rapide à bas fps ne traverse plus un petit rocher).
+     Repousse hors du cercle, retire la vitesse RENTRANTE (rebond `rest`) et garde la
+     tangentielle (`slide`) → frôlement = glisse, choc frontal = rebond. Gerbe/
+     secousse ∝ vitesse d'impact normale. Renvoie true s'il y a eu contact. */
   const deflect = (cx, cz, minD, slide, rest) => {
-    const dx = state.x - cx, dz = state.z - cz;
-    const d = Math.hypot(dx, dz);
-    if (d >= minD || d <= 0.01) return false;
-    const nX = dx / d, nZ = dz / d;                         // normale obstacle→ski
-    state.x = cx + nX * minD; state.z = cz + nZ * minD;     // repousse au bord
+    // Point du trajet [prev→cur] le plus proche du centre de l'obstacle.
+    const dxs = state.x - prevX, dzs = state.z - prevZ;
+    const segLen2 = dxs * dxs + dzs * dzs;
+    const tC = segLen2 > 1e-9 ? Math.max(0, Math.min(1, ((cx - prevX) * dxs + (cz - prevZ) * dzs) / segLen2)) : 0;
+    const cdx = (prevX + dxs * tC) - cx, cdz = (prevZ + dzs * tC) - cz;
+    const cd = Math.hypot(cdx, cdz);
+    if (cd >= minD) return false;                          // le trajet ne frôle pas l'obstacle
+    // Normale au contact ; si le trajet passe pile par le centre, on repousse à contre-sens.
+    let nX, nZ;
+    if (cd > 0.01) { nX = cdx / cd; nZ = cdz / cd; }
+    else { const l = Math.sqrt(segLen2) || 1; nX = -dxs / l; nZ = -dzs / l; }
+    state.x = cx + nX * minD; state.z = cz + nZ * minD;     // repousse au bord (côté entrée)
     const vn = state.vx * nX + state.vz * nZ;               // vitesse le long de la normale
     if (vn < 0) {                                            // seulement si on rentre dedans
       state.vx -= vn * (1 + rest) * nX; state.vz -= vn * (1 + rest) * nZ;  // annule+rebond normal
@@ -4084,6 +4096,14 @@ function frame() {
     const bl = 0.55 + 0.45 * Math.sin(t * 3.0 + b * 1.7);
     beacons[b].scale.setScalar(0.7 + bl * 0.6);
     beacons[b].material.opacity = bl;
+  }
+  // Reflets néon de la skyline VIVANTS : shimmer d'opacité + ondulation (largeur/
+  // hauteur) -> ils dansent sur l'eau comme un vrai reflet, au lieu de rester figés.
+  for (let r = 0; r < towerReflections.length; r++) {
+    const rf = towerReflections[r], u = rf.userData;
+    const shim = (0.70 + 0.30 * Math.sin(t * 2.6 + u.ph)) * (0.82 + 0.18 * Math.sin(t * 6.1 + u.ph * 2.3));
+    rf.material.opacity = u.base * shim;
+    rf.scale.set(u.baseW * (1 + 0.10 * Math.sin(t * 1.7 + u.ph * 2)), u.baseH * (1 + 0.06 * Math.sin(t * 2.2 + u.ph)), 1);
   }
 
   // Rochers isolés : déflexion dure (rocher = rebondissant) + recyclage
