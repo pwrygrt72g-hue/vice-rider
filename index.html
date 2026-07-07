@@ -83,6 +83,49 @@
   #menu .help { font-size: 12px; color: #9aa3b5; }
   .hidden { display: none !important; }
 
+  /* ---- Économie / boucle addictive ---- */
+  #menu-coins { font: 800 22px "SF Mono", Menlo, monospace; color: #ffd23c; text-shadow: 0 0 12px rgba(255,210,60,0.5); letter-spacing: 1px; }
+  .mbtn { background: rgba(24,18,36,0.9); color: #ffd9e4; border: 1.5px solid #3c3048; border-radius: 10px;
+          padding: 11px 16px; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; cursor: pointer; width: 100%; }
+  .mbtn:hover { border-color: #ff5c8a; }
+  #mission-list { display: flex; flex-direction: column; gap: 6px; }
+  .mission { background: rgba(24,18,36,0.8); border: 1px solid #2c2440; border-radius: 8px; padding: 7px 9px; font-size: 11.5px; color: #cdd; }
+  .mission.done { border-color: #35e0e0; color: #35e0e0; }
+  .mission .mreward { color: #ffd23c; float: right; font-weight: 700; }
+  .mission .mbar { height: 4px; background: rgba(0,0,0,0.4); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+  .mission .mbar > div { height: 100%; background: #ff5c8a; border-radius: 2px; }
+  /* Carte des cartes ski verrouillées */
+  .card .lock { position: absolute; inset: 0; background: rgba(10,7,16,0.72); border-radius: 12px; display: flex;
+                flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+  .card { position: relative; }
+  .card .price { font: 700 13px "SF Mono", Menlo, monospace; color: #ffd23c; }
+  .card .lock small { font-size: 10px; color: #35e0e0; letter-spacing: 1px; }
+  /* HUD en jeu */
+  #game-coins { position: absolute; top: 46px; left: 16px; font: 800 18px "SF Mono", Menlo, monospace; color: #ffd23c;
+                text-shadow: 0 0 10px rgba(255,210,60,0.5); z-index: 7; pointer-events: none; }
+  #coin-gain { color: #7fffa0; font-size: 14px; margin-left: 8px; opacity: 0; transition: opacity 0.2s; }
+  #fuel-wrap { position: absolute; top: 76px; left: 16px; width: 150px; z-index: 7; pointer-events: none; }
+  .fuel-lbl { font: 700 9px "SF Mono", Menlo, monospace; color: #9a7f95; letter-spacing: 2px; margin-bottom: 3px; }
+  #fuel-bar { height: 8px; background: rgba(10,7,16,0.7); border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
+  #fuel-fill { height: 100%; width: 100%; background: linear-gradient(90deg,#ff3b30,#ffd23c 40%,#35e0e0); border-radius: 4px; transition: width 0.2s; }
+  #minimap { position: absolute; bottom: calc(96px + env(safe-area-inset-bottom)); right: 16px; z-index: 7;
+             background: rgba(10,14,26,0.6); border: 1.5px solid rgba(53,224,224,0.35); border-radius: 12px; pointer-events: none; }
+  /* Overlays plein écran (fin de run + roue) */
+  #runend, #wheel-ov { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+                       background: rgba(6,4,14,0.72); backdrop-filter: blur(3px); }
+  .re-card { background: linear-gradient(180deg,#1a1230,#120c22); border: 1.5px solid rgba(255,92,138,0.4);
+             border-radius: 18px; padding: 26px 30px; width: min(360px,88vw); text-align: center;
+             box-shadow: 0 20px 60px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 10px; }
+  #re-title { font: 800 24px "SF Mono", Menlo, monospace; letter-spacing: 3px; color: #ff5c8a; text-shadow: 0 0 16px rgba(255,92,138,0.5); }
+  #re-sub { font-size: 13px; color: #9aa3b5; margin-top: -4px; }
+  .re-coins { font: 800 34px "SF Mono", Menlo, monospace; color: #ffd23c; text-shadow: 0 0 18px rgba(255,210,60,0.5); margin: 4px 0; }
+  .rbtn { background: rgba(36,29,46,0.9); color: #e9d8e2; border: 1.5px solid #3c3048; border-radius: 12px;
+          padding: 13px; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; cursor: pointer; }
+  .rbtn:hover { border-color: #ff5c8a; }
+  .rbtn.gold { background: linear-gradient(90deg,#ff9c1a,#ffd23c); color: #23140a; border: none; box-shadow: 0 0 20px rgba(255,180,40,0.4); }
+  #wheel-prize { font: 700 16px "SF Mono", Menlo, monospace; color: #ffd23c; min-height: 20px; }
+  #wheel-cv { margin: 0 auto; }
+
   /* ---- Tactile / smartphone ---- */
   canvas#sea, #hud button, #touch button { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 
@@ -158,6 +201,7 @@
       <h1>VICE RIDER</h1>
       <div class="sub">MIAMI &middot; 1986</div>
     </div>
+    <div id="menu-coins">🪙 <span id="coin-bal">0</span></div>
     <div class="menu-cols">
       <div class="menu-group">
         <h3>Jet skis</h3>
@@ -170,6 +214,12 @@
         <div class="cards" id="cards-suit"></div>
         <h3 style="margin-top:12px;">Qualité</h3>
         <div class="cards" id="cards-quality"></div>
+      </div>
+      <div class="menu-group" style="min-width:220px;">
+        <h3>Défis du jour</h3>
+        <div id="mission-list"></div>
+        <h3 style="margin-top:12px;">Bonus quotidien</h3>
+        <button id="btn-wheel" class="mbtn">🎡 ROUE DE LA CHANCE</button>
       </div>
     </div>
     <button id="btn-ride">RIDE</button>
@@ -194,11 +244,41 @@
       <button id="btn-garage" title="Retour au garage">GARAGE</button>
       <button id="btn-mute" aria-label="Son">🔊</button>
       <button id="btn-night" aria-label="Crépuscule" title="Jour / crépuscule">🌙</button>
+      <button id="btn-reveal" aria-label="Trésors" title="Révéler les trésors (pub)">🗺️</button>
       <button id="btn-cam" aria-label="Vue" title="Changer de vue">🎥</button>
       <button id="btn-port" aria-label="Gauche">←</button>
       <button id="btn-slow" aria-label="Frein">↓</button>
       <button id="btn-fast" aria-label="Gaz">↑</button>
       <button id="btn-stbd" aria-label="Droite">→</button>
+    </div>
+  </div>
+
+  <!-- ===== Overlays en jeu (pièces, carburant, minimap) ===== -->
+  <div id="game-coins" class="hidden">🪙 <span id="game-coin-bal">0</span><span id="coin-gain"></span></div>
+  <div id="fuel-wrap" class="hidden"><div class="fuel-lbl">CARBURANT</div><div id="fuel-bar"><div id="fuel-fill"></div></div></div>
+  <canvas id="minimap" width="150" height="150" class="hidden"></canvas>
+
+  <!-- ===== Panneau de fin de run ===== -->
+  <div id="runend" class="hidden">
+    <div class="re-card">
+      <div id="re-title">RUN TERMINÉ</div>
+      <div id="re-sub">Panne sèche !</div>
+      <div class="re-coins">🪙 <span id="re-coins">0</span></div>
+      <button id="re-continue" class="rbtn gold">🎬 CONTINUER (pub)</button>
+      <button id="re-double" class="rbtn gold">🎬 ×2 PIÈCES</button>
+      <button id="re-bank" class="rbtn">EMPOCHER &amp; GARAGE</button>
+    </div>
+  </div>
+
+  <!-- ===== Roue de la chance ===== -->
+  <div id="wheel-ov" class="hidden">
+    <div class="re-card">
+      <div id="re-title">ROUE DE LA CHANCE</div>
+      <canvas id="wheel-cv" width="260" height="260"></canvas>
+      <div id="wheel-prize"></div>
+      <button id="wheel-spin" class="rbtn gold">TOURNER</button>
+      <button id="wheel-bonus" class="rbtn">🎬 SPIN BONUS (pub)</button>
+      <button id="wheel-close" class="rbtn">FERMER</button>
     </div>
   </div>
 </div>
@@ -208,6 +288,6 @@
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.js" } }
 </script>
-<script type="module" src="./src/main.js?v=45"></script>
+<script type="module" src="./src/main.js?v=46"></script>
 </body>
 </html>

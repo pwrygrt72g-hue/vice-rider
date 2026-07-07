@@ -7,18 +7,39 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=45';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=45';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=45';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=45';
+import { TWO_PI, smooth01, hex } from './util.js?v=46';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=46';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=46';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=46';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v45 · WAVE-DOO + CrazyGames';
+const BUILD = 'v46 · monde ouvert + éco';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
 const sel = { ski: 'rxpx', pilote: 'sonny', suit: 'rose', quality: 'moyen' };
+
+/* ================= MÉTA-JEU : ÉCONOMIE + SAUVEGARDE =================
+   Boucle addictive : ramasser des pièces en mer -> acheter jets/skins ->
+   revenir plus fort. Sauvegarde locale (localStorage). Prix des jets dérivés
+   de leur perf ; le RXP de départ est offert. */
+const SAVE_KEY = 'viceRider.save.v2';
+const DEFAULT_SAVE = { coins: 0, best: 0, ownedSkis: ['rxpx'], ownedSuits: ['rose', 'turquoise', 'blanc', 'noir'],
+  lastDaily: 0, streak: 0, missions: null, missionDay: 0, totalRuns: 0, treasuresFound: 0 };
+function loadSave() {
+  try { return Object.assign({}, DEFAULT_SAVE, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); }
+  catch (e) { return Object.assign({}, DEFAULT_SAVE); }
+}
+const save = loadSave();
+function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* quota/privé */ } }
+const SKI_PRICES = { rxpx: 0, spark: 1200, gp: 2600, fx: 3400, gtx: 4200, ultra: 6000 };
+function skiOwned(id) { return save.ownedSkis.includes(id); }
+function updateCoinUI() {
+  const a = document.getElementById('coin-bal'); if (a) a.textContent = save.coins.toLocaleString('fr-FR');
+  const b = document.getElementById('game-coin-bal'); if (b) b.textContent = save.coins.toLocaleString('fr-FR');
+}
+function addCoins(n) { save.coins += n; persist(); updateCoinUI(); }
 
 /* ================= MENU DOM ================= */
 function makeCards(containerId, items, group, renderFn) {
@@ -42,7 +63,51 @@ const cardTpl = m => `
   <div class="swatch"><div style="background:${hex(m.colors.hull)}"></div><div style="background:${hex(m.colors.deck)}"></div><div style="background:${hex(m.colors.accent)}"></div></div>
   <div class="brand">${m.brand}</div><div class="name">${m.name}</div>
   <div class="specs">${m.hp} ch · ${m.top} km/h<br>${m.weight} kg</div>`;
-makeCards('cards-ski', JETSKIS, 'ski', cardTpl);
+/* Cartes JET SKI avec verrouillage : possédé -> sélection ; verrouillé -> achat
+   en pièces si le solde suffit, sinon déblocage par pub récompensée. */
+function skiLockHtml(id) {
+  return `<div class="lock"><div class="price">🪙 ${SKI_PRICES[id].toLocaleString('fr-FR')}</div><small>ACHETER · 🎬</small></div>`;
+}
+function refreshSkiCards() {
+  document.querySelectorAll('#cards-ski .card').forEach(c => {
+    const id = c.dataset.value, lk = c.querySelector('.lock');
+    if (skiOwned(id) && lk) lk.remove();
+    else if (!skiOwned(id) && !lk) c.insertAdjacentHTML('beforeend', skiLockHtml(id));
+  });
+}
+function selectSki(id, card) {
+  sel.ski = id;
+  document.querySelectorAll('.card[data-group="ski"]').forEach(c => c.classList.remove('sel'));
+  card.classList.add('sel');
+  rebuildSki();
+}
+function onSkiCardClick(m, card) {
+  if (skiOwned(m.id)) { selectSki(m.id, card); return; }
+  const price = SKI_PRICES[m.id];
+  if (save.coins >= price) {
+    save.coins -= price; save.ownedSkis.push(m.id); persist(); updateCoinUI(); refreshSkiCards();
+    selectSki(m.id, card); toast(`${m.name} débloqué !`);
+  } else {
+    // Pas assez de pièces -> pub pour débloquer tout de suite (fort hook).
+    toast('Regarde une pub pour débloquer…');
+    cgRewarded(() => {
+      if (!skiOwned(m.id)) { save.ownedSkis.push(m.id); persist(); }
+      refreshSkiCards(); selectSki(m.id, card); toast(`${m.name} débloqué !`);
+    });
+  }
+}
+(function buildSkiCards() {
+  const host = document.getElementById('cards-ski');
+  JETSKIS.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'card' + (sel.ski === m.id ? ' sel' : '');
+    card.dataset.group = 'ski'; card.dataset.value = m.id;
+    card.innerHTML = cardTpl(m) + (skiOwned(m.id) ? '' : skiLockHtml(m.id));
+    card.addEventListener('click', () => onSkiCardClick(m, card));
+    host.appendChild(card);
+  });
+})();
+// (toast() est défini plus bas — réutilisé pour les messages méta.)
 makeCards('cards-pilote', PILOTES, 'pilote', p => `
   <div class="dot" style="background:${hex(p.skin)}"></div><div class="name">${p.name}</div>`);
 makeCards('cards-suit', SUITS, 'suit', s => `
@@ -1103,6 +1168,382 @@ function setFleetVisible(v) {
   for (const ai of aiSkis) { ai.g.visible = v; ai.foam.visible = v; }
 }
 setFleetVisible(false);   // état initial = menu
+
+/* ================= MÉTA-GAMEPLAY : COLLECTIBLES + CARBURANT + POLICE =================
+   Le monde ouvert se remplit de pièces à ramasser (champ infini recyclé autour du
+   joueur), de coffres au trésor et de bidons d'essence. Le carburant crée la tension
+   "encore un run" ; la police apporte l'adrénaline Miami. Tout nourrit l'économie. */
+let fuel = 1, runCoins = 0, runActive = false, runEnding = false, runPaused = false;
+let heat = 0, chaseOn = false, escapeTimer = 0, caughtTimer = 0, policeTimer = 45, treasuresRevealed = false;
+
+function sfxBlip(freq, freq2, dur, type, gain) {
+  if (!audio || muted) return;
+  const c = audio.ctx, o = c.createOscillator(), g = c.createGain();
+  o.type = type || 'square';
+  o.frequency.setValueAtTime(freq, c.currentTime);
+  if (freq2) o.frequency.exponentialRampToValueAtTime(freq2, c.currentTime + dur);
+  o.connect(g); g.connect(audio.master);
+  g.gain.setValueAtTime(gain || 0.14, c.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
+  o.start(); o.stop(c.currentTime + dur + 0.02);
+}
+
+/* ---- Champ de PIÈCES recyclé autour du joueur (monde ouvert infini) ---- */
+const coins = [];
+const coinGeo = new THREE.CylinderGeometry(0.55, 0.55, 0.12, 18).rotateX(Math.PI / 2);
+const coinMat = new THREE.MeshStandardMaterial({ color: 0xffd23c, emissive: 0xffb400, emissiveIntensity: 0.7, metalness: 0.6, roughness: 0.3 });
+for (let i = 0; i < 46; i++) {
+  const m = new THREE.Mesh(coinGeo, coinMat); m.visible = false; scene.add(m);
+  coins.push({ m, x: 0, z: 0, ph: Math.random() * TWO_PI });
+}
+function scatterCoin(c, near) {
+  const ang = Math.random() * TWO_PI, d = near ? 40 + Math.random() * 90 : 30 + Math.random() * 220;
+  c.x = state.x + Math.cos(ang) * d; c.z = state.z + Math.sin(ang) * d;
+}
+/* ---- Coffres au trésor (rares, grosse récompense) ---- */
+const chests = [];
+const chestGeo = new THREE.BoxGeometry(1.3, 0.9, 0.95);
+const chestMat = new THREE.MeshStandardMaterial({ color: 0x7a4a1e, emissive: 0x3a2410, emissiveIntensity: 0.4, roughness: 0.6, metalness: 0.2 });
+const chestLidMat = new THREE.MeshStandardMaterial({ color: 0xffd23c, emissive: 0xffb400, emissiveIntensity: 0.6, metalness: 0.7, roughness: 0.3 });
+for (let i = 0; i < 7; i++) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(chestGeo, chestMat); body.castShadow = true; g.add(body);
+  const lid = new THREE.Mesh(new THREE.BoxGeometry(1.34, 0.28, 0.99), chestLidMat); lid.position.y = 0.5; g.add(lid);
+  g.visible = false; scene.add(g);
+  chests.push({ g, x: 0, z: 0, ph: Math.random() * TWO_PI });
+}
+/* ---- Bidons d'essence (refont le plein) ---- */
+const cans = [];
+const canGeo = new THREE.BoxGeometry(0.7, 0.9, 0.5);
+const canMat = new THREE.MeshStandardMaterial({ color: 0xd8232a, emissive: 0x5a0e10, emissiveIntensity: 0.5, roughness: 0.5 });
+for (let i = 0; i < 9; i++) {
+  const m = new THREE.Mesh(canGeo, canMat); m.castShadow = true; m.visible = false; scene.add(m);
+  cans.push({ m, x: 0, z: 0, ph: Math.random() * TWO_PI });
+}
+function scatterFar(o, dmin, dmax) {
+  const ang = Math.random() * TWO_PI, d = dmin + Math.random() * (dmax - dmin);
+  o.x = state.x + Math.cos(ang) * d; o.z = state.z + Math.sin(ang) * d;
+}
+function seedWorld() {
+  for (const c of coins) scatterCoin(c, false);
+  for (const ch of chests) scatterFar(ch, 90, 320);
+  for (const cn of cans) scatterFar(cn, 70, 280);
+  treasuresRevealed = false;
+}
+function collectiblesVisible(v) {
+  for (const c of coins) c.m.visible = v;
+  for (const ch of chests) ch.g.visible = v;
+  for (const cn of cans) cn.m.visible = v;
+}
+function gainCoins(n, worldX, worldZ) {
+  runCoins += n;
+  const gEl = document.getElementById('coin-gain');
+  if (gEl) { gEl.textContent = '+' + n; gEl.style.opacity = '1'; clearTimeout(gainCoins._t); gainCoins._t = setTimeout(() => { gEl.style.opacity = '0'; }, 700); }
+  const b = document.getElementById('game-coin-bal');
+  if (b) b.textContent = (save.coins + runCoins).toLocaleString('fr-FR');
+}
+
+/* ---- POLICE : un runabout qui prend le joueur en chasse ---- */
+const police = makeAiSki(0x14203a, 0xf4f4f4);
+const sirenR = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff0000, emissiveIntensity: 2 }));
+const sirenB = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshStandardMaterial({ color: 0x2040ff, emissive: 0x0030ff, emissiveIntensity: 2 }));
+sirenR.position.set(-0.12, 1.0, 0.55); sirenB.position.set(0.12, 1.0, 0.55);
+police.add(sirenR); police.add(sirenB);
+police.visible = false; scene.add(police);
+const policeState = { x: 0, z: 0, yaw: 0, spd: 0 };
+const policeFoam = new THREE.Sprite(new THREE.SpriteMaterial({ map: AI_FOAM, transparent: true, depthWrite: false, opacity: 0, blending: THREE.AdditiveBlending }));
+policeFoam.scale.set(3.5, 3.5, 1); policeFoam.visible = false; scene.add(policeFoam);
+function startChase() {
+  if (chaseOn) return;
+  chaseOn = true; heat = 0.35; escapeTimer = 0; caughtTimer = 0;
+  const ang = state.yaw + Math.PI + (Math.random() - 0.5);
+  policeState.x = state.x + Math.sin(ang) * 55; policeState.z = state.z + Math.cos(ang) * 55;
+  policeState.yaw = state.yaw; policeState.spd = 12;
+  police.visible = true; policeFoam.visible = true;
+  toast('🚨 POLICE — sème-les !');
+  sfxBlip(500, 900, 0.3, 'sawtooth', 0.1);
+}
+function endChase(escaped) {
+  chaseOn = false; police.visible = false; policeFoam.visible = false;
+  policeTimer = 55 + Math.random() * 45;
+  if (escaped) {
+    const reward = 120 + Math.floor(heat * 260);
+    gainCoins(reward); toast('🏁 Semés ! +' + reward + ' 🪙');
+    missionAdd('escape', 1);
+    cgHappytime();
+  }
+  heat = 0;
+}
+function updatePolice(dt, t) {
+  const bl = (Math.sin(t * 12) > 0);
+  sirenR.material.emissiveIntensity = bl ? 3 : 0.2;
+  sirenB.material.emissiveIntensity = bl ? 0.2 : 3;
+  if (!chaseOn) {
+    if (runActive && !runPaused) { policeTimer -= dt; if (policeTimer <= 0) startChase(); }
+    return;
+  }
+  // Poursuite : cap vers le joueur, vitesse ~ proche de la sienne (un poil moins -> échappable).
+  const dx = state.x - policeState.x, dz = state.z - policeState.z;
+  const dist = Math.hypot(dx, dz);
+  const desired = Math.atan2(-dx, -dz);
+  let dy = desired - policeState.yaw;
+  while (dy > Math.PI) dy -= TWO_PI; while (dy < -Math.PI) dy += TWO_PI;
+  policeState.yaw += Math.sign(dy) * Math.min(Math.abs(dy), 2.0 * dt);
+  const chaseSpd = Math.min(PHYS.max * 0.92, 30);
+  policeState.spd += (chaseSpd - policeState.spd) * Math.min(1, dt * 1.2);
+  const fxp = -Math.sin(policeState.yaw), fzp = -Math.cos(policeState.yaw);
+  policeState.x += fxp * policeState.spd * dt; policeState.z += fzp * policeState.spd * dt;
+  const py = waveHeight(policeState.x, policeState.z, t);
+  police.position.set(policeState.x, py, policeState.z);
+  police.rotation.y = policeState.yaw;
+  police.rotation.z = -Math.sign(dy) * Math.min(Math.abs(dy), 1) * 0.35;
+  police.rotation.x = 0.05 + Math.sin(t * 3 + 1) * 0.03;
+  policeFoam.position.set(policeState.x - fxp * 1.8, py + 0.2, policeState.z - fzp * 1.8);
+  policeFoam.material.opacity = 0.5;
+  heat = Math.max(0, Math.min(1, heat + (dist < 40 ? dt * 0.15 : -dt * 0.05)));
+  if (dist < 8) { caughtTimer += dt; if (caughtTimer > 1.6) { caughtTimer = 0; endRun('busted'); } }
+  else caughtTimer = Math.max(0, caughtTimer - dt);
+  if (dist > 180) { escapeTimer += dt; if (escapeTimer > 5) endChase(true); }
+  else escapeTimer = Math.max(0, escapeTimer - dt * 0.5);
+}
+
+/* ---- Mise à jour de tout le méta-gameplay en jeu (appelée chaque frame ride) ---- */
+const _mmCtx = (() => { const cv = document.getElementById('minimap'); return cv ? cv.getContext('2d') : null; })();
+let mmTick = 0;
+function updateMeta(dt, t) {
+  if (!runActive || runPaused) return;
+  const pickR2 = 4.2 * 4.2;
+  // Pièces
+  for (const c of coins) {
+    const dx = c.x - state.x, dz = c.z - state.z;
+    if (dx * dx + dz * dz < pickR2) {
+      gainCoins(8, c.x, c.z);
+      burstDrops(c.x, waveHeight(c.x, c.z, t) + 0.4, c.z, 6, 0.4, 0, 0);
+      sfxBlip(880, 1500, 0.09, 'square', 0.1);
+      missionAdd('coins', 1);
+      scatterCoin(c, true);
+    } else if (dx * dx + dz * dz > 340 * 340) scatterCoin(c, false);
+    c.m.position.set(c.x, waveHeight(c.x, c.z, t) + 0.55 + Math.sin(t * 3 + c.ph) * 0.12, c.z);
+    c.m.rotation.z = t * 3 + c.ph;
+  }
+  // Coffres
+  for (const ch of chests) {
+    const dx = ch.x - state.x, dz = ch.z - state.z;
+    if (dx * dx + dz * dz < 6 * 6) {
+      const reward = 60 + Math.floor(Math.random() * 170);
+      gainCoins(reward, ch.x, ch.z); save.treasuresFound++;
+      burstDrops(ch.x, waveHeight(ch.x, ch.z, t) + 0.5, ch.z, 30, 0.9, 0, 0);
+      sfxBlip(660, 1320, 0.25, 'triangle', 0.16);
+      toast('💰 Trésor ! +' + reward + ' 🪙');
+      missionAdd('chest', 1); cgHappytime();
+      scatterFar(ch, 120, 340);
+    }
+    ch.g.position.set(ch.x, waveHeight(ch.x, ch.z, t) + 0.35 + Math.sin(t * 2 + ch.ph) * 0.1, ch.z);
+    ch.g.rotation.y = t * 0.4 + ch.ph; ch.g.rotation.z = Math.sin(t * 1.7 + ch.ph) * 0.12;
+  }
+  // Bidons d'essence
+  for (const cn of cans) {
+    const dx = cn.x - state.x, dz = cn.z - state.z;
+    if (dx * dx + dz * dz < 5 * 5) {
+      fuel = Math.min(1, fuel + 0.35);
+      sfxBlip(300, 200, 0.2, 'sawtooth', 0.12); toast('⛽ +35% carburant');
+      scatterFar(cn, 90, 300);
+    }
+    cn.m.position.set(cn.x, waveHeight(cn.x, cn.z, t) + 0.5 + Math.sin(t * 2.6 + cn.ph) * 0.1, cn.z);
+    cn.m.rotation.y = t * 0.8 + cn.ph;
+  }
+  // Carburant : se vide en roulant, plus vite plein gaz.
+  fuel -= dt * (0.006 + Math.max(0, state.throttle) * 0.010);
+  const ff = document.getElementById('fuel-fill');
+  if (ff) { ff.style.width = Math.max(0, fuel * 100) + '%'; }
+  if (fuel <= 0 && !runEnding) { fuel = 0; endRun('fuel'); }
+  // Police
+  updatePolice(dt, t);
+  // Missions temps réel (vitesse / air)
+  missionReach('speed', Math.abs(state.speed) * 3.6);
+  // Minimap (throttlée)
+  if (_mmCtx && (++mmTick % 3 === 0)) drawMinimap(t);
+}
+function drawMinimap(t) {
+  const ctx = _mmCtx, S = 150, R = S / 2, RANGE = 300;
+  ctx.clearRect(0, 0, S, S);
+  const cs = Math.cos(state.yaw), sn = Math.sin(state.yaw);
+  const put = (wx, wz, col, r) => {
+    let ddx = wx - state.x, ddz = wz - state.z;
+    // rotation pour que le joueur pointe vers le haut (repère cap)
+    const rx = ddx * cs - ddz * sn, rz = ddx * sn + ddz * cs;
+    const px = R + (rx / RANGE) * R, py = R + (rz / RANGE) * R;
+    if (px < 2 || px > S - 2 || py < 2 || py > S - 2) return;
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(px, py, r, 0, TWO_PI); ctx.fill();
+  };
+  for (const b of raceBuoys) put(b.x, b.z, 'rgba(255,80,80,0.8)', 2);
+  for (const c of coins) put(c.x, c.z, 'rgba(255,210,60,0.9)', 1.6);
+  for (const cn of cans) put(cn.x, cn.z, 'rgba(255,60,60,0.95)', 2.4);
+  if (treasuresRevealed) for (const ch of chests) put(ch.x, ch.z, 'rgba(190,120,255,1)', 3);
+  for (const ai of aiSkis) put(ai.x, ai.z, 'rgba(120,200,255,0.7)', 2);
+  if (chaseOn) put(policeState.x, policeState.z, (Math.sin(t * 12) > 0 ? '#ff2020' : '#2040ff'), 3.2);
+  // joueur au centre (triangle vers le haut)
+  ctx.fillStyle = '#35e0e0'; ctx.beginPath(); ctx.moveTo(R, R - 6); ctx.lineTo(R - 4, R + 5); ctx.lineTo(R + 4, R + 5); ctx.closePath(); ctx.fill();
+}
+
+/* ================= FIN DE RUN : ×2 pièces + CONTINUE (pubs) ================= */
+function endRun(reason) {
+  if (runEnding) return;
+  runEnding = true; runPaused = true;
+  const canContinue = (reason === 'fuel' || reason === 'busted');
+  document.getElementById('re-title').textContent = reason === 'busted' ? 'ARRÊTÉ !' : (reason === 'fuel' ? 'PANNE SÈCHE' : 'RUN TERMINÉ');
+  document.getElementById('re-sub').textContent = reason === 'busted' ? "La police t'a chopé." : (reason === 'fuel' ? "Plus d'essence — trouve un bidon !" : 'Belle sortie.');
+  document.getElementById('re-coins').textContent = runCoins.toLocaleString('fr-FR');
+  document.getElementById('re-continue').style.display = canContinue ? '' : 'none';
+  const dbl = document.getElementById('re-double'); dbl.disabled = runCoins <= 0; dbl.style.opacity = runCoins <= 0 ? '0.4' : '1';
+  document.getElementById('runend').classList.remove('hidden');
+  cgGameplayStop();
+}
+function resumeRun() {
+  document.getElementById('runend').classList.add('hidden');
+  runEnding = false; runPaused = false;
+  cgGameplayStart();
+}
+function bankRun() {
+  if (runCoins > 0) addCoins(runCoins);
+  if (CH.score > save.best) { save.best = Math.round(CH.score); persist(); }
+  runCoins = 0;
+  document.getElementById('runend').classList.add('hidden');
+  toGarage();
+}
+document.getElementById('re-continue').addEventListener('click', () => {
+  cgRewarded(() => { fuel = 1; heat = 0; chaseOn = false; police.visible = false; policeFoam.visible = false; policeTimer = 55; caughtTimer = 0; resumeRun(); });
+});
+document.getElementById('re-double').addEventListener('click', () => {
+  const dbl = document.getElementById('re-double');
+  if (dbl.disabled) return;
+  cgRewarded(() => { runCoins *= 2; document.getElementById('re-coins').textContent = runCoins.toLocaleString('fr-FR'); dbl.disabled = true; dbl.style.opacity = '0.4'; });
+});
+document.getElementById('re-bank').addEventListener('click', bankRun);
+function requestGarage() {
+  if (runActive && !runEnding && runCoins > 0) endRun('garage');
+  else toGarage();
+}
+
+/* ================= MISSIONS DU JOUR ================= */
+const MISSION_POOL = [
+  { id: 'coins', text: t => `Ramasse ${t} pièces`, target: 40, reward: 150, mode: 'count' },
+  { id: 'speed', text: t => `Atteins ${t} km/h`, target: 150, reward: 120, mode: 'max' },
+  { id: 'flip', text: () => 'Réussis un salto', target: 1, reward: 200, mode: 'count' },
+  { id: 'chest', text: t => `Ouvre ${t} coffre(s)`, target: 2, reward: 250, mode: 'count' },
+  { id: 'escape', text: () => 'Sème la police', target: 1, reward: 300, mode: 'count' },
+  { id: 'air', text: t => `Reste ${t}s en l'air`, target: 2, reward: 180, mode: 'max' },
+  { id: 'gates', text: t => `Franchis ${t} portes`, target: 5, reward: 160, mode: 'count' }
+];
+function dayNumber() { return Math.floor(Date.now() / 86400000); }
+function missionDef(id) { return MISSION_POOL.find(m => m.id === id); }
+function ensureMissions() {
+  const dn = dayNumber();
+  if (save.missionDay !== dn || !save.missions) {
+    const pool = MISSION_POOL.map((_, i) => i), idx = [];
+    let seed = dn + 1;
+    while (idx.length < 3 && pool.length) { seed = (seed * 9301 + 49297) % 233280; idx.push(pool.splice(Math.floor(seed / 233280 * pool.length), 1)[0]); }
+    save.missions = idx.map(i => ({ id: MISSION_POOL[i].id, prog: 0, done: false }));
+    save.missionDay = dn; persist();
+  }
+}
+function renderMissions() {
+  ensureMissions();
+  const host = document.getElementById('mission-list'); if (!host) return;
+  host.innerHTML = save.missions.map(ms => {
+    const d = missionDef(ms.id), pct = Math.min(100, ms.prog / d.target * 100);
+    return `<div class="mission ${ms.done ? 'done' : ''}"><span class="mreward">${ms.done ? '✓' : '+' + d.reward + ' 🪙'}</span>${d.text(d.target)}<div class="mbar"><div style="width:${pct}%"></div></div></div>`;
+  }).join('');
+}
+function missionProgress(id, val, isMax) {
+  if (!save.missions) return;
+  let changed = false;
+  for (const ms of save.missions) {
+    if (ms.id !== id || ms.done) continue;
+    const d = missionDef(id);
+    ms.prog = isMax ? Math.max(ms.prog, val) : ms.prog + val;
+    if (ms.prog >= d.target) { ms.done = true; addCoins(d.reward); toast('Défi réussi ! +' + d.reward + ' 🪙'); }
+    changed = true;
+  }
+  if (changed) persist();
+}
+function missionAdd(id, n) { missionProgress(id, n, false); }
+function missionReach(id, val) { missionProgress(id, val, true); }
+
+/* ================= ROUE DE LA CHANCE (quotidienne + spin bonus par pub) ================= */
+const WHEEL_PRIZES = [80, 150, 250, 120, 400, 90, 600, 300];
+let wheelAngle = 0, wheelSpinning = false;
+function drawWheel() {
+  const cv = document.getElementById('wheel-cv'); if (!cv) return;
+  const ctx = cv.getContext('2d'), N = WHEEL_PRIZES.length, R = 122, cx = 130, cy = 130;
+  ctx.clearRect(0, 0, 260, 260);
+  for (let i = 0; i < N; i++) {
+    const a0 = wheelAngle + i / N * TWO_PI, a1 = wheelAngle + (i + 1) / N * TWO_PI;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, a0, a1); ctx.closePath();
+    ctx.fillStyle = i % 2 ? '#2a1c3a' : '#3a2450'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,92,138,0.4)'; ctx.stroke();
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate((a0 + a1) / 2);
+    ctx.fillStyle = '#ffd23c'; ctx.font = '700 15px Menlo, monospace'; ctx.textAlign = 'right';
+    ctx.fillText(WHEEL_PRIZES[i], R - 12, 5); ctx.restore();
+  }
+  ctx.fillStyle = '#35e0e0'; ctx.beginPath(); ctx.moveTo(cx, 4); ctx.lineTo(cx - 9, 20); ctx.lineTo(cx + 9, 20); ctx.closePath(); ctx.fill();
+}
+function canDailySpin() { return save.lastDaily !== dayNumber(); }
+function updateWheelButtons() {
+  const sp = document.getElementById('wheel-spin'); if (!sp) return;
+  if (canDailySpin()) { sp.textContent = 'TOURNER (gratuit)'; sp.disabled = false; sp.style.opacity = '1'; }
+  else { sp.textContent = 'DÉJÀ TOURNÉ AUJOURD’HUI'; sp.disabled = true; sp.style.opacity = '0.5'; }
+}
+function awardWheel(wasFree) {
+  const N = WHEEL_PRIZES.length, seg = TWO_PI / N;
+  const topLocal = ((-Math.PI / 2 - wheelAngle) % TWO_PI + TWO_PI) % TWO_PI;
+  let prize = WHEEL_PRIZES[Math.floor(topLocal / seg) % N];
+  if (wasFree && save.streak > 1) prize = Math.round(prize * (1 + Math.min(save.streak, 7) * 0.08));
+  addCoins(prize);
+  document.getElementById('wheel-prize').textContent = '+' + prize + ' 🪙' + (wasFree && save.streak > 1 ? ` (série ×${save.streak})` : '');
+  sfxBlip(660, 1320, 0.2, 'triangle', 0.14);
+  updateWheelButtons();
+}
+function spinWheel(free) {
+  if (wheelSpinning) return;
+  if (free && !canDailySpin()) { toast('Déjà tourné aujourd’hui — reviens demain !'); return; }
+  const doSpin = () => {
+    wheelSpinning = true;
+    const start = wheelAngle, target = wheelAngle + (4 + Math.random() * 3) * TWO_PI + Math.random() * TWO_PI, t0 = performance.now(), dur = 2600;
+    const step = () => {
+      const p = Math.min(1, (performance.now() - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+      wheelAngle = start + (target - start) * e; drawWheel();
+      if (p < 1) requestAnimationFrame(step);
+      else { wheelSpinning = false; awardWheel(free); }
+    };
+    requestAnimationFrame(step);
+  };
+  if (free) { save.lastDaily = dayNumber(); persist(); doSpin(); }
+  else cgRewarded(doSpin);
+}
+{
+  const bw = document.getElementById('btn-wheel');
+  if (bw) bw.addEventListener('click', () => { document.getElementById('wheel-ov').classList.remove('hidden'); drawWheel(); updateWheelButtons(); document.getElementById('wheel-prize').textContent = ''; });
+  const ws = document.getElementById('wheel-spin'); if (ws) ws.addEventListener('click', () => spinWheel(true));
+  const wb = document.getElementById('wheel-bonus'); if (wb) wb.addEventListener('click', () => spinWheel(false));
+  const wc = document.getElementById('wheel-close'); if (wc) wc.addEventListener('click', () => document.getElementById('wheel-ov').classList.add('hidden'));
+}
+// Série de connexion quotidienne.
+(function initStreak() {
+  const dn = dayNumber();
+  if (save.lastOpenDay !== dn) {
+    save.streak = (save.lastOpenDay === dn - 1) ? (save.streak || 0) + 1 : 1;
+    save.lastOpenDay = dn; persist();
+  }
+})();
+// Init UI méta au chargement (le DOM existe : script en fin de body).
+updateCoinUI(); renderMissions();
+// Hooks de debug (tests headless) — variables méta sinon en closure.
+window.__meta = {
+  save, get fuel() { return fuel; }, set fuel(v) { fuel = v; },
+  get runCoins() { return runCoins; }, get chaseOn() { return chaseOn; }, get treasuresRevealed() { return treasuresRevealed; },
+  startChase: () => startChase(), endRun: r => endRun(r), setCoins: n => { save.coins = n; persist(); updateCoinUI(); refreshSkiCards(); }
+};
 
 const splashes = [];
 const splashGeo = new THREE.CircleGeometry(1.4, 24).rotateX(-Math.PI / 2);
@@ -2639,6 +3080,7 @@ function audioSplash(power) {
    Règle CrazyGames : pendant une pub, on COUPE le son (master à 0) et on met le jeu
    en pause. On reprend à la fin (ou en cas d'erreur). */
 const CG = { sdk: null, ready: false, env: 'disabled', lastAdMs: -999999, ridesStarted: 0, boostNextRide: false };
+window.__cg = CG;   // debug : forcer __cg.env='disabled' en test pour bypasser les pubs simulées
 let adPaused = false;
 async function initCrazyGames() {
   try {
@@ -2767,6 +3209,7 @@ function scoreTrick(fx, fz) {
   camJolt = Math.max(camJolt, Math.min(0.6 + air * 1.4, 2.4));
   audioSplash(Math.min(0.4 + air * 0.5, 0.9));
 
+  missionReach('air', air);   // défi "reste Xs en l'air"
   // Trop court pour être une figure -> juste la gerbe.
   if (air < 0.32) return;
   const rollTurns = trickRoll / TWO_PI, flipTurns = trickPitch / TWO_PI;
@@ -2793,6 +3236,8 @@ function scoreTrick(fx, fz) {
   const combo = nr + nf;
   if (combo > 1) pts = Math.round(pts * (1 + 0.4 * (combo - 1)));   // bonus multi-figure
   CH.score += pts;
+  if (nf > 0) missionAdd('flip', 1);        // défi "réussis un salto"
+  gainCoins(Math.floor(pts / 15));          // les figures paient des pièces
   // NB : on n'écrit PAS CH.maxCombo ici — c'est le compteur du défi "Combo x3
   // aux portes" (progress = CH.maxCombo/target) ; une figure ne doit pas le remplir.
   showTrick(parts.join(' + '), '+' + pts.toLocaleString('fr-FR'));
@@ -2896,7 +3341,7 @@ window.__bbox = () => {
 
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
-  if (k === 'escape' && mode === 'ride') { toGarage(); return; }
+  if (k === 'escape' && mode === 'ride') { requestGarage(); return; }
   if (k === 'c' && mode === 'ride') { toggleCam(); return; }
   if (k === 'n') { setNight(!isNight); return; }
   if (['w', 'a', 's', 'd', 'z', 'q', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
@@ -2921,7 +3366,16 @@ const touchPad = document.getElementById('touch');
 document.getElementById('btn-cam').addEventListener('click', () => { if (mode === 'ride') toggleCam(); });
 const btnNight = document.getElementById('btn-night');
 if (btnNight) btnNight.addEventListener('click', () => setNight(!isNight));
-document.getElementById('btn-garage').addEventListener('click', toGarage);
+document.getElementById('btn-garage').addEventListener('click', requestGarage);
+{
+  // Révéler les coffres sur la minimap contre une pub (hook exploration).
+  const br = document.getElementById('btn-reveal');
+  if (br) br.addEventListener('click', () => {
+    if (mode !== 'ride') return;
+    if (treasuresRevealed) { toast('Trésors déjà révélés'); return; }
+    cgRewarded(() => { treasuresRevealed = true; toast('💰 Trésors révélés sur la carte !'); });
+  });
+}
 document.getElementById('btn-ride').addEventListener('click', startRide);
 // TURBO DÉPART : le joueur regarde une pub récompensée -> son prochain run démarre boosté.
 {
@@ -2964,6 +3418,18 @@ function startRide() {
   placeGate(0, -1);
   gate.visible = true;
   chalPanel.style.display = 'block';
+  // Méta-jeu : monde ouvert (collectibles), plein de carburant, run neuf.
+  runActive = true; runEnding = false; runPaused = false;
+  runCoins = 0; fuel = 1; heat = 0; chaseOn = false; caughtTimer = 0;
+  policeTimer = 45 + Math.random() * 25;
+  police.visible = false; policeFoam.visible = false;
+  seedWorld(); collectiblesVisible(true);
+  document.getElementById('game-coins').classList.remove('hidden');
+  document.getElementById('fuel-wrap').classList.remove('hidden');
+  document.getElementById('minimap').classList.remove('hidden');
+  document.getElementById('game-coin-bal').textContent = save.coins.toLocaleString('fr-FR');
+  document.getElementById('fuel-fill').style.width = '100%';
+  save.totalRuns++; persist();
   // CrazyGames : signale le début de partie + pub interstitielle entre les runs.
   CG.ridesStarted++;
   cgInterstitial();
@@ -2996,6 +3462,15 @@ function toGarage() {
   uwEl.style.opacity = '0';
   setSeaLifeVisible(false);
   setFleetVisible(false);
+  // Méta-jeu : ferme le run, masque HUD éco + collectibles, rafraîchit garage.
+  runActive = false; runEnding = false; runPaused = false; chaseOn = false;
+  police.visible = false; policeFoam.visible = false;
+  collectiblesVisible(false);
+  document.getElementById('game-coins').classList.add('hidden');
+  document.getElementById('fuel-wrap').classList.add('hidden');
+  document.getElementById('minimap').classList.add('hidden');
+  document.getElementById('runend').classList.add('hidden');
+  updateCoinUI(); renderMissions(); refreshSkiCards();
   // Coupe TOUTES les voix moteur (dont le sifflement de turbine, sa propre
   // branche) : le frame() ne repasse pas dans le bloc audio en mode menu.
   if (audio) { audio.eGain.gain.value = 0; audio.nGain.gain.value = 0; audio.wGain.gain.value = 0; }
@@ -3151,9 +3626,9 @@ function frame() {
   let dt = Math.min((now - last) / 1000, 0.05);
   if (dt <= 0) dt = 0.016;
   last = now;
-  // Pause pendant une pub CrazyGames : on gèle la simulation (le son est déjà
-  // coupé via le master) mais on continue à rendre l'image figée.
-  if (adPaused) { composer.render(); return; }
+  // Pause pendant une pub CrazyGames OU le panneau de fin de run : on gèle la
+  // simulation (son coupé via le master) mais on continue à rendre l'image figée.
+  if (adPaused || runPaused) { composer.render(); return; }
   simTime += dt;
   const t = simTime;
   resize(false);
@@ -3757,6 +4232,9 @@ function frame() {
   /* ---- Bouées de course + flotte IA ---- */
   updateAiFleet(dt, t);
 
+  /* ---- Méta-jeu : collectibles, carburant, police, minimap ---- */
+  updateMeta(dt, t);
+
   /* ---- Portes lumineuses & micro-défis ---- */
   gate.position.y = waveHeight(gate.position.x, gate.position.z, t) + 4 + Math.sin(t * 2) * 0.25;
   gateTorus.rotation.z = t * 0.5;
@@ -3767,6 +4245,8 @@ function frame() {
   const gdist = Math.hypot(gdx, gdz);
   if (gdist < 5.2) {
     CH.gatesPassed++;
+    missionAdd('gates', 1);
+    gainCoins(15);   // pièces pour chaque porte franchie
     CH.combo = CH.comboTimer > 0 ? CH.combo + 1 : 1;
     CH.comboTimer = 5;
     CH.maxCombo = Math.max(CH.maxCombo, CH.combo);
