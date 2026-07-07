@@ -7,15 +7,15 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=57';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=57';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=57';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=57';
-import { TUNING } from './tuning.js?v=57';
+import { TWO_PI, smooth01, hex } from './util.js?v=60';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=60';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=60';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=60';
+import { TUNING } from './tuning.js?v=60';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v57 · audio charnel (burble + sirène + doppler)';
+const BUILD = 'v60 · vibration manette (haptique impacts)';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -3338,10 +3338,19 @@ function computePhys() {
   const vmax = cfg.top / 3.6;                         // vitesse de pointe (m/s)
   const ratio = cfg.hp / cfg.weight;                  // ~0.4 (lourd) .. 0.95 (race)
   const accel0 = Math.max(5.5, Math.min(9.5, 3.2 + 6.2 * ratio)); // accél. départ plein gaz
-  const dragLin = 0.10;                               // traînée linéaire faible -> erre longue
+  // POIDS RESSENTI : masse relative au poids pivot. Lourd (massF>1) -> glisse + longue
+  // (dragLin ↓) et lacet + mou (yawResp ↓) ; léger -> flickable + s'arrête vite.
+  const M = TUNING.hull.mass;
+  const massF = cfg.weight / M.ref;                    // >1 lourd, <1 léger
+  const glideK = Math.pow(1 / massF, M.glide);         // <1 lourd (moins de traînée d'erre)
+  const yawK = Math.pow(1 / massF, M.yaw);             // <1 lourd (lacet plus lent)
+  const dragLin = 0.10 * glideK;                       // traînée linéaire ∝ légèreté -> erre ∝ masse
   // Vitesse de pointe atteinte quand poussée = traînée AU PLANAGE (coque déjaugée,
-  // traînée réduite ×0.55) : accel0 = dragQuad·0.55·vmax² + dragLin·vmax.
+  // traînée réduite ×0.55) : accel0 = dragQuad·0.55·vmax² + dragLin·vmax. dragQuad se
+  // recale sur dragLin -> la POINTE reste identique quel que soit le poids.
   const dragQuad = Math.max(0.003, (accel0 - dragLin * vmax) / (0.55 * vmax * vmax));
+  const yawBase = cfg.style === 'race' ? 6.5 : cfg.style === 'fun' ? 7.5 : 5.0;
+  const turnBase = cfg.style === 'race' ? 2.0 : cfg.style === 'fun' ? 2.4 : 1.5;
   PHYS = {
     max: vmax,
     thrust: accel0,                                   // accél. de poussée à plein gaz
@@ -3353,8 +3362,8 @@ function computePhys() {
     planeHi: vmax * 0.62,                             // planage établi
     steerBase: cfg.style === 'luxe' ? 0.16 : 0.11,   // assistance de barre hors-gaz (faible)
     steerThrust: 1.0,                                 // gros gain de barre proportionnel au gaz
-    turn: cfg.style === 'race' ? 2.0 : cfg.style === 'fun' ? 2.4 : 1.5,
-    yawResp: cfg.style === 'race' ? 6.5 : cfg.style === 'fun' ? 7.5 : 5.0, // inertie de lacet (↑ = plus vif)
+    turn: Math.max(1.0, Math.min(3.0, turnBase * (1 + (yawK - 1) * 0.5))),   // taux de virage (effet masse atténué)
+    yawResp: Math.max(M.yawMin, Math.min(M.yawMax, yawBase * yawK)),         // vivacité de lacet ∝ légèreté
     spoolUp: 3.6, spoolDown: 2.4                      // montée/descente en régime de la turbine
   };
 }
@@ -3371,6 +3380,18 @@ let fovKick = 0, fovPrevSpeed = 0, camLand = 0;
 // de vibration caméra. Déterministe, sans état, pas cher.
 const _vhash = x => { const s = Math.sin(x * 12.9898) * 43758.5453; return (s - Math.floor(s)) * 2 - 1; };
 const vnoise = x => { const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f); return _vhash(i) * (1 - u) + _vhash(i + 1) * u; };
+// Vibration manette (desktop) : impulsion haptique sur les impacts. No-op silencieux
+// sans manette ou si l'API n'est pas supportée (clavier/tactile inchangés).
+function rumble(strength, ms) {
+  try {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    strength = Math.max(0, Math.min(1, strength));
+    for (const gp of pads) {
+      const act = gp && gp.vibrationActuator;
+      if (act && act.playEffect) act.playEffect('dual-rumble', { duration: ms, strongMagnitude: strength, weakMagnitude: strength * 0.7 });
+    }
+  } catch (e) { /* pas de manette / non supporté */ }
+}
 // Objectif mouillé (0..1) : monte aux gerbes/impacts, sèche progressivement.
 let lensWet = 0;
 // --- FIGURES AÉRIENNES (tricks) : rotations accumulées pendant le vol (rad).
@@ -4017,16 +4038,39 @@ function frame() {
   state.yawRate += (targetYawRate - state.yawRate) * (1 - Math.exp(-dt * PHYS.yawResp));
   state.yaw -= state.yawRate * dt;
 
-  // Îles : collision + recyclage
+  /* DÉFLEXION d'obstacle : repousse hors du cercle, retire la vitesse RENTRANTE
+     (avec rebond `rest`) et garde la tangentielle (`slide`) → frôlement = glisse,
+     choc frontal = rebond. Gerbe/secousse ∝ vitesse d'impact normale. Renvoie true
+     s'il y a eu contact. fx/fz = repère avant courant (pour resync de state.speed). */
+  const deflect = (cx, cz, minD, slide, rest) => {
+    const dx = state.x - cx, dz = state.z - cz;
+    const d = Math.hypot(dx, dz);
+    if (d >= minD || d <= 0.01) return false;
+    const nX = dx / d, nZ = dz / d;                         // normale obstacle→ski
+    state.x = cx + nX * minD; state.z = cz + nZ * minD;     // repousse au bord
+    const vn = state.vx * nX + state.vz * nZ;               // vitesse le long de la normale
+    if (vn < 0) {                                            // seulement si on rentre dedans
+      state.vx -= vn * (1 + rest) * nX; state.vz -= vn * (1 + rest) * nZ;  // annule+rebond normal
+      state.vx *= slide; state.vz *= slide;                 // friction tangentielle
+      const hit = -vn;
+      if (hit > TUNING.hull.collide.hitSplash) {
+        spawnSplash(state.x, state.y, state.z, Math.min(hit / 5, 1.4));
+        burstDrops(state.x, state.y, state.z, 12 + Math.floor(hit * 2), 0.6 + Math.min(hit * 0.08, 0.8), state.vx * 0.3, state.vz * 0.3);
+        audioSplash(Math.min(0.4 + hit * 0.08, 0.9));
+        camImpact = Math.max(camImpact, Math.min(0.1 + hit * 0.03, 0.4));
+        camJolt = Math.max(camJolt, Math.min(hit * 0.25, 2.0));
+        rumble(Math.min(hit * 0.06, 0.85), 100);           // vibration manette sur choc d'obstacle
+      }
+    }
+    state.speed = state.vx * fx + state.vz * fz;            // resync de la vitesse avant signée
+    return true;
+  };
+  // Îles : déflexion glissante (sable = mou) + recyclage
   for (const isl of palmIslands) {
     const dx = state.x - isl.g.position.x, dz = state.z - isl.g.position.z;
     const d = Math.hypot(dx, dz);
     const minD = isl.r * 1.2 + 1.5;
-    if (d < minD && d > 0.01) {
-      state.x = isl.g.position.x + (dx / d) * minD;
-      state.z = isl.g.position.z + (dz / d) * minD;
-      const kc = Math.exp(-dt * 10); state.vx *= kc; state.vz *= kc; state.speed *= kc;
-    }
+    deflect(isl.g.position.x, isl.g.position.z, minD, TUNING.hull.collide.slide, TUNING.hull.collide.rest);
     if (d > 1400) {
       const ang = Math.atan2(fx, fz) + (Math.random() - 0.5) * 2.2;
       const dist = 350 + Math.random() * 320;
@@ -4042,22 +4086,12 @@ function frame() {
     beacons[b].material.opacity = bl;
   }
 
-  // Rochers isolés : collision dure + recyclage
+  // Rochers isolés : déflexion dure (rocher = rebondissant) + recyclage
   for (const rk of seaRocks) {
     const dx = state.x - rk.m.position.x, dz = state.z - rk.m.position.z;
     const d = Math.hypot(dx, dz);
     const minD = rk.r + 1.2;
-    if (d < minD && d > 0.01) {
-      state.x = rk.m.position.x + (dx / d) * minD;
-      state.z = rk.m.position.z + (dz / d) * minD;
-      if (state.speed > 6) {
-        spawnSplash(state.x, state.y, state.z, 1.0);
-        burstDrops(state.x, state.y, state.z, 20, 0.9, 0, 0);
-        audioSplash(0.8);
-        camImpact = Math.max(camImpact, 0.25);
-      }
-      const kc = Math.exp(-dt * 14); state.vx *= kc; state.vz *= kc; state.speed *= kc;
-    }
+    deflect(rk.m.position.x, rk.m.position.z, minD, TUNING.hull.collide.rockSlide, TUNING.hull.collide.rockRest);
     if (d > 1300) {
       rk.m.position.set(state.x + fx * (400 + Math.random() * 400) + rx * (Math.random() - 0.5) * 600, 0.6, state.z + fz * (400 + Math.random() * 400) + rz * (Math.random() - 0.5) * 600);
     }
@@ -4134,6 +4168,7 @@ function frame() {
     camJolt = Math.min(impact * 0.5 * badness, 2.4);
     // "Thunk" de suspension DISTINCT : compression verticale brève, ∝ dureté du choc.
     camLand = Math.max(camLand, Math.min(impact * 0.03, TUNING.cam.landKick));
+    rumble(Math.min(impact * 0.08, 0.9), 130);   // vibration manette ∝ dureté de réception
   }
   lastPlunge = plunge;
   // État "en l'air" (pilotage/effets) : marge pour ignorer les micro-arcs du clapot —

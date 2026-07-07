@@ -41,6 +41,33 @@ export const TUNING = {
       carryGain: 0.12,   // fraction du choc vertical reconvertie en avancée (réception propre)
       carryMax: 3.5,     // avancée max reconvertie sur une réception propre (m/s)
     },
+
+    /* Collision d'obstacle (île, rocher) : DÉFLEXION plutôt que mur collant.
+       On retire la composante de vitesse RENTRANT dans l'obstacle (avec un peu de
+       rebond) et on conserve la composante tangentielle → un frôlement GLISSE le
+       long du bord, un choc frontal REBONDIT. `slide` = fraction tangentielle
+       gardée ; `rest` = rebond (0 = mou, 1 = élastique). Sable (île) = mou/collant,
+       rocher = dur/rebondissant. */
+    collide: {
+      slide: 0.9,        // conservation tangentielle sur le sable (frôlement d'île)
+      rest: 0.25,        // rebond sur le sable
+      rockSlide: 0.82,   // conservation tangentielle sur un rocher
+      rockRest: 0.5,     // rebond sur un rocher (plus vif)
+      hitSplash: 4,      // vitesse d'impact normale (m/s) au-delà de laquelle gerbe + secousse
+    },
+
+    /* POIDS RESSENTI par modèle : au-delà de l'accél de départ (déjà ∝ hp/poids),
+       la masse pèse sur la GLISSE (un jet lourd erre plus loin quand on coupe) et
+       sur la VIVACITÉ de lacet (il tourne plus mollement). La vitesse de POINTE est
+       préservée (la traînée quadratique se recale). `ref` = poids pivot : au-dessus
+       = lourd, en dessous = léger/flickable. */
+    mass: {
+      ref: 350,          // poids de référence (kg) — le hero (~353 kg) reste tel quel
+      glide: 0.45,       // exposant masse sur la traînée linéaire : lourd = erre + longue
+      yaw: 0.28,         // exposant masse sur la vivacité de lacet : lourd = tourne + mou
+      yawMin: 4.0,       // borne basse de yawResp après effet masse
+      yawMax: 8.5,       // borne haute (évite un ski léger trop nerveux)
+    },
   },
 
   /* --- Caméra (FPV + chase) : réglages de ressenti "humain" par-dessus la
