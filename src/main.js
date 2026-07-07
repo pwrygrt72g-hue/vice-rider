@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=52';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=52';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=52';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=52';
+import { TWO_PI, smooth01, hex } from './util.js?v=53';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=53';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=53';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=53';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v52 · plage XL + cycle jour-nuit';
+const BUILD = 'v53 · coucher de soleil';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -191,14 +191,33 @@ scene.add(sun.target);
 /* Grade jour<->nuit partagé par le ciel, l'eau et l'ambiance (0 = plein jour,
    1 = crépuscule Miami où le néon prend le dessus). Basculé par setNight(). */
 const uNight = { value: 0 };
+// Intensité du COUCHER DE SOLEIL (0..1, pic au crépuscule) : superpose un dégradé
+// orange->rose->violet + un gros soleil orange sur le ciel. Piloté par applyTOD.
+const uSunset = { value: 0 };
+// Overlay GLSL de coucher (attend `dir`, `sd`, `col`, `uSunset` dans le scope du shader).
+const SUNSET_GLSL = `
+  if (uSunset > 0.001) {
+    float h = clamp(dir.y * 1.6, -0.2, 1.0);
+    vec3 lowC = vec3(1.0, 0.45, 0.18);   // orange horizon
+    vec3 midC = vec3(1.0, 0.30, 0.42);   // rose magenta
+    vec3 hiC  = vec3(0.36, 0.18, 0.55);  // violet zénith
+    vec3 grad = mix(lowC, midC, smoothstep(0.0, 0.28, h));
+    grad = mix(grad, hiC, smoothstep(0.22, 0.75, h));
+    float az = pow(clamp(sd, 0.0, 1.0), 0.6);
+    float band = smoothstep(0.6, -0.05, abs(dir.y));
+    float wgt = uSunset * (0.35 + 0.65 * az) * (0.4 + 0.6 * band);
+    col = mix(col, grad, clamp(wgt, 0.0, 0.82));
+    col += vec3(1.0, 0.55, 0.25) * smoothstep(0.9975, 0.99965, sd) * 2.4 * uSunset;  // disque solaire
+    col += vec3(1.0, 0.45, 0.22) * pow(sd, 14.0) * 0.6 * uSunset;                    // halo large
+  }`;
 
 /* ================= CIEL ================= */
 function makeSkyMaterial(graded) {
   return new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uSunDir: { value: sunDir }, uNight },
+    uniforms: { uSunDir: { value: sunDir }, uNight, uSunset },
     vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: `precision highp float; uniform vec3 uSunDir; uniform float uNight; varying vec3 vDir;
+    fragmentShader: `precision highp float; uniform vec3 uSunDir; uniform float uNight; uniform float uSunset; varying vec3 vDir;
 ${SKY_FUNC}
 void main(){
   vec3 dir = normalize(vDir);
@@ -210,6 +229,7 @@ void main(){
   vec3 night = col * vec3(0.14, 0.18, 0.32) + vec3(0.008, 0.010, 0.026);
   night += vec3(0.9, 0.4, 0.25) * pow(sd, 40.0) * 0.15;
   col = mix(col, night, uNight);
+${SUNSET_GLSL}
   gl_FragColor = vec4(col, 1.0);
   ${graded ? '#include <tonemapping_fragment>\n#include <colorspace_fragment>' : ''}
 }` });
@@ -281,10 +301,10 @@ new RGBELoader().setDataType(THREE.FloatType).load('./vendor/textures/sunset_pur
   // --- La sphère céleste devient la photo (même formule que le reflet eau) ---
   sky.material = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uEnvTex: { value: hdr }, uEnvRot: { value: rot }, uNight, uSunDir: { value: sunDir } },
+    uniforms: { uEnvTex: { value: hdr }, uEnvRot: { value: rot }, uNight, uSunset, uSunDir: { value: sunDir } },
     vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
     fragmentShader: `precision highp float;
-uniform sampler2D uEnvTex; uniform float uEnvRot; uniform float uNight; uniform vec3 uSunDir; varying vec3 vDir;
+uniform sampler2D uEnvTex; uniform float uEnvRot; uniform float uNight; uniform float uSunset; uniform vec3 uSunDir; varying vec3 vDir;
 ${ENV_FUNC}
 void main(){
   vec3 dir = normalize(vDir);
@@ -295,6 +315,7 @@ void main(){
   vec3 night = col * vec3(0.13, 0.17, 0.30) + vec3(0.010, 0.012, 0.030);
   night += vec3(0.85, 0.38, 0.24) * pow(sd, 22.0) * 0.20;
   col = mix(col, night, uNight);
+${SUNSET_GLSL}
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -3694,6 +3715,7 @@ function applyNightBloom() {
 function applyTOD(n) {
   isNight = n > 0.5; uNight.value = n;
   const sunset = Math.max(0, 1 - Math.abs(n - 0.5) * 2.6);   // pic de coucher/lever
+  uSunset.value = Math.min(1, sunset * 1.2);                 // dégradé orange/rose/violet + gros soleil
   const winN = smooth01((n - 0.32) / 0.5);                    // lumières qui s'allument au crépuscule
   const reflN = smooth01((n - 0.28) / 0.55);
   renderer.toneMappingExposure = lerpN(dayState.exposure, 0.5, n);
@@ -3712,11 +3734,12 @@ function applyTOD(n) {
 function todTarget() {
   if (todMode === 'day') return 0;
   if (todMode === 'night') return 1;
-  const p = todPhase;                       // auto : jour -> coucher -> nuit -> lever
-  if (p < 0.40) return 0;
-  if (p < 0.50) return smooth01((p - 0.40) / 0.10);
-  if (p < 0.90) return 1;
-  return 1 - smooth01((p - 0.90) / 0.10);
+  if (todMode === 'hold') return todCur;   // debug/tests : fige n
+  const p = todPhase;                       // auto : jour -> coucher (long) -> nuit -> lever
+  if (p < 0.38) return 0;
+  if (p < 0.54) return smooth01((p - 0.38) / 0.16);   // coucher cinématique (~34 s)
+  if (p < 0.88) return 1;
+  return 1 - smooth01((p - 0.88) / 0.12);             // lever (~25 s)
 }
 function updateTOD(dt) {
   if (todMode === 'auto') todPhase = (todPhase + dt / TOD_PERIOD) % 1;
@@ -3742,7 +3765,7 @@ function updateBtnNight() {
   btn.title = todMode === 'auto' ? 'Cycle auto jour/nuit' : todMode === 'day' ? 'Jour (forcé) — clic : nuit' : 'Nuit (forcée) — clic : auto';
 }
 updateBtnNight();
-window.__tod = { setMode: m => { todMode = m; updateBtnNight(); }, setPhase: p => { todPhase = p; }, get n() { return todCur; }, get mode() { return todMode; } };
+window.__tod = { setMode: m => { todMode = m; updateBtnNight(); }, setPhase: p => { todPhase = p; }, hold: n => { todMode = 'hold'; todInit = true; todCur = n; todApplied = -1; applyTOD(n); }, get n() { return todCur; }, get mode() { return todMode; } };
 setupComposer();
 
 function resize(force) {
