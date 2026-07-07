@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=47';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=47';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=47';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=47';
+import { TWO_PI, smooth01, hex } from './util.js?v=48';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=48';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=48';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=48';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v47 · fix vagues + polish';
+const BUILD = 'v48 · HUD + police blanche';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1246,8 +1246,8 @@ function gainCoins(n, worldX, worldZ) {
   if (b) b.textContent = (save.coins + runCoins).toLocaleString('fr-FR');
 }
 
-/* ---- POLICE : un runabout qui prend le joueur en chasse ---- */
-const police = makeAiSki(0x14203a, 0xf4f4f4);
+/* ---- POLICE : patrouille maritime Miami 1986 (coque blanche + gyrophare) ---- */
+const police = makeAiSki(0xeef2f5, 0x16357a);
 const sirenR = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff0000, emissiveIntensity: 2 }));
 const sirenB = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshStandardMaterial({ color: 0x2040ff, emissive: 0x0030ff, emissiveIntensity: 2 }));
 sirenR.position.set(-0.12, 1.0, 0.55); sirenB.position.set(0.12, 1.0, 0.55);
