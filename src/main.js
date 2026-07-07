@@ -7,14 +7,15 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=53';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=53';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=53';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=53';
+import { TWO_PI, smooth01, hex } from './util.js?v=57';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=57';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=57';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=57';
+import { TUNING } from './tuning.js?v=57';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v53 · coucher de soleil';
+const BUILD = 'v57 · audio charnel (burble + sirène + doppler)';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -3134,6 +3135,19 @@ function initAudio() {
     const wGain = ctx.createGain(); wGain.gain.value = 0;
     whine.connect(wGain).connect(master); whine.start();
 
+    // --- SIRÈNE DE POLICE (positionnelle) : wail deux-tons, panoramique + doppler ---
+    const siren = ctx.createOscillator(); siren.type = 'sawtooth'; siren.frequency.value = 750;
+    const sirenLp = ctx.createBiquadFilter(); sirenLp.type = 'lowpass'; sirenLp.frequency.value = 1700; sirenLp.Q.value = 0.9;
+    const sirGain = ctx.createGain(); sirGain.gain.value = 0;
+    const sirPan = ctx.createStereoPanner();
+    siren.connect(sirenLp).connect(sirGain).connect(sirPan).connect(master); siren.start();
+    // --- MOTEUR d'un JET IA proche (positionnel) : ronflement qui passe (doppler) ---
+    const aiOsc = ctx.createOscillator(); aiOsc.type = 'sawtooth'; aiOsc.frequency.value = 80;
+    const aiLp = ctx.createBiquadFilter(); aiLp.type = 'lowpass'; aiLp.frequency.value = 520;
+    const aiGain = ctx.createGain(); aiGain.gain.value = 0;
+    const aiPan = ctx.createStereoPanner();
+    aiOsc.connect(aiLp).connect(aiGain).connect(aiPan).connect(master); aiOsc.start();
+
     // --- BRUIT : sillage de coque + gerbes ---
     const nb = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const data = nb.getChannelData(0);
@@ -3161,6 +3175,7 @@ function initAudio() {
     for (let i = 0; i < dd.length; i++) dd[i] = Math.random() * 2 - 1;
 
     audio = { ctx, master, osc1, osc2, sub, filter, eGain, whine, wGain, nGain, sGain,
+      siren, sirenLp, sirGain, sirPan, aiOsc, aiLp, aiGain, aiPan,
       musicBus, noiseBuf: dnb, music: { bpm: 104, step: 0, nextTime: 0 } };
   } catch (e) { audio = null; }
 }
@@ -3221,6 +3236,21 @@ function musicTick() {
     music.nextTime += spb;
   }
   audio.musicBus.gain.setTargetAtTime(muted ? 0 : 0.17, ctx.currentTime, 0.12);
+}
+/* Spatialisation légère d'une source (sx,sz) de vélocité (svx,svz), écoutée depuis
+   le jet (position/cap/vélocité du joueur) : renvoie {gain, pan, pitch}. Pan gauche/
+   droite selon le gisement, atténuation avec la distance, doppler exagéré (arcade)
+   sur la vitesse radiale relative. Approche = pitch ↑, éloignement = pitch ↓. */
+function spatialAudio(sx, sz, svx, svz, refDist, maxGain) {
+  const rX = sx - state.x, rZ = sz - state.z;
+  const dist = Math.hypot(rX, rZ) || 0.001;
+  const nX = rX / dist, nZ = rZ / dist;
+  const rgx = Math.cos(state.yaw), rgz = -Math.sin(state.yaw);   // tribord (droite écran)
+  const pan = Math.max(-1, Math.min(1, nX * rgx + nZ * rgz));
+  const gain = maxGain * (refDist / (refDist + dist));           // atténuation douce
+  const vrad = (svx - state.vx) * nX + (svz - state.vz) * nZ;    // >0 = s'éloigne
+  const pitch = Math.max(0.82, Math.min(1.2, 1 - vrad / 70));    // doppler arcade
+  return { gain, pan, pitch, dist };
 }
 function audioSplash(power) {
   if (!audio || muted) return;
@@ -3302,7 +3332,7 @@ let PHYS = { max: 30, thrust: 8, dragLin: 0.1, dragQuad: 0.008, dragLatQ: 0.06, 
 // Calé pour que le bas de coque (-0.79 local) s'asseye AU FOND de la cuvette
 // que le shader creuse sous le jet (-0.5 au repos) : bas à hw-0.45, juste au
 // ras du fond de cuvette, bourrelet +0.3 qui remonte sur les flancs.
-let DRAFT_REST = 0.34;
+let DRAFT_REST = TUNING.hull.draftRest;   // réglable à chaud via window.__vice.setDraft(v)
 function computePhys() {
   const cfg = MODELS.find(m => m.id === sel.ski);
   const vmax = cfg.top / 3.6;                         // vitesse de pointe (m/s)
@@ -3335,6 +3365,12 @@ let plunge = 0, lastPlunge = 0;
 // l'accél, aux virages, aux chocs) + suivi de la vitesse pour dériver l'accél.
 const camG = { x: 0, z: 0, pitch: 0, roll: 0, yaw: 0 };
 let camPrevSpeed = 0, camJolt = 0;
+// Punch de FOV (accélération), "thunk" de suspension (atterrissage) : canaux dédiés.
+let fovKick = 0, fovPrevSpeed = 0, camLand = 0;
+// Bruit de valeur lissé (1D) : grain organique pour casser la périodicité des sinus
+// de vibration caméra. Déterministe, sans état, pas cher.
+const _vhash = x => { const s = Math.sin(x * 12.9898) * 43758.5453; return (s - Math.floor(s)) * 2 - 1; };
+const vnoise = x => { const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f); return _vhash(i) * (1 - u) + _vhash(i + 1) * u; };
 // Objectif mouillé (0..1) : monte aux gerbes/impacts, sèche progressivement.
 let lensWet = 0;
 // --- FIGURES AÉRIENNES (tricks) : rotations accumulées pendant le vol (rad).
@@ -3420,6 +3456,8 @@ function updateFilm(t, sf, wet) {
   u.uSun.value[1] = _sunProj.y * 0.5 + 0.5;
   u.uSun.value[2] = _camDir.dot(sunDir);
 }
+window.__tune = TUNING;   // réglage du feel à chaud en test (physique flottaison + caméra)
+window.__audio = () => audio;   // inspection/réglage audio en test (nœuds, gains live)
 window.__vice = { state, keys, toggleCam: () => toggleCam(), setNight: v => setNight(v), islands: palmIslands, gate, CH, DEFIS, enterDefi, ai: aiSkis, buoys: raceBuoys, path: BUOY_PATH, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
 window.__align = (o) => { Object.assign(MODEL_RIDE, o || {}); alignRideModel(); return { ...MODEL_RIDE }; };
 window.__analyzeModel = () => {
@@ -3636,7 +3674,7 @@ function toGarage() {
   updateCoinUI(); renderMissions(); refreshSkiCards(); refreshSuitCards();
   // Coupe TOUTES les voix moteur (dont le sifflement de turbine, sa propre
   // branche) : le frame() ne repasse pas dans le bloc audio en mode menu.
-  if (audio) { audio.eGain.gain.value = 0; audio.nGain.gain.value = 0; audio.wGain.gain.value = 0; }
+  if (audio) { audio.eGain.gain.value = 0; audio.nGain.gain.value = 0; audio.wGain.gain.value = 0; audio.sirGain.gain.value = 0; audio.aiGain.gain.value = 0; }
   // Popup de figure : forcer masquage (sinon reste affiché si on quitte < 1,8 s après un trick).
   if (trickNameEl) { trickNameEl.style.opacity = '0'; trickNameEl.style.transform = 'translateX(-50%) scale(0.7)'; }
   trickHud.until = 0;
@@ -4032,15 +4070,15 @@ function frame() {
   // qu'elle : elle PONTE les creux. Ce lissage spatial + la suspension temporelle
   // ci-dessous reproduisent le "skim" d'un jetski lancé — il glisse sur le clapot
   // au lieu de sauter de crête en crête ; à basse vitesse il s'assoit dans la houle.
-  const HH = 1.7;                                     // demi-longueur de coque
+  const HH = TUNING.hull.halfLen;                     // demi-longueur de coque
   const hFwd = waveHeight(state.x + fx * HH, state.z + fz * HH, t);
   const hAft = waveHeight(state.x - fx * HH, state.z - fz * HH, t);
   const hAvg = (hFwd + hw + hAft) / 3;
   const hMax = Math.max(hFwd, hw, hAft);
   // Au planage la coque PONTE davantage (skim sur les crêtes) ; au repos elle
   // s'assoit dans le creux (moyenne de l'empreinte).
-  const support = hAvg + (hMax - hAvg) * (0.15 + 0.5 * planing);
-  const draft = DRAFT_REST + planing * 0.34;
+  const support = hAvg + (hMax - hAvg) * (TUNING.hull.supportRest + TUNING.hull.supportPlane * planing);
+  const draft = DRAFT_REST + planing * TUNING.hull.draftPlane;
   const targetY = support + draft;
   // Agitation locale de la mer : calme près de la côte, formée au large.
   const rough = Math.min(1.5, seaFactor(state.x, state.z));
@@ -4053,13 +4091,13 @@ function frame() {
   // lisse le petit clapot et ne décolle QUE sur les vraies crêtes, d'autant plus haut
   // que la mer est formée et qu'on va vite (validé : 0 % en l'air sur mer calme,
   // ~20-30 % sur la houle, contre 48-81 % PARTOUT avec l'ancien suivi rigide).
-  const stiff = 32, damp = 9.0;
+  const stiff = TUNING.hull.stiff, damp = TUNING.hull.damp;
   const ay = (state.y <= targetY) ? (stiff * (targetY - state.y) - damp * state.vy) : -9.8;
   state.vy += ay * dt;
   state.y += state.vy * dt;
   // Butée de flottabilité : la coque ne s'enfonce jamais de plus de ~0.8 m sous sa
   // ligne de flottaison (fini l'effet "coule" sur les chocs/atterrissages).
-  if (state.y < targetY - 0.8) { state.y = targetY - 0.8; if (state.vy < 0) state.vy = 0; }
+  if (state.y < targetY - TUNING.hull.sinkLimit) { state.y = targetY - TUNING.hull.sinkLimit; if (state.vy < 0) state.vy = 0; }
   plunge = state.y - targetY;
   // Ré-entrée dans l'eau après un vol : gerbe + secousse caméra ∝ choc.
   if (lastPlunge > 0.06 && plunge <= 0 && state.vy < -1.5) {
@@ -4068,16 +4106,40 @@ function frame() {
     spawnSplash(state.x, hw, state.z, power);
     burstDrops(state.x, hw, state.z, 26 + Math.floor(impact * 10), 0.7 + power * 0.6, fx * state.speed, fz * state.speed);
     lensDrops(4 + Math.floor(impact / 2));
-    camImpact = Math.min(impact * 0.06, 0.5);
-    camJolt = Math.min(impact * 0.5, 2.2);
     audioSplash(power);
-    state.vx *= 0.9; state.vz *= 0.9; state.speed *= 0.9;
+    /* --- QUALITÉ DE RÉCEPTION → MOMENTUM (couplage assiette/dynamique) ---
+       On mesure l'alignement du nez (state.pitch) avec l'angle de la trajectoire
+       de chute, dégradé si l'on retombe dans un mur d'eau montant. Réception propre
+       (nez piqué dans la pente, choc modéré) : quasi pas de scrub + reconversion
+       d'une partie de la chute en glisse avant (la coque plane). Réception vautrée
+       (nez haut, chute verticale, face de vague) : gros scrub + grosse secousse. */
+    const L = TUNING.hull.land;
+    const vh = Math.hypot(state.vx, state.vz);                 // vitesse horizontale
+    const descent = Math.atan2(impact, Math.max(vh, 2));       // angle de chute (>0)
+    const noseRel = state.pitch + descent;                     // 0 = nez pile dans la pente de chute
+    const slopeAhead = waveHeight(state.x + fx * 2, state.z + fz * 2, t) - hw; // >0 : mur d'eau devant
+    const align = Math.max(0, 1 - Math.abs(noseRel) / L.alignTol)
+                * (1 - Math.min(Math.max(slopeAhead, 0) * L.slopeScrub, 0.7));
+    const hardness = Math.min(impact / L.hardnessRef, 1);
+    const keep = 1 - (L.scrubBase + L.scrubMax * (1 - align)) * (0.4 + 0.6 * hardness);
+    state.vx *= keep; state.vz *= keep; state.speed *= keep;
+    // Reconversion du choc vertical en avancée sur une réception propre à vitesse.
+    if (align > 0.5 && vh > 6) {
+      const carry = Math.min(impact * L.carryGain * align, L.carryMax);
+      state.vx += fx * carry; state.vz += fz * carry; state.speed += carry;
+    }
+    // Retour caméra/objectif proportionnel au RATÉ : lisse si clean, violent si vautré.
+    const badness = 0.4 + 0.6 * (1 - align);
+    camImpact = Math.min(impact * 0.06 * badness, 0.5);
+    camJolt = Math.min(impact * 0.5 * badness, 2.4);
+    // "Thunk" de suspension DISTINCT : compression verticale brève, ∝ dureté du choc.
+    camLand = Math.max(camLand, Math.min(impact * 0.03, TUNING.cam.landKick));
   }
   lastPlunge = plunge;
   // État "en l'air" (pilotage/effets) : marge pour ignorer les micro-arcs du clapot —
   // un petit rebond n'est pas un saut (ni coupure de direction, ni gros splash).
   const wasAir = state.air;
-  state.air = plunge > 0.28;
+  state.air = plunge > TUNING.hull.airPlunge;
   if (state.air) {
     state.airTime = wasAir ? state.airTime + dt : dt;
     if (!wasAir) {
@@ -4091,7 +4153,7 @@ function frame() {
     // Pilotage aérien : gauche/droite = barrel roll, haut/espace = backflip, bas = frontflip.
     // On n'accumule la vrille qu'après un vrai temps d'air (>0,35 s) : les micro-sauts
     // de clapot en tournant ne font PLUS rouler le ski (rendu propre).
-    if (state.airTime > 0.35) {
+    if (state.airTime > TUNING.hull.airArmTime) {
       const spin = 4.5 * dt;
       if (left) trickRoll -= spin;
       if (right) trickRoll += spin;
@@ -4165,7 +4227,7 @@ function frame() {
   }
   // Suivi RAPIDE de l'assiette : la coque se conforme à la surface en quasi temps réel
   // (sinon le tangage est en retard de phase et paraît "décollé" de l'eau).
-  const sFast = 1 - Math.exp(-dt * 10);
+  const sFast = 1 - Math.exp(-dt * TUNING.hull.attitudeFollow);
   state.pitch += (targetPitch - state.pitch) * sFast;
   state.roll += (targetRoll - state.roll) * sFast;
 
@@ -4251,18 +4313,21 @@ function frame() {
   sun.target.position.set(state.x, state.y, state.z);
 
   /* ---- Caméra ---- */
-  camImpact *= Math.exp(-dt * 5);
-  camJolt *= Math.exp(-dt * 9);
+  camImpact *= Math.exp(-dt * TUNING.cam.impactDecay);
+  camJolt *= Math.exp(-dt * TUNING.cam.joltDecay);
+  camLand *= Math.exp(-dt * TUNING.cam.landKickDecay);   // "thunk" d'atterrissage (canal dédié)
   if (camMode === 'fpv') {
     // === CAMÉRA FPV VIVANTE ===
     // La caméra est enfant du ski : elle hérite déjà de son cap/tangage/roulis.
     // On AJOUTE par-dessus le ressenti humain : vibration moteur, clapot,
     // forces G (accél/virage), coups d'impact, regard dans le virage, flottement.
     const smoothG = 1 - Math.exp(-dt * 8);
-    // 1) Vibration : moteur (rpm) + buzz du clapot à vitesse, multi-fréquence.
+    // 1) Vibration : moteur (rpm) + buzz du clapot à vitesse, multi-fréquence,
+    //    + grain de bruit organique (casse la périodicité des sinus = moins mécanique).
     const vib = state.air ? 0.0015 : (0.0025 + state.rpm * 0.005 + rough * speedF * 0.012);
-    const bobX = (Math.sin(t * 22.0) * 0.6 + Math.sin(t * 38.7) * 0.4) * vib;
-    const bobY = (Math.sin(t * 26.5) * 0.6 + Math.sin(t * 44.3) * 0.4) * vib + Math.sin(t * 12.0) * state.rpm * 0.003;
+    const nz = TUNING.cam.shakeNoise;
+    const bobX = (Math.sin(t * 22.0) * 0.6 + Math.sin(t * 38.7) * 0.4 + vnoise(t * 31.0) * nz) * vib;
+    const bobY = (Math.sin(t * 26.5) * 0.6 + Math.sin(t * 44.3) * 0.4 + vnoise(t * 27.7 + 9.1) * nz) * vib + Math.sin(t * 12.0) * state.rpm * 0.003;
     // 2) Forces G : accél recule la tête (+z=poupe), décel avance ; le virage
     //    pousse la tête vers l'extérieur ; l'accél cabre légèrement le regard.
     const accel = (state.speed - camPrevSpeed) / Math.max(dt, 0.001);
@@ -4278,7 +4343,7 @@ function frame() {
     const airPitch = state.air ? Math.max(-0.28, Math.min(0.22, -Math.atan2(state.vy, Math.max(Math.abs(state.speed), 6)) * 0.45)) : 0;
     camera.position.set(
       CAM_BASE.x + bobX + camG.x,
-      CAM_BASE.y + bobY - camImpact - camJolt * 0.12,
+      CAM_BASE.y + bobY - camImpact - camJolt * 0.12 - camLand,
       CAM_BASE.z + camG.z
     );
     camera.rotation.set(
@@ -4292,11 +4357,20 @@ function frame() {
     const near = camMode === 'chaseNear';
     const dist = near ? 2.4 : 5.9;
     const rud = near ? 0.6 : 1.15;
-    chaseTarget.set(state.x - fx * dist - rx * state.rudder * rud, state.y + (near ? 1.5 : 2.2), state.z - fz * dist - rz * state.rudder * rud);
+    chaseTarget.set(state.x - fx * dist - rx * state.rudder * rud, state.y + (near ? 1.5 : 2.2) - camLand, state.z - fz * dist - rz * state.rudder * rud);
     camera.position.lerp(chaseTarget, 1 - Math.exp(-dt * (near ? 6.5 : 4.5)));
+    // Anti-plongée : la caméra ne passe jamais sous la surface (creux de houle au large).
+    const camWave = waveHeight(camera.position.x, camera.position.z, t) + TUNING.cam.chaseClearWater;
+    if (camera.position.y < camWave) camera.position.y = camWave;
     camera.lookAt(state.x + fx * (near ? 1.1 : 3.6), state.y + (near ? 1.15 : 1.2), state.z + fz * (near ? 1.1 : 3.6));
   }
-  const targetFov = 74 + 11 * speedF;
+  // Punch de FOV à l'ACCÉLÉRATION (hole-shot ressenti) : l'accél franche élargit
+  // brièvement le champ (montée rapide, relâche lente), en plus du FOV lié à la vitesse.
+  const fovAccel = (state.speed - fovPrevSpeed) / Math.max(dt, 0.001);
+  fovPrevSpeed = state.speed;
+  const kickTgt = Math.max(0, Math.min(TUNING.cam.fovKickMax, fovAccel * TUNING.cam.fovKickGain));
+  fovKick += (kickTgt - fovKick) * (1 - Math.exp(-dt * (kickTgt > fovKick ? TUNING.cam.fovKickRise : TUNING.cam.fovKickFall)));
+  const targetFov = TUNING.cam.fovBase + TUNING.cam.fovSpeedGain * speedF + fovKick;
   if (Math.abs(camera.fov - targetFov) > 0.1) {
     camera.fov += (targetFov - camera.fov) * sFast;
     camera.updateProjectionMatrix();
@@ -4521,21 +4595,54 @@ function frame() {
 
   /* ---- Audio ---- */
   if (audio) {
+    const aT = audio.ctx.currentTime;
+    const S = 0.02;                          // constante de lissage anti-zipper (fini les clics)
     // Note moteur pilotée par le RÉGIME turbine : sous charge = grave/plein,
     // et quand la pompe ventile (saut/crête) le moteur s'emballe -> aigu.
     const engHz = 34 + speedF * 56 + state.rpm * 84;
-    audio.osc1.frequency.value = engHz;
-    audio.osc2.frequency.value = engHz * 0.5;
-    audio.sub.frequency.value = engHz * 0.5;                    // sub sinus : grondement de coque
-    audio.osc1.detune.value = Math.sin(t * 9) * 12 * state.rpm;
+    // BURBLE / cavitation : à bas régime SOUS CHARGE (lugging), le moteur "brape" ->
+    // LFO d'amplitude + wobble de filtre, d'autant plus marqués que la charge est
+    // haute et la vitesse basse. Au planage (load→0) le son se lisse.
+    const load = Math.abs(state.throttle) * (1 - speedF);       // 1 = plein gaz à basse vitesse
+    const burbleHz = 5 + state.rpm * 7;
+    const burble = 1 + Math.sin(t * burbleHz * TWO_PI) * 0.35 * load;   // ~0.65..1.35 sous charge
+    audio.osc1.frequency.setTargetAtTime(engHz, aT, S);
+    audio.osc2.frequency.setTargetAtTime(engHz * 0.5, aT, S);
+    audio.sub.frequency.setTargetAtTime(engHz * 0.5, aT, S);    // sub sinus : grondement de coque
+    audio.osc1.detune.value = Math.sin(t * 9) * 12 * state.rpm; // detune déjà lisse (continu)
     // Sous l'eau : tout est étouffé
     const muffle = plunge < -0.3 ? 0.22 : 1;
-    audio.filter.frequency.value = (260 + speedF * 560) * muffle;
-    audio.eGain.gain.value = muted ? 0 : (0.02 + Math.abs(state.throttle) * 0.045) * (plunge < -0.3 ? 0.5 : 1);
-    audio.nGain.gain.value = muted || state.air ? 0 : speedF * 0.05 * muffle;
+    audio.filter.frequency.setTargetAtTime((260 + speedF * 560) * muffle * (0.85 + 0.15 * burble), aT, S);
+    audio.eGain.gain.setTargetAtTime(muted ? 0 : (0.02 + Math.abs(state.throttle) * 0.045) * (plunge < -0.3 ? 0.5 : 1) * burble, aT, S);
+    audio.nGain.gain.setTargetAtTime(muted || state.air ? 0 : speedF * 0.05 * muffle, aT, S);
     // Sifflement de turbine : monte fort au régime, coupé sous l'eau.
-    audio.whine.frequency.value = 900 + state.rpm * 1500 + speedF * 400;
-    audio.wGain.gain.value = muted ? 0 : Math.min(0.03, state.rpm * 0.028) * muffle;
+    audio.whine.frequency.setTargetAtTime(900 + state.rpm * 1500 + speedF * 400, aT, S);
+    audio.wGain.gain.setTargetAtTime(muted ? 0 : Math.min(0.03, state.rpm * 0.028) * muffle, aT, S);
+
+    // --- SIRÈNE DE POLICE positionnelle (wail deux-tons + pan + doppler) ---
+    if (chaseOn && !muted) {
+      const fxp = -Math.sin(policeState.yaw), fzp = -Math.cos(policeState.yaw);
+      const sp = spatialAudio(policeState.x, policeState.z, fxp * policeState.spd, fzp * policeState.spd, 45, 0.13);
+      audio.siren.frequency.setTargetAtTime((720 + 260 * Math.sin(t * 6.0)) * sp.pitch, aT, 0.03);
+      audio.sirGain.gain.setTargetAtTime(sp.gain, aT, 0.08);
+      audio.sirPan.pan.setTargetAtTime(sp.pan, aT, 0.05);
+    } else audio.sirGain.gain.setTargetAtTime(0, aT, 0.15);
+
+    // --- MOTEUR du jet IA le plus proche (doppler quand il te croise) ---
+    let near = null, nd = 1e9;
+    for (const ai of aiSkis) { if (!ai.g.visible) continue; const d = Math.hypot(ai.x - state.x, ai.z - state.z); if (d < nd) { nd = d; near = ai; } }
+    if (near && nd < 90 && !muted) {
+      const afx = -Math.sin(near.yaw), afz = -Math.cos(near.yaw);
+      const ap = spatialAudio(near.x, near.z, afx * near.spd, afz * near.spd, 30, 0.045);
+      audio.aiOsc.frequency.setTargetAtTime((70 + near.spd * 4) * ap.pitch, aT, 0.04);
+      audio.aiGain.gain.setTargetAtTime(ap.gain, aT, 0.1);
+      audio.aiPan.pan.setTargetAtTime(ap.pan, aT, 0.06);
+    } else audio.aiGain.gain.setTargetAtTime(0, aT, 0.2);
+
+    // --- DUCKING musique sous les gros chocs (atterrissage/secousse) : la nappe
+    //     synthwave s'efface une fraction de seconde pour laisser claquer l'impact. ---
+    const duck = Math.min(camJolt * 0.25 + camLand * 1.2, 0.6);
+    audio.musicBus.gain.setTargetAtTime((muted ? 0 : 0.17) * (1 - duck), aT, 0.05);
   }
 
   /* ---- HUD ---- */
