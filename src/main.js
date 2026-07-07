@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=49';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=49';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=49';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=49';
+import { TWO_PI, smooth01, hex } from './util.js?v=50';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=50';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=50';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=50';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v49 · typo 80s + livrée police';
+const BUILD = 'v50 · boutique tenues 80s';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -110,9 +110,51 @@ function onSkiCardClick(m, card) {
 // (toast() est défini plus bas — réutilisé pour les messages méta.)
 makeCards('cards-pilote', PILOTES, 'pilote', p => `
   <div class="dot" style="background:${hex(p.skin)}"></div><div class="name">${p.name}</div>`);
-makeCards('cards-suit', SUITS, 'suit', s => `
-  <div class="swatch"><div style="background:${hex(s.c)}"></div><div style="background:${hex(s.c2)}"></div></div>
-  <div class="name">${s.name}</div>`);
+/* Cartes TENUES (mood Miami 80s) : mêmes règles d'achat que les jets. Les tenues
+   à price 0 sont offertes ; les autres s'achètent en pièces ou se débloquent par pub. */
+function suitOwned(id) { const s = SUITS.find(x => x.id === id); return (s && s.price === 0) || save.ownedSuits.includes(id); }
+function suitCardTpl(s) {
+  return `<div class="swatch"><div style="background:${hex(s.c)}"></div><div style="background:${hex(s.c2)}"></div></div>
+  <div class="name">${s.name}</div>` + (s.price > 0 ? `<div class="price" style="margin-top:3px;">🪙 ${s.price.toLocaleString('fr-FR')}</div>` : '');
+}
+function suitLockHtml(s) { return `<div class="lock"><div class="price">🪙 ${s.price.toLocaleString('fr-FR')}</div><small>ACHETER · 🎬</small></div>`; }
+function refreshSuitCards() {
+  document.querySelectorAll('#cards-suit .card').forEach(c => {
+    const id = c.dataset.value, s = SUITS.find(x => x.id === id), lk = c.querySelector('.lock');
+    if (suitOwned(id) && lk) lk.remove();
+    else if (!suitOwned(id) && !lk) c.insertAdjacentHTML('beforeend', suitLockHtml(s));
+  });
+}
+function selectSuit(id, card) {
+  sel.suit = id;
+  document.querySelectorAll('.card[data-group="suit"]').forEach(c => c.classList.remove('sel'));
+  card.classList.add('sel');
+  rebuildSki();
+}
+function onSuitCardClick(s, card) {
+  if (suitOwned(s.id)) { selectSuit(s.id, card); return; }
+  if (save.coins >= s.price) {
+    save.coins -= s.price; save.ownedSuits.push(s.id); persist(); updateCoinUI(); refreshSuitCards();
+    selectSuit(s.id, card); toast(`${s.name} débloquée !`);
+  } else {
+    toast('Regarde une pub pour débloquer…');
+    cgRewarded(() => {
+      if (!suitOwned(s.id)) { save.ownedSuits.push(s.id); persist(); }
+      refreshSuitCards(); selectSuit(s.id, card); toast(`${s.name} débloquée !`);
+    });
+  }
+}
+(function buildSuitCards() {
+  const host = document.getElementById('cards-suit');
+  SUITS.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'card small' + (sel.suit === s.id ? ' sel' : '');
+    card.dataset.group = 'suit'; card.dataset.value = s.id;
+    card.innerHTML = suitCardTpl(s) + (suitOwned(s.id) ? '' : suitLockHtml(s));
+    card.addEventListener('click', () => onSuitCardClick(s, card));
+    host.appendChild(card);
+  });
+})();
 makeCards('cards-quality', QUALITIES, 'quality', q => `<div class="name">${q.name}</div>`);
 
 /* ================= RENDU ================= */
@@ -1569,7 +1611,7 @@ updateCoinUI(); renderMissions();
 window.__meta = {
   save, get fuel() { return fuel; }, set fuel(v) { fuel = v; },
   get runCoins() { return runCoins; }, get chaseOn() { return chaseOn; }, get treasuresRevealed() { return treasuresRevealed; },
-  startChase: () => startChase(), endRun: r => endRun(r), setCoins: n => { save.coins = n; persist(); updateCoinUI(); refreshSkiCards(); }
+  startChase: () => startChase(), endRun: r => endRun(r), setCoins: n => { save.coins = n; persist(); updateCoinUI(); refreshSkiCards(); refreshSuitCards(); }
 };
 
 const splashes = [];
@@ -2386,6 +2428,15 @@ function buildSki() {
     shStrap.position.set(0.15 * s, 1.17, zc(0.585)); shStrap.rotation.x = -0.2; shStrap.castShadow = true; up.add(shStrap);
     const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.03), buckleM);
     buckle.position.copy(vestCenter).addScaledVector(frontDir, 0.17); buckle.position.x = 0.15 * s; up.add(buckle);
+  }
+
+  // --- BLING Miami : chaîne en or + médaillon (tenues flashy uniquement) ---
+  if (suitCfg.bling) {
+    const chain = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.013, 8, 30), goldM);
+    chain.position.set(0, 1.135, zc(0.58)); chain.rotation.x = 1.42; chain.scale.set(1.0, 1.25, 1.0);
+    chain.castShadow = true; up.add(chain);
+    const medal = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.01, 16), goldM);
+    medal.position.set(0, 1.055, zc(0.635)); medal.rotation.x = Math.PI / 2 + 0.5; up.add(medal);
   }
 
   // --- Cou + TÊTE (la tête est un sous-groupe : elle se stabilise à l'horizon) ---
@@ -3503,7 +3554,7 @@ function toGarage() {
   document.getElementById('fuel-wrap').classList.add('hidden');
   document.getElementById('minimap').classList.add('hidden');
   document.getElementById('runend').classList.add('hidden');
-  updateCoinUI(); renderMissions(); refreshSkiCards();
+  updateCoinUI(); renderMissions(); refreshSkiCards(); refreshSuitCards();
   // Coupe TOUTES les voix moteur (dont le sifflement de turbine, sa propre
   // branche) : le frame() ne repasse pas dans le bloc audio en mode menu.
   if (audio) { audio.eGain.gain.value = 0; audio.nGain.gain.value = 0; audio.wGain.gain.value = 0; }

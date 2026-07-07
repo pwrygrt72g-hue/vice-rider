@@ -27,11 +27,21 @@ export const PILOTES = [
   { id: 'gina', name: 'Gina', skin: 0xc98e62 }
 ];
 
+/* Tenues du pilote — mood Miami 80s. c = couleur principale, c2 = liseré/accents.
+   price 0 = offerte ; bling = chaîne en or au cou (flambe façon South Beach). */
 export const SUITS = [
-  { id: 'rose', name: 'Rose néon', c: 0xff4d7d, c2: 0x35e0e0 },
-  { id: 'turquoise', name: 'Turquoise', c: 0x1fb8c4, c2: 0xff4d7d },
-  { id: 'blanc', name: 'Blanc Miami', c: 0xe8e6df, c2: 0xd4a53c },
-  { id: 'noir', name: 'Noir nuit', c: 0x22242c, c2: 0xff4d7d }
+  { id: 'rose', name: 'Rose néon', c: 0xff4d7d, c2: 0x35e0e0, price: 0 },
+  { id: 'turquoise', name: 'Turquoise', c: 0x1fb8c4, c2: 0xff4d7d, price: 0 },
+  { id: 'blanc', name: 'Blanc Miami', c: 0xe8e6df, c2: 0xd4a53c, price: 0 },
+  { id: 'noir', name: 'Noir nuit', c: 0x22242c, c2: 0xff4d7d, price: 0 },
+  { id: 'pastel', name: 'Pastel Vice', c: 0xf4a6cf, c2: 0x59d6c6, price: 400 },
+  { id: 'linen', name: 'Lin South Beach', c: 0xf2efe6, c2: 0x7fc9c2, price: 700, bling: true },
+  { id: 'flamingo', name: 'Flamant rose', c: 0xff5fa2, c2: 0xffd23c, price: 900 },
+  { id: 'sunset', name: 'Sunset néon', c: 0xff5c3a, c2: 0xff2f8f, price: 1200 },
+  { id: 'tropical', name: 'Tropical 86', c: 0x14c4a8, c2: 0xffcf3a, price: 1500 },
+  { id: 'gold', name: 'Or & Onyx', c: 0x18181f, c2: 0xf5c542, price: 2200, bling: true },
+  { id: 'cyber', name: 'Cyber Miami', c: 0x7a3cff, c2: 0x22e0ff, price: 2800, bling: true },
+  { id: 'vice', name: 'Vice Squad', c: 0xff2f8f, c2: 0x22e0ff, price: 3600, bling: true }
 ];
 
 export const QUALITIES = [
