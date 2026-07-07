@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=46';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=46';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=46';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=46';
+import { TWO_PI, smooth01, hex } from './util.js?v=47';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=47';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=47';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=47';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v46 · monde ouvert + éco';
+const BUILD = 'v47 · fix vagues + polish';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1001,9 +1001,11 @@ const DEFIS = [
   { t: 'Drifte 3 s cumulées', type: 'drift', target: 3, reward: 800 },
   { t: 'Combo x3 aux portes', type: 'combo', target: 3, reward: 900 },
   { t: 'Porte en moins de 12 s', type: 'sprint', target: 12, reward: 900 },
-  { t: 'Franchis 5 portes', type: 'gates', target: 5, reward: 800 }
+  { t: 'Franchis 5 portes', type: 'gates', target: 5, reward: 800 },
+  { t: 'File en haute mer (400 m)', type: 'offshore', target: 400, reward: 700 },
+  { t: 'Enchaîne 4 sauts', type: 'jumps', target: 4, reward: 650 }
 ];
-const CH = { score: 0, combo: 0, comboTimer: 0, gatesPassed: 0, idx: 0, startGates: 0, maxAir: 0, maxCombo: 0, gateFlash: 0, driftAcc: 0, ringsGot: 0, sprintLeft: 0 };
+const CH = { score: 0, combo: 0, comboTimer: 0, gatesPassed: 0, idx: 0, startGates: 0, maxAir: 0, maxCombo: 0, gateFlash: 0, driftAcc: 0, ringsGot: 0, sprintLeft: 0, jumps: 0 };
 
 /* ---- Mini-jeu ANNEAUX : pickups dorés flottants posés en slalom devant le joueur ---- */
 const pickups = [];
@@ -1030,7 +1032,7 @@ function hidePickups() { for (const p of pickups) { p.m.visible = false; p.got =
 function enterDefi(i) {
   CH.idx = i;
   CH.startGates = CH.gatesPassed; CH.maxAir = 0; CH.maxCombo = 0;
-  CH.driftAcc = 0; CH.ringsGot = 0;
+  CH.driftAcc = 0; CH.ringsGot = 0; CH.jumps = 0;
   const d = DEFIS[i];
   CH.sprintLeft = d.type === 'sprint' ? d.target : 0;
   if (d.type === 'rings') placePickups(); else hidePickups();
@@ -1175,6 +1177,7 @@ setFleetVisible(false);   // état initial = menu
    "encore un run" ; la police apporte l'adrénaline Miami. Tout nourrit l'économie. */
 let fuel = 1, runCoins = 0, runActive = false, runEnding = false, runPaused = false;
 let heat = 0, chaseOn = false, escapeTimer = 0, caughtTimer = 0, policeTimer = 45, treasuresRevealed = false;
+let lowFuelWarned = false, offshoreCredit = false;
 
 function sfxBlip(freq, freq2, dur, type, gain) {
   if (!audio || muted) return;
@@ -1289,7 +1292,7 @@ function updatePolice(dt, t) {
   let dy = desired - policeState.yaw;
   while (dy > Math.PI) dy -= TWO_PI; while (dy < -Math.PI) dy += TWO_PI;
   policeState.yaw += Math.sign(dy) * Math.min(Math.abs(dy), 2.0 * dt);
-  const chaseSpd = Math.min(PHYS.max * 0.92, 30);
+  const chaseSpd = Math.min(PHYS.max * 0.82, 27);   // plus lent que le joueur -> on peut le semer
   policeState.spd += (chaseSpd - policeState.spd) * Math.min(1, dt * 1.2);
   const fxp = -Math.sin(policeState.yaw), fzp = -Math.cos(policeState.yaw);
   policeState.x += fxp * policeState.spd * dt; policeState.z += fzp * policeState.spd * dt;
@@ -1301,9 +1304,9 @@ function updatePolice(dt, t) {
   policeFoam.position.set(policeState.x - fxp * 1.8, py + 0.2, policeState.z - fzp * 1.8);
   policeFoam.material.opacity = 0.5;
   heat = Math.max(0, Math.min(1, heat + (dist < 40 ? dt * 0.15 : -dt * 0.05)));
-  if (dist < 8) { caughtTimer += dt; if (caughtTimer > 1.6) { caughtTimer = 0; endRun('busted'); } }
-  else caughtTimer = Math.max(0, caughtTimer - dt);
-  if (dist > 180) { escapeTimer += dt; if (escapeTimer > 5) endChase(true); }
+  if (dist < 7) { caughtTimer += dt; if (caughtTimer > 2.2) { caughtTimer = 0; endRun('busted'); } }
+  else caughtTimer = Math.max(0, caughtTimer - dt * 1.5);
+  if (dist > 120) { escapeTimer += dt; if (escapeTimer > 3) endChase(true); }   // plus facile à semer
   else escapeTimer = Math.max(0, escapeTimer - dt * 0.5);
 }
 
@@ -1352,11 +1355,14 @@ function updateMeta(dt, t) {
     cn.m.position.set(cn.x, waveHeight(cn.x, cn.z, t) + 0.5 + Math.sin(t * 2.6 + cn.ph) * 0.1, cn.z);
     cn.m.rotation.y = t * 0.8 + cn.ph;
   }
-  // Carburant : se vide en roulant, plus vite plein gaz.
-  fuel -= dt * (0.006 + Math.max(0, state.throttle) * 0.010);
+  // Carburant : se vide en roulant (généreux : ~90 s plein gaz), plus vite plein gaz.
+  fuel -= dt * (0.004 + Math.max(0, state.throttle) * 0.007);
   const ff = document.getElementById('fuel-fill');
   if (ff) { ff.style.width = Math.max(0, fuel * 100) + '%'; }
+  if (fuel < 0.18 && !lowFuelWarned) { lowFuelWarned = true; toast('⛽ Carburant bas — trouve un bidon !'); }
   if (fuel <= 0 && !runEnding) { fuel = 0; endRun('fuel'); }
+  // Haute mer (défi + repère) : crédité une fois par run quand on s'éloigne du départ.
+  if (!offshoreCredit && Math.hypot(state.x, state.z) > 420) { offshoreCredit = true; missionAdd('offshore', 1); toast('🌊 Haute mer !'); }
   // Police
   updatePolice(dt, t);
   // Missions temps réel (vitesse / air)
@@ -1433,7 +1439,9 @@ const MISSION_POOL = [
   { id: 'chest', text: t => `Ouvre ${t} coffre(s)`, target: 2, reward: 250, mode: 'count' },
   { id: 'escape', text: () => 'Sème la police', target: 1, reward: 300, mode: 'count' },
   { id: 'air', text: t => `Reste ${t}s en l'air`, target: 2, reward: 180, mode: 'max' },
-  { id: 'gates', text: t => `Franchis ${t} portes`, target: 5, reward: 160, mode: 'count' }
+  { id: 'gates', text: t => `Franchis ${t} portes`, target: 5, reward: 160, mode: 'count' },
+  { id: 'jumps', text: t => `Fais ${t} sauts`, target: 5, reward: 200, mode: 'count' },
+  { id: 'offshore', text: () => 'File en haute mer', target: 1, reward: 250, mode: 'count' }
 ];
 function dayNumber() { return Math.floor(Date.now() / 86400000); }
 function missionDef(id) { return MISSION_POOL.find(m => m.id === id); }
@@ -1461,9 +1469,10 @@ function missionProgress(id, val, isMax) {
   for (const ms of save.missions) {
     if (ms.id !== id || ms.done) continue;
     const d = missionDef(id);
+    const prev = ms.prog;
     ms.prog = isMax ? Math.max(ms.prog, val) : ms.prog + val;
-    if (ms.prog >= d.target) { ms.done = true; addCoins(d.reward); toast('Défi réussi ! +' + d.reward + ' 🪙'); }
-    changed = true;
+    if (ms.prog >= d.target) { ms.done = true; addCoins(d.reward); toast('Défi réussi ! +' + d.reward + ' 🪙'); changed = true; }
+    else if (ms.prog !== prev) changed = true;   // n'écrit la sauvegarde QUE sur vrai changement (sinon jank)
   }
   if (changed) persist();
 }
@@ -3212,21 +3221,26 @@ function scoreTrick(fx, fz) {
   missionReach('air', air);   // défi "reste Xs en l'air"
   // Trop court pour être une figure -> juste la gerbe.
   if (air < 0.32) return;
+  if (air > 0.5) { missionAdd('jumps', 1); CH.jumps++; }   // défi "fais des sauts"
   const rollTurns = trickRoll / TWO_PI, flipTurns = trickPitch / TWO_PI;
   const nRoll = Math.round(rollTurns), nFlip = Math.round(flipTurns);
   const nr = Math.abs(nRoll), nf = Math.abs(nFlip);
-  const clean = Math.abs(rollTurns - nRoll) < 0.22 && Math.abs(flipTurns - nFlip) < 0.22;
+  // Une figure n'est "tentée" que si la rotation est nette et VOLONTAIRE (>~240°).
+  // Un simple saut de vague en tenant A/D (~3,6 rad) ne compte donc PAS comme une
+  // vrille -> plus de "wipeout" injuste qui coupait la vitesse sur chaque vague.
+  const attempted = Math.abs(trickRoll) > 4.2 || Math.abs(trickPitch) > 4.2;
+  const clean = Math.abs(rollTurns - nRoll) < 0.18 && Math.abs(flipTurns - nFlip) < 0.18;
 
-  if (nr + nf === 0) {
-    // Pas de rotation : récompense le "big air" pur si le saut est conséquent.
-    if (air > 0.95) { const pts = 200 + Math.floor(air * 260); CH.score += pts; showTrick('BIG AIR', '+' + pts); }
+  if (!attempted) {
+    // Saut normal : big air si conséquent, JAMAIS de pénalité de vitesse.
+    if (air > 0.95) { const pts = 200 + Math.floor(air * 260); CH.score += pts; gainCoins(Math.floor(pts / 15)); showTrick('BIG AIR', '+' + pts); }
     return;
   }
   if (!clean) {
-    // Rotation entamée mais atterrissage de travers = gamelle : on casse la vitesse.
-    showTrick('WIPEOUT !', '');
-    state.vx *= 0.45; state.vz *= 0.45; state.speed *= 0.45;
-    camJolt = Math.max(camJolt, 1.8);
+    // Vraie tentative ratée à la réception : pas de points, MAIS on garde la vitesse
+    // (juste une secousse) -> le jeu ne s'arrête plus, il reste fluide.
+    showTrick('presque !', '');
+    camJolt = Math.max(camJolt, 1.0);
     return;
   }
   let pts = 0; const parts = [];
@@ -3421,7 +3435,8 @@ function startRide() {
   // Méta-jeu : monde ouvert (collectibles), plein de carburant, run neuf.
   runActive = true; runEnding = false; runPaused = false;
   runCoins = 0; fuel = 1; heat = 0; chaseOn = false; caughtTimer = 0;
-  policeTimer = 45 + Math.random() * 25;
+  lowFuelWarned = false; offshoreCredit = false;
+  policeTimer = 70 + Math.random() * 40;   // laisse respirer avant la 1re poursuite
   police.visible = false; policeFoam.visible = false;
   seedWorld(); collectiblesVisible(true);
   document.getElementById('game-coins').classList.remove('hidden');
@@ -3886,11 +3901,15 @@ function frame() {
       audioSplash(0.35 + speedF * 0.4);
     }
     // Pilotage aérien : gauche/droite = barrel roll, haut/espace = backflip, bas = frontflip.
-    const spin = 3.6 * dt;
-    if (left) trickRoll -= spin;
-    if (right) trickRoll += spin;
-    if (keys[' '] || up) trickPitch += spin * 0.92;
-    else if (down) trickPitch -= spin * 0.92;
+    // On n'accumule la vrille qu'après un vrai temps d'air (>0,35 s) : les micro-sauts
+    // de clapot en tournant ne font PLUS rouler le ski (rendu propre).
+    if (state.airTime > 0.35) {
+      const spin = 4.5 * dt;
+      if (left) trickRoll -= spin;
+      if (right) trickRoll += spin;
+      if (keys[' '] || up) trickPitch += spin * 0.92;
+      else if (down) trickPitch -= spin * 0.92;
+    }
   } else {
     if (wasAir) {
       if (state.airTime > state.bestAir) state.bestAir = state.airTime;
@@ -4296,6 +4315,8 @@ function frame() {
   else if (defi.type === 'combo') prog = CH.maxCombo / defi.target;
   else if (defi.type === 'rings') prog = CH.ringsGot / defi.target;
   else if (defi.type === 'drift') prog = CH.driftAcc / defi.target;
+  else if (defi.type === 'offshore') prog = Math.hypot(state.x, state.z) / defi.target;
+  else if (defi.type === 'jumps') prog = CH.jumps / defi.target;
   else if (defi.type === 'sprint') prog = (CH.gatesPassed - CH.startGates) >= 1 ? 1 : 0;
   if (prog >= 1) {
     CH.score += defi.reward;
