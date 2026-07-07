@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=42';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=42';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=42';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=42';
+import { TWO_PI, smooth01, hex } from './util.js?v=43';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=43';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=43';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=43';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v42 · voile+cockpit+logos';
+const BUILD = 'v43 · tricks+IA+musique';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -969,6 +969,129 @@ function enterDefi(i) {
   const d = DEFIS[i];
   CH.sprintLeft = d.type === 'sprint' ? d.target : 0;
   if (d.type === 'rings') placePickups(); else hidePickups();
+}
+
+/* ================= BOUÉES DE COURSE + JET SKIS IA =================
+   Un circuit ovale de bouées coniques marque une course ; 3 pilotes IA
+   l'enchaînent en boucle (poursuite de waypoints, gîte dans les virages,
+   sillage d'écume). Ils peuplent le plan d'eau et donnent des adversaires. */
+const raceBuoys = [];
+const BUOY_PATH = [];
+(function buildCircuit() {
+  const cx = 0, cz = -50, rx = 105, rz = 145, N = 12;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * TWO_PI;
+    const x = cx + Math.cos(a) * rx, z = cz + Math.sin(a) * rz;
+    BUOY_PATH.push({ x, z });
+    const col = i % 2 === 0 ? 0xff3b30 : 0xffd21e;
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.92, 2.3, 16),
+      new THREE.MeshStandardMaterial({ color: col, roughness: 0.5, metalness: 0.1, emissive: col, emissiveIntensity: 0.18 }));
+    body.position.y = 0.75; body.castShadow = true; g.add(body);
+    const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.78, 0.42, 16),
+      new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.5 }));
+    stripe.position.y = 0.72; g.add(stripe);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.34, 14, 10),
+      new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5 }));
+    cap.position.y = 2.05; g.add(cap);
+    const flag = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.2 }));
+    flag.position.y = 2.5; g.add(flag);
+    g.position.set(x, 0, z);
+    scene.add(g);
+    raceBuoys.push({ g, x, z, ph: (i * 1.7) % TWO_PI });
+  }
+})();
+
+function makeAiSki(hullColor, vestColor) {
+  const g = new THREE.Group();
+  const hullM = new THREE.MeshStandardMaterial({ color: hullColor, roughness: 0.32, metalness: 0.35 });
+  const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.44, 1.7, 6, 14), hullM);
+  hull.rotation.x = Math.PI / 2; hull.position.y = 0.42; hull.scale.set(1, 1, 1.25); g.add(hull);
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.16, 1.95),
+    new THREE.MeshStandardMaterial({ color: 0x14171d, roughness: 0.6 }));
+  deck.position.y = 0.66; g.add(deck);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.44, 0.95, 14), hullM);
+  nose.rotation.x = -Math.PI / 2; nose.position.set(0, 0.46, -1.4); g.add(nose);
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, 0.55, 12), hullM);
+  col.position.set(0, 0.78, -0.5); col.rotation.x = 0.55; g.add(col);
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.52, 8),
+    new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.5 }));
+  bar.rotation.z = Math.PI / 2; bar.position.set(0, 0.92, -0.44); g.add(bar);
+  const skin = new THREE.MeshStandardMaterial({ color: 0x9a6a48, roughness: 0.7 });
+  const vestM = new THREE.MeshStandardMaterial({ color: vestColor, roughness: 0.5 });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.42, 6, 12), vestM);
+  torso.position.set(0, 1.12, 0.16); torso.rotation.x = -0.38; g.add(torso);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.155, 14, 12), skin);
+  head.position.set(0, 1.5, -0.02); g.add(head);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.175, 14, 12, 0, TWO_PI, 0, Math.PI * 0.6),
+    new THREE.MeshStandardMaterial({ color: hullColor, roughness: 0.22, metalness: 0.45 }));
+  helmet.position.set(0, 1.52, -0.02); g.add(helmet);
+  for (const s of [-1, 1]) {
+    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.42, 5, 8), vestM);
+    arm.position.set(0.19 * s, 1.06, -0.16); arm.rotation.x = -0.95; arm.rotation.z = 0.18 * s; g.add(arm);
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.34, 5, 8),
+      new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.7 }));
+    thigh.position.set(0.15 * s, 0.82, 0.42); thigh.rotation.x = 1.15; g.add(thigh);
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+const AI_FOAM = (() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const c = cv.getContext('2d');
+  const gr = c.createRadialGradient(32, 32, 2, 32, 32, 30);
+  gr.addColorStop(0, 'rgba(255,255,255,0.9)');
+  gr.addColorStop(0.5, 'rgba(226,240,246,0.4)');
+  gr.addColorStop(1, 'rgba(226,240,246,0)');
+  c.fillStyle = gr; c.fillRect(0, 0, 64, 64);
+  const tx = new THREE.CanvasTexture(cv); tx.colorSpace = THREE.SRGBColorSpace; return tx;
+})();
+const aiSkis = [];
+const AI_DEFS = [[0x2f6bff, 0xffe14d], [0xff2f7d, 0x2affea], [0x35d17a, 0xff8a3d]];
+AI_DEFS.forEach((def, i) => {
+  const g = makeAiSki(def[0], def[1]);
+  const wp = Math.floor((i / AI_DEFS.length) * BUOY_PATH.length);
+  const p = BUOY_PATH[wp];
+  g.position.set(p.x + (i - 1) * 5, 0, p.z);
+  scene.add(g);
+  const foam = new THREE.Sprite(new THREE.SpriteMaterial({ map: AI_FOAM, transparent: true, depthWrite: false, opacity: 0, blending: THREE.AdditiveBlending }));
+  foam.scale.set(3, 3, 1); scene.add(foam);
+  aiSkis.push({ g, foam, x: p.x, z: p.z, yaw: 0, spd: 8, maxSpd: 15 + i * 2.5, turn: 1.5 + i * 0.15, wp: (wp + 1) % BUOY_PATH.length, bob: i * 2.1 });
+});
+
+// Circuit IA : poursuite de waypoints + gîte + sillage. Appelé chaque frame en ride.
+function updateAiFleet(dt, t) {
+  for (const b of raceBuoys) {
+    b.g.position.y = waveHeight(b.x, b.z, t);
+    b.g.rotation.z = Math.sin(t * 1.3 + b.ph) * 0.14;
+    b.g.rotation.x = Math.cos(t * 1.1 + b.ph) * 0.1;
+  }
+  for (const ai of aiSkis) {
+    const tgt = BUOY_PATH[ai.wp];
+    const dx = tgt.x - ai.x, dz = tgt.z - ai.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 15) ai.wp = (ai.wp + 1) % BUOY_PATH.length;
+    const desired = Math.atan2(-dx, -dz);
+    let dy = desired - ai.yaw;
+    while (dy > Math.PI) dy -= TWO_PI;
+    while (dy < -Math.PI) dy += TWO_PI;
+    ai.yaw += Math.sign(dy) * Math.min(Math.abs(dy), ai.turn * dt);
+    const targetSpd = ai.maxSpd * (1 - 0.42 * Math.min(Math.abs(dy), 1));
+    ai.spd += (targetSpd - ai.spd) * Math.min(1, dt * 1.6);
+    const fx = -Math.sin(ai.yaw), fz = -Math.cos(ai.yaw);
+    ai.x += fx * ai.spd * dt; ai.z += fz * ai.spd * dt;
+    const y = waveHeight(ai.x, ai.z, t);
+    ai.g.position.set(ai.x, y, ai.z);
+    ai.g.rotation.y = ai.yaw;
+    ai.g.rotation.z = -Math.sign(dy) * Math.min(Math.abs(dy), 1) * 0.38;
+    ai.g.rotation.x = 0.05 + Math.sin(t * 3.1 + ai.bob) * 0.035;
+    const sf = ai.spd / ai.maxSpd;
+    ai.foam.position.set(ai.x - fx * 1.7, y + 0.2, ai.z - fz * 1.7);
+    ai.foam.material.opacity = Math.min(0.65, sf * 0.7) * (0.8 + 0.2 * Math.sin(t * 13 + ai.bob));
+    ai.foam.scale.setScalar(2.4 + sf * 2.8);
+  }
 }
 
 const splashes = [];
@@ -2406,26 +2529,114 @@ function initAudio() {
   if (audio) return;
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // Bus master + compresseur : moteur, embruns et musique se partagent la scène
+    // sans saturer (glue façon mixage arcade).
+    const master = ctx.createGain(); master.gain.value = 0.9;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14; comp.knee.value = 22; comp.ratio.value = 3; comp.attack.value = 0.004; comp.release.value = 0.25;
+    master.connect(comp).connect(ctx.destination);
+
+    // --- MOTEUR : saw + square + sub sinus (grondement) sous un lowpass ---
     const osc1 = ctx.createOscillator(); osc1.type = 'sawtooth';
     const osc2 = ctx.createOscillator(); osc2.type = 'square';
+    const sub = ctx.createOscillator(); sub.type = 'sine';
     const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 320;
     const eGain = ctx.createGain(); eGain.gain.value = 0;
-    osc1.connect(filter); osc2.connect(filter);
-    filter.connect(eGain).connect(ctx.destination);
-    osc1.start(); osc2.start();
+    osc1.connect(filter); osc2.connect(filter); sub.connect(filter);
+    filter.connect(eGain).connect(master);
+    osc1.start(); osc2.start(); sub.start();
+    // Sifflement de turbine (aigu), monte avec le régime.
+    const whine = ctx.createOscillator(); whine.type = 'triangle'; whine.frequency.value = 1200;
+    const wGain = ctx.createGain(); wGain.gain.value = 0;
+    whine.connect(wGain).connect(master); whine.start();
+
+    // --- BRUIT : sillage de coque + gerbes ---
     const nb = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const data = nb.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     const noise = ctx.createBufferSource(); noise.buffer = nb; noise.loop = true;
     const nFilter = ctx.createBiquadFilter(); nFilter.type = 'bandpass'; nFilter.frequency.value = 700; nFilter.Q.value = 0.6;
     const nGain = ctx.createGain(); nGain.gain.value = 0;
-    noise.connect(nFilter).connect(nGain).connect(ctx.destination);
+    noise.connect(nFilter).connect(nGain).connect(master);
     const sFilter = ctx.createBiquadFilter(); sFilter.type = 'lowpass'; sFilter.frequency.value = 1100;
     const sGain = ctx.createGain(); sGain.gain.value = 0;
-    noise.connect(sFilter).connect(sGain).connect(ctx.destination);
+    noise.connect(sFilter).connect(sGain).connect(master);
     noise.start();
-    audio = { ctx, osc1, osc2, filter, eGain, nGain, sGain };
+
+    // --- MUSIQUE synthwave : bus dédié + écho à la double-croche pointée ---
+    const musicBus = ctx.createGain(); musicBus.gain.value = 0;
+    const musDelay = ctx.createDelay(0.6); musDelay.delayTime.value = (60 / 104 / 4) * 3;
+    const musFb = ctx.createGain(); musFb.gain.value = 0.3;
+    const musWet = ctx.createGain(); musWet.gain.value = 0.32;
+    musicBus.connect(master);
+    musicBus.connect(musDelay); musDelay.connect(musFb); musFb.connect(musDelay);
+    musDelay.connect(musWet); musWet.connect(master);
+    // Court buffer de bruit pour caisse claire / charleston.
+    const dnb = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.4), ctx.sampleRate);
+    const dd = dnb.getChannelData(0);
+    for (let i = 0; i < dd.length; i++) dd[i] = Math.random() * 2 - 1;
+
+    audio = { ctx, master, osc1, osc2, sub, filter, eGain, whine, wGain, nGain, sGain,
+      musicBus, noiseBuf: dnb, music: { bpm: 104, step: 0, nextTime: 0 } };
   } catch (e) { audio = null; }
+}
+
+/* ---- Séquenceur synthwave (Miami 1986) : Am–F–C–G, arpège + basse + batterie ---- */
+const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+const MUSIC_CHORDS = [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]]; // Am F C G
+const MUSIC_BASS = [33, 29, 36, 31];                                            // A1 F1 C2 G1
+function mNote(freq, when, dur, type, peak, cutoff) {
+  const { ctx, musicBus } = audio;
+  const o = ctx.createOscillator(); o.type = type; o.frequency.value = freq;
+  const g = ctx.createGain();
+  if (cutoff) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = cutoff; o.connect(f); f.connect(g); }
+  else o.connect(g);
+  g.connect(musicBus);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(peak, when + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  o.start(when); o.stop(when + dur + 0.03);
+}
+function mKick(when) {
+  const { ctx, musicBus } = audio;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  const g = ctx.createGain(); o.connect(g); g.connect(musicBus);
+  o.frequency.setValueAtTime(150, when); o.frequency.exponentialRampToValueAtTime(45, when + 0.12);
+  g.gain.setValueAtTime(0.85, when); g.gain.exponentialRampToValueAtTime(0.0001, when + 0.24);
+  o.start(when); o.stop(when + 0.26);
+}
+function mNoise(when, dur, peak, type, hz, q) {
+  const { ctx, musicBus, noiseBuf } = audio;
+  const s = ctx.createBufferSource(); s.buffer = noiseBuf;
+  const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = hz; f.Q.value = q || 1;
+  const g = ctx.createGain();
+  s.connect(f); f.connect(g); g.connect(musicBus);
+  g.gain.setValueAtTime(peak, when); g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  s.start(when); s.stop(when + dur + 0.03);
+}
+function musicStep(step, when, spb) {
+  const bar = Math.floor(step / 16) % 4, s = step % 16;
+  const chord = MUSIC_CHORDS[bar];
+  if (s % 4 === 0) mNote(midiHz(MUSIC_BASS[bar]), when, spb * 3.6, 'sawtooth', 0.5, 300);      // basse
+  const arp = chord[s % chord.length] + 12;                                                    // arpège aigu
+  mNote(midiHz(arp), when, spb * 1.4, 'square', 0.12, 2200);
+  if (s === 0) for (const n of chord) mNote(midiHz(n), when, spb * 15, 'triangle', 0.05, 1000); // nappe
+  if (s === 0 || s === 8) mKick(when);
+  if (s === 4 || s === 12) mNoise(when, 0.18, 0.26, 'bandpass', 1800, 1.1);                     // caisse
+  if (s % 2 === 0) mNoise(when, 0.035, 0.08, 'highpass', 8500, 0.7);                            // charley
+}
+function musicTick() {
+  if (!audio || !audio.music) return;
+  const { ctx, music } = audio;
+  const spb = 60 / music.bpm / 4;               // durée d'une double-croche
+  const ahead = ctx.currentTime + 0.18;
+  if (music.nextTime < ctx.currentTime) music.nextTime = ctx.currentTime + 0.06;
+  while (music.nextTime < ahead) {
+    musicStep(music.step, music.nextTime, spb);
+    music.step = (music.step + 1) % 64;
+    music.nextTime += spb;
+  }
+  audio.musicBus.gain.setTargetAtTime(muted ? 0 : 0.17, ctx.currentTime, 0.12);
 }
 function audioSplash(power) {
   if (!audio || muted) return;
@@ -2490,6 +2701,64 @@ const camG = { x: 0, z: 0, pitch: 0, roll: 0, yaw: 0 };
 let camPrevSpeed = 0, camJolt = 0;
 // Objectif mouillé (0..1) : monte aux gerbes/impacts, sèche progressivement.
 let lensWet = 0;
+// --- FIGURES AÉRIENNES (tricks) : rotations accumulées pendant le vol (rad).
+//     Barrel roll (roulis, touches gauche/droite) + flips (tangage, haut/bas/espace).
+let trickRoll = 0, trickPitch = 0;
+const trickHud = { until: 0, name: '', pts: '' };
+const trickNameEl = document.getElementById('hud-trick');
+const trickTxtEl = document.getElementById('hud-trick-name');
+const trickPtsEl = document.getElementById('hud-trick-pts');
+function showTrick(name, pts) {
+  trickHud.until = simTime + 1.8; trickHud.name = name; trickHud.pts = pts;
+  if (trickTxtEl) trickTxtEl.textContent = name;
+  if (trickPtsEl) trickPtsEl.textContent = pts;
+  if (trickNameEl) { trickNameEl.style.opacity = '1'; trickNameEl.style.transform = 'translateX(-50%) scale(1)'; }
+}
+// Évaluation d'un saut à l'atterrissage : compte les rotations complètes réussies
+// (barrel rolls + flips), award le score, popup, et lâche une grosse gerbe.
+function scoreTrick(fx, fz) {
+  const t = simTime;
+  const hw = waveHeight(state.x, state.z, t);
+  const air = state.airTime;
+  const spd = Math.hypot(state.vx, state.vz);
+  // Grosse gerbe d'atterrissage, d'autant plus imposante que le saut fut long/rapide.
+  const gp = Math.min(0.6 + air * 0.9 + spd / PHYS.max, 2.4);
+  spawnSplash(state.x, hw, state.z, gp);
+  burstDrops(state.x, hw + 0.1, state.z, 30 + Math.floor(air * 40 + spd), 0.7 + gp * 0.5, fx * state.speed, fz * state.speed);
+  lensDrops(4 + Math.floor(air * 6));
+  camImpact = Math.max(camImpact, Math.min(0.14 + air * 0.2, 0.5));
+  camJolt = Math.max(camJolt, Math.min(0.6 + air * 1.4, 2.4));
+  audioSplash(Math.min(0.4 + air * 0.5, 0.9));
+
+  // Trop court pour être une figure -> juste la gerbe.
+  if (air < 0.32) return;
+  const rollTurns = trickRoll / TWO_PI, flipTurns = trickPitch / TWO_PI;
+  const nRoll = Math.round(rollTurns), nFlip = Math.round(flipTurns);
+  const nr = Math.abs(nRoll), nf = Math.abs(nFlip);
+  const clean = Math.abs(rollTurns - nRoll) < 0.22 && Math.abs(flipTurns - nFlip) < 0.22;
+
+  if (nr + nf === 0) {
+    // Pas de rotation : récompense le "big air" pur si le saut est conséquent.
+    if (air > 0.95) { const pts = 200 + Math.floor(air * 260); CH.score += pts; showTrick('BIG AIR', '+' + pts); }
+    return;
+  }
+  if (!clean) {
+    // Rotation entamée mais atterrissage de travers = gamelle : on casse la vitesse.
+    showTrick('WIPEOUT !', '');
+    state.vx *= 0.45; state.vz *= 0.45; state.speed *= 0.45;
+    camJolt = Math.max(camJolt, 1.8);
+    return;
+  }
+  let pts = 0; const parts = [];
+  if (nf > 0) { pts += nf * 750; parts.push((nf > 1 ? nf + '× ' : '') + (nFlip > 0 ? 'BACKFLIP' : 'FRONTFLIP')); }
+  if (nr > 0) { pts += nr * 550; parts.push((nr > 1 ? nr + '× ' : '') + 'BARREL ROLL'); }
+  if (air > 0.95) { pts += 200; parts.push('BIG AIR'); }
+  const combo = nr + nf;
+  if (combo > 1) pts = Math.round(pts * (1 + 0.4 * (combo - 1)));   // bonus multi-figure
+  CH.score += pts;
+  CH.maxCombo = Math.max(CH.maxCombo, combo + 1);
+  showTrick(parts.join(' + '), '+' + pts.toLocaleString('fr-FR'));
+}
 const _sunProj = new THREE.Vector3(), _camDir = new THREE.Vector3();
 function updateFilm(t, sf, wet) {
   if (!filmPass) return;
@@ -2506,7 +2775,7 @@ function updateFilm(t, sf, wet) {
   u.uSun.value[1] = _sunProj.y * 0.5 + 0.5;
   u.uSun.value[2] = _camDir.dot(sunDir);
 }
-window.__vice = { state, keys, toggleCam: () => toggleCam(), setNight: v => setNight(v), islands: palmIslands, gate, CH, DEFIS, enterDefi, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
+window.__vice = { state, keys, toggleCam: () => toggleCam(), setNight: v => setNight(v), islands: palmIslands, gate, CH, DEFIS, enterDefi, ai: aiSkis, buoys: raceBuoys, path: BUOY_PATH, setDraft: v => { DRAFT_REST = v; return DRAFT_REST; }, getDraft: () => DRAFT_REST };
 window.__align = (o) => { Object.assign(MODEL_RIDE, o || {}); alignRideModel(); return { ...MODEL_RIDE }; };
 window.__analyzeModel = () => {
   if (!realModel) return 'no model';
@@ -2815,6 +3084,7 @@ function frame() {
   const t = simTime;
   resize(false);
   oceanUniforms.uTime.value = t;
+  musicTick();   // séquenceur synthwave (joue au menu comme en jeu)
 
   // FPS
   frames++;
@@ -3053,12 +3323,28 @@ function frame() {
   state.air = plunge > 0.28;
   if (state.air) {
     state.airTime = wasAir ? state.airTime + dt : dt;
+    if (!wasAir) {
+      // DÉCOLLAGE : compteurs de figures à zéro + grosse gerbe de lancement.
+      trickRoll = 0; trickPitch = 0;
+      const lp = Math.min(0.4 + speedF, 1.4);
+      spawnSplash(state.x, hw, state.z, lp);
+      burstDrops(state.x, hw + 0.15, state.z, 22 + Math.floor(speedF * 26), 0.6 + speedF * 0.8, fx * state.speed * 0.7, fz * state.speed * 0.7);
+      audioSplash(0.35 + speedF * 0.4);
+    }
+    // Pilotage aérien : gauche/droite = barrel roll, haut/espace = backflip, bas = frontflip.
+    const spin = 3.6 * dt;
+    if (left) trickRoll -= spin;
+    if (right) trickRoll += spin;
+    if (keys[' '] || up) trickPitch += spin * 0.92;
+    else if (down) trickPitch -= spin * 0.92;
   } else {
     if (wasAir) {
       if (state.airTime > state.bestAir) state.bestAir = state.airTime;
       state.showAirUntil = t + 1.6;
+      scoreTrick(fx, fz);   // ATTERRISSAGE : évalue les figures + grosse gerbe
     }
     state.airTime = 0;
+    trickRoll = 0; trickPitch = 0;
   }
 
   const hBow = waveHeight(state.x + fx * 1.8, state.z + fz * 1.8, t);
@@ -3124,8 +3410,8 @@ function frame() {
 
   ski.position.set(state.x, state.y, state.z);
   ski.rotation.y = state.yaw;
-  ski.rotation.x = state.pitch;
-  ski.rotation.z = state.roll + (state.air ? 0 : Math.sin(t * 9) * 0.01 * speedF);
+  ski.rotation.x = state.pitch + trickPitch;
+  ski.rotation.z = state.roll + trickRoll + (state.air ? 0 : Math.sin(t * 9) * 0.01 * speedF);
   if (barGroup) barGroup.rotation.y = -state.rudder * 0.5;
 
   // La main droite serre la gâchette de gaz, la gauche le frein (le cockpit
@@ -3389,6 +3675,9 @@ function frame() {
     b.rotation.z = 0.2 * Math.sin(t * 2.1 + b.position.x);
   }
 
+  /* ---- Bouées de course + flotte IA ---- */
+  updateAiFleet(dt, t);
+
   /* ---- Portes lumineuses & micro-défis ---- */
   gate.position.y = waveHeight(gate.position.x, gate.position.z, t) + 4 + Math.sin(t * 2) * 0.25;
   gateTorus.rotation.z = t * 0.5;
@@ -3469,12 +3758,16 @@ function frame() {
     const engHz = 34 + speedF * 56 + state.rpm * 84;
     audio.osc1.frequency.value = engHz;
     audio.osc2.frequency.value = engHz * 0.5;
+    audio.sub.frequency.value = engHz * 0.5;                    // sub sinus : grondement de coque
     audio.osc1.detune.value = Math.sin(t * 9) * 12 * state.rpm;
     // Sous l'eau : tout est étouffé
     const muffle = plunge < -0.3 ? 0.22 : 1;
     audio.filter.frequency.value = (260 + speedF * 560) * muffle;
     audio.eGain.gain.value = muted ? 0 : (0.02 + Math.abs(state.throttle) * 0.045) * (plunge < -0.3 ? 0.5 : 1);
     audio.nGain.gain.value = muted || state.air ? 0 : speedF * 0.05 * muffle;
+    // Sifflement de turbine : monte fort au régime, coupé sous l'eau.
+    audio.whine.frequency.value = 900 + state.rpm * 1500 + speedF * 400;
+    audio.wGain.gain.value = muted ? 0 : Math.min(0.03, state.rpm * 0.028) * muffle;
   }
 
   /* ---- HUD ---- */
@@ -3501,6 +3794,12 @@ function frame() {
     hudAir.style.opacity = '1';
   } else {
     hudAir.style.opacity = '0';
+  }
+  // Popup de figure : disparaît après sa fenêtre d'affichage.
+  if (trickNameEl && trickHud.until && t > trickHud.until) {
+    trickNameEl.style.opacity = '0';
+    trickNameEl.style.transform = 'translateX(-50%) scale(0.7)';
+    trickHud.until = 0;
   }
 
   // Objectif mouillé : sèche en continu, se remouille à vitesse sur mer formée

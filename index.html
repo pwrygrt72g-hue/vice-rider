@@ -124,6 +124,10 @@
   <div id="uw" style="position:absolute; inset:0; pointer-events:none; background:rgba(14,62,78,0.5); opacity:0; transition:opacity 0.18s;"></div>
   <div id="drops"></div>
   <div id="hud-air" class="mono">air 0.00 s</div>
+  <div id="hud-trick" style="position:absolute; top:58px; left:50%; transform:translateX(-50%) scale(0.7); text-align:center; opacity:0; pointer-events:none; transition:opacity 0.12s, transform 0.18s; z-index:8;">
+    <div id="hud-trick-name" style="font:800 30px 'SF Mono',Menlo,monospace; letter-spacing:2px; color:#fff; text-shadow:0 0 14px #ff2f8f, 0 2px 6px rgba(0,0,0,0.6); -webkit-text-stroke:1px rgba(255,47,143,0.6);">BARREL ROLL</div>
+    <div id="hud-trick-pts" style="font:700 20px 'SF Mono',Menlo,monospace; color:#35e0e0; text-shadow:0 0 10px #0cf, 0 2px 4px rgba(0,0,0,0.6); margin-top:2px;">+500</div>
+  </div>
   <div id="hud-fps" class="mono">-- fps</div>
   <div id="chal" style="position:absolute; top:14px; left:16px; width:230px; display:none;">
     <div style="display:flex; align-items:baseline; gap:10px;">
@@ -200,6 +204,6 @@
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.js" } }
 </script>
-<script type="module" src="./src/main.js?v=42"></script>
+<script type="module" src="./src/main.js?v=43"></script>
 </body>
 </html>
