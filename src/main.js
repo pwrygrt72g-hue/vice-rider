@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=48';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=48';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=48';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=48';
+import { TWO_PI, smooth01, hex } from './util.js?v=49';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=49';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=49';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=49';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v48 · HUD + police blanche';
+const BUILD = 'v49 · typo 80s + livrée police';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1252,6 +1252,24 @@ const sirenR = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.M
 const sirenB = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshStandardMaterial({ color: 0x2040ff, emissive: 0x0030ff, emissiveIntensity: 2 }));
 sirenR.position.set(-0.12, 1.0, 0.55); sirenB.position.set(0.12, 1.0, 0.55);
 police.add(sirenR); police.add(sirenB);
+// Barre de gyrophare (support noir entre les 2 feux) + livrée "POLICE" sur les flancs.
+const sirenBar = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.07, 0.14), new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.5 }));
+sirenBar.position.set(0, 0.95, 0.55); police.add(sirenBar);
+const polDecalTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 72;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#123a86'; c.fillRect(0, 8, 256, 12);      // liseré bleu haut
+  c.fillStyle = '#123a86'; c.fillRect(0, 52, 256, 12);     // liseré bleu bas
+  c.font = '900 40px "Arial Black", Impact, sans-serif';
+  c.fillStyle = '#12306e'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText('POLICE', 128, 37);
+  const tx = new THREE.CanvasTexture(cv); tx.colorSpace = THREE.SRGBColorSpace; return tx;
+})();
+for (const s of [-1, 1]) {
+  const dec = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.42), new THREE.MeshBasicMaterial({ map: polDecalTex, transparent: true }));
+  dec.position.set(0.455 * s, 0.5, 0.1); dec.rotation.y = s > 0 ? Math.PI / 2 : -Math.PI / 2;
+  police.add(dec);
+}
 police.visible = false; scene.add(police);
 const policeState = { x: 0, z: 0, yaw: 0, spd: 0 };
 const policeFoam = new THREE.Sprite(new THREE.SpriteMaterial({ map: AI_FOAM, transparent: true, depthWrite: false, opacity: 0, blending: THREE.AdditiveBlending }));
