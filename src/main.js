@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=43';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=43';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=43';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=43';
+import { TWO_PI, smooth01, hex } from './util.js?v=44';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=44';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=44';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=44';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v43 · tricks+IA+musique';
+const BUILD = 'v44 · fixes review';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -971,6 +971,18 @@ function enterDefi(i) {
   if (d.type === 'rings') placePickups(); else hidePickups();
 }
 
+// Sprite d'écume : dégradé radial blanc->transparent sur un canvas carré.
+// Factorisé (dropSprite / mistSprite / AI_FOAM partagent ce moule).
+function mkFoamTex(size, r0, r1, stops) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = size;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(size / 2, size / 2, r0, size / 2, size / 2, r1);
+  for (const [o, col] of stops) g.addColorStop(o, col);
+  c.fillStyle = g; c.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /* ================= BOUÉES DE COURSE + JET SKIS IA =================
    Un circuit ovale de bouées coniques marque une course ; 3 pilotes IA
    l'enchaînent en boucle (poursuite de waypoints, gîte dans les virages,
@@ -1038,27 +1050,19 @@ function makeAiSki(hullColor, vestColor) {
   return g;
 }
 
-const AI_FOAM = (() => {
-  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
-  const c = cv.getContext('2d');
-  const gr = c.createRadialGradient(32, 32, 2, 32, 32, 30);
-  gr.addColorStop(0, 'rgba(255,255,255,0.9)');
-  gr.addColorStop(0.5, 'rgba(226,240,246,0.4)');
-  gr.addColorStop(1, 'rgba(226,240,246,0)');
-  c.fillStyle = gr; c.fillRect(0, 0, 64, 64);
-  const tx = new THREE.CanvasTexture(cv); tx.colorSpace = THREE.SRGBColorSpace; return tx;
-})();
+const AI_FOAM = mkFoamTex(64, 2, 30, [[0, 'rgba(255,255,255,0.9)'], [0.5, 'rgba(226,240,246,0.4)'], [1, 'rgba(226,240,246,0)']]);
 const aiSkis = [];
 const AI_DEFS = [[0x2f6bff, 0xffe14d], [0xff2f7d, 0x2affea], [0x35d17a, 0xff8a3d]];
 AI_DEFS.forEach((def, i) => {
   const g = makeAiSki(def[0], def[1]);
   const wp = Math.floor((i / AI_DEFS.length) * BUOY_PATH.length);
   const p = BUOY_PATH[wp];
-  g.position.set(p.x + (i - 1) * 5, 0, p.z);
+  const sx = p.x + (i - 1) * 5;                 // écart latéral au départ (couloir propre)
+  g.position.set(sx, 0, p.z);
   scene.add(g);
   const foam = new THREE.Sprite(new THREE.SpriteMaterial({ map: AI_FOAM, transparent: true, depthWrite: false, opacity: 0, blending: THREE.AdditiveBlending }));
   foam.scale.set(3, 3, 1); scene.add(foam);
-  aiSkis.push({ g, foam, x: p.x, z: p.z, yaw: 0, spd: 8, maxSpd: 15 + i * 2.5, turn: 1.5 + i * 0.15, wp: (wp + 1) % BUOY_PATH.length, bob: i * 2.1 });
+  aiSkis.push({ g, foam, x: sx, z: p.z, yaw: 0, spd: 8, maxSpd: 15 + i * 2.5, turn: 1.5 + i * 0.15, wp: (wp + 1) % BUOY_PATH.length, bob: i * 2.1 });
 });
 
 // Circuit IA : poursuite de waypoints + gîte + sillage. Appelé chaque frame en ride.
@@ -1093,6 +1097,12 @@ function updateAiFleet(dt, t) {
     ai.foam.scale.setScalar(2.4 + sf * 2.8);
   }
 }
+// Bouées + flotte IA : n'existent qu'en course (comme la gate et la faune).
+function setFleetVisible(v) {
+  for (const b of raceBuoys) b.g.visible = v;
+  for (const ai of aiSkis) { ai.g.visible = v; ai.foam.visible = v; }
+}
+setFleetVisible(false);   // état initial = menu
 
 const splashes = [];
 const splashGeo = new THREE.CircleGeometry(1.4, 24).rotateX(-Math.PI / 2);
@@ -1116,20 +1126,7 @@ const dropLife = new Float32Array(DROP_N);
 for (let i = 0; i < DROP_N; i++) { dropPos[i * 3 + 1] = -100; dropVel.push(new THREE.Vector3()); dropLife[i] = 0; }
 const dropGeo = new THREE.BufferGeometry();
 dropGeo.setAttribute('position', new THREE.BufferAttribute(dropPos, 3));
-const dropSprite = (() => {
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 32;
-  const c = cv.getContext('2d');
-  const g = c.createRadialGradient(16, 16, 1, 16, 16, 15);
-  g.addColorStop(0, 'rgba(255,255,255,0.95)');
-  g.addColorStop(0.55, 'rgba(235,242,246,0.5)');
-  g.addColorStop(1, 'rgba(235,242,246,0)');
-  c.fillStyle = g;
-  c.fillRect(0, 0, 32, 32);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-})();
+const dropSprite = mkFoamTex(32, 1, 15, [[0, 'rgba(255,255,255,0.95)'], [0.55, 'rgba(235,242,246,0.5)'], [1, 'rgba(235,242,246,0)']]);
 const dropPoints = new THREE.Points(dropGeo, new THREE.PointsMaterial({
   size: 0.16, map: dropSprite, transparent: true, depthWrite: false, sizeAttenuation: true, color: 0xeef4f6
 }));
@@ -1175,18 +1172,7 @@ function updateDrops(dt, t) {
 // Brume douce et plumeuse (cœur diffus, bords très fondus) : superposées et
 // nombreuses, les particules se fondent en gerbe d'eau continue plutôt qu'en
 // pastilles rondes distinctes.
-const mistSprite = (() => {
-  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
-  const c = cv.getContext('2d');
-  const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, 'rgba(255,255,255,0.55)');
-  g.addColorStop(0.35, 'rgba(244,252,255,0.28)');
-  g.addColorStop(0.7, 'rgba(232,244,250,0.08)');
-  g.addColorStop(1, 'rgba(232,244,250,0)');
-  c.fillStyle = g; c.fillRect(0, 0, 64, 64);
-  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-})();
+const mistSprite = mkFoamTex(64, 0, 32, [[0, 'rgba(255,255,255,0.55)'], [0.35, 'rgba(244,252,255,0.28)'], [0.7, 'rgba(232,244,250,0.08)'], [1, 'rgba(232,244,250,0)']]);
 const ROOST_N = 1000;
 const roostPos = new Float32Array(ROOST_N * 3);
 const roostVel = [];
@@ -2756,7 +2742,8 @@ function scoreTrick(fx, fz) {
   const combo = nr + nf;
   if (combo > 1) pts = Math.round(pts * (1 + 0.4 * (combo - 1)));   // bonus multi-figure
   CH.score += pts;
-  CH.maxCombo = Math.max(CH.maxCombo, combo + 1);
+  // NB : on n'écrit PAS CH.maxCombo ici — c'est le compteur du défi "Combo x3
+  // aux portes" (progress = CH.maxCombo/target) ; une figure ne doit pas le remplir.
   showTrick(parts.join(' + '), '+' + pts.toLocaleString('fr-FR'));
 }
 const _sunProj = new THREE.Vector3(), _camDir = new THREE.Vector3();
@@ -2899,6 +2886,7 @@ function startRide() {
   if (realRiderGroup) realRiderGroup.visible = true;
   updateCockpitVisibility();
   setSeaLifeVisible(true);
+  setFleetVisible(true);
   document.getElementById('menu').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   touchPad.classList.remove('hidden');
@@ -2930,7 +2918,13 @@ function toGarage() {
   hidePickups();
   uwEl.style.opacity = '0';
   setSeaLifeVisible(false);
-  if (audio) { audio.eGain.gain.value = 0; audio.nGain.gain.value = 0; }
+  setFleetVisible(false);
+  // Coupe TOUTES les voix moteur (dont le sifflement de turbine, sa propre
+  // branche) : le frame() ne repasse pas dans le bloc audio en mode menu.
+  if (audio) { audio.eGain.gain.value = 0; audio.nGain.gain.value = 0; audio.wGain.gain.value = 0; }
+  // Popup de figure : forcer masquage (sinon reste affiché si on quitte < 1,8 s après un trick).
+  if (trickNameEl) { trickNameEl.style.opacity = '0'; trickNameEl.style.transform = 'translateX(-50%) scale(0.7)'; }
+  trickHud.until = 0;
 }
 function toggleCam() {
   // Cycle 3 vues : chase 6 m -> chase 2 m -> FPV -> chase 6 m
@@ -3145,14 +3139,19 @@ function frame() {
   const down = keys['s'] || keys['arrowdown'];
   const left = keys['a'] || keys['q'] || keys['arrowleft'];
   const right = keys['d'] || keys['arrowright'];
-  // Gâchette de gaz vers l'avant, gâchette de marche arrière (iBR façon Sea-Doo) au repos/frein
-  if (up) state.throttle += dt * 0.7;
-  else if (down) state.throttle -= dt * 0.9;
-  else state.throttle *= Math.exp(-dt * 1.5);
-  state.throttle = Math.max(-0.28, Math.min(1, state.throttle));
-  const steering = left ? -1 : right ? 1 : 0;
-  if (steering !== 0) state.rudder = Math.max(-1, Math.min(1, state.rudder + steering * dt * 4));
-  else state.rudder *= Math.exp(-dt * 6);
+  // En l'air, ces touches pilotent les FIGURES (roll/flip) — on gèle donc la barre
+  // et les gaz pour ne pas atterrir avec un rudder/throttle bloqué à fond (sinon
+  // maintenir gauche pour un barrel roll clouait la barre à -1 -> virage sec à la réception).
+  if (!state.air) {
+    // Gâchette de gaz vers l'avant, gâchette de marche arrière (iBR façon Sea-Doo) au repos/frein
+    if (up) state.throttle += dt * 0.7;
+    else if (down) state.throttle -= dt * 0.9;
+    else state.throttle *= Math.exp(-dt * 1.5);
+    state.throttle = Math.max(-0.28, Math.min(1, state.throttle));
+    const steering = left ? -1 : right ? 1 : 0;
+    if (steering !== 0) state.rudder = Math.max(-1, Math.min(1, state.rudder + steering * dt * 4));
+    else state.rudder *= Math.exp(-dt * 6);
+  }
 
   /* ---- MODÈLE PHYSIQUE PWC À FORCES (vecteur vitesse 2D + turbine + inertie) ----
      On décompose la vitesse monde dans le repère de la coque (avant / latéral),
