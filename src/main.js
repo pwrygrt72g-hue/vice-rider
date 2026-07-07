@@ -7,14 +7,14 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=51';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=51';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=51';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=51';
+import { TWO_PI, smooth01, hex } from './util.js?v=52';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=52';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=52';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=52';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v51 · plage South Beach';
+const BUILD = 'v52 · plage XL + cycle jour-nuit';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -774,16 +774,19 @@ for (let i = 0; i < 7; i++) {
    l'horizon face au joueur. Donne le mood Miami depuis l'eau. */
 (function buildBeachfront() {
   const zC = 55, zLen = 1120;
-  const sand = new THREE.Mesh(new THREE.BoxGeometry(98, 2.4, zLen), sandMat);
-  sand.position.set(902, 0.2, zC); sand.receiveShadow = true; skyline.add(sand);
-  const wet = new THREE.Mesh(new THREE.BoxGeometry(28, 2.0, zLen), wetSandMat);
-  wet.position.set(860, 0.1, zC); skyline.add(wet);
-  const foam = new THREE.Mesh(new THREE.PlaneGeometry(12, zLen).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false }));
-  foam.position.set(848, 1.3, zC); skyline.add(foam);
-  const prom = new THREE.Mesh(new THREE.BoxGeometry(11, 2.4, zLen),
-    new THREE.MeshStandardMaterial({ color: 0xd0c7b6, roughness: 0.92 }));
-  prom.position.set(937, 0.3, zC); skyline.add(prom);
+  // Sable clair et LARGE, surélevé pour bien dépasser des vagues même au large.
+  const beachSand = new THREE.MeshStandardMaterial({ color: 0xe9d7ab, roughness: 0.96 });
+  const beachWet = new THREE.MeshStandardMaterial({ color: 0xc3a878, roughness: 0.72 });
+  const sand = new THREE.Mesh(new THREE.BoxGeometry(150, 4.6, zLen), beachSand);
+  sand.position.set(892, 1.2, zC); sand.receiveShadow = true; skyline.add(sand);
+  const wet = new THREE.Mesh(new THREE.BoxGeometry(46, 3.6, zLen), beachWet);
+  wet.position.set(816, 0.7, zC); skyline.add(wet);
+  const foam = new THREE.Mesh(new THREE.PlaneGeometry(16, zLen).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }));
+  foam.position.set(795, 2.1, zC); skyline.add(foam);
+  const prom = new THREE.Mesh(new THREE.BoxGeometry(14, 4.0, zLen),
+    new THREE.MeshStandardMaterial({ color: 0xd6cdbb, roughness: 0.92 }));
+  prom.position.set(930, 1.1, zC); skyline.add(prom);
 
   // Strip Art-Déco pastel (bâtiments BAS, devant les tours) — palette South Beach.
   const pastel = [[0xf7b3c6, 0xffffff], [0x9fe4d6, 0xfff2c4], [0xffd39a, 0xff9ec2],
@@ -809,16 +812,16 @@ for (let i = 0; i < 7; i++) {
       const dayC = new THREE.Color(c2).multiplyScalar(0.5); trimMat.color.copy(dayC);
       neonTrims.push({ mat: trimMat, day: dayC, night: new THREE.Color(c2) });
     }
-    g.position.set(926 + Math.random() * 8, 1.0, -480 + i * (zLen / 15) + Math.random() * 18);
+    g.position.set(918 + Math.random() * 8, 2.9, -480 + i * (zLen / 15) + Math.random() * 18);
     skyline.add(g);
   }
 
   // Palmiers le long de la promenade + parasols sur le sable (groupe surélevé au niveau du sable).
-  const props = new THREE.Group(); props.position.y = 1.2; skyline.add(props);
-  for (let i = 0; i < 26; i++) {
-    const pz = -480 + i * (zLen / 26) + (Math.random() - 0.5) * 10;
-    makePalm(props, 895 + Math.random() * 6, pz, 6 + Math.random() * 3);
-    if (i % 2 === 0) makeParasol(props, 879 + Math.random() * 8, pz + 9);
+  const props = new THREE.Group(); props.position.y = 3.3; skyline.add(props);
+  for (let i = 0; i < 30; i++) {
+    const pz = -480 + i * (zLen / 30) + (Math.random() - 0.5) * 10;
+    makePalm(props, 900 + Math.random() * 6, pz, 6.5 + Math.random() * 3.5);
+    if (i % 2 === 0) makeParasol(props, 858 + Math.random() * 12, pz + 9);
   }
 })();
 
@@ -3503,7 +3506,7 @@ bindBtn('t-fast', 'w'); bindBtn('t-slow', 's'); bindBtn('t-left', 'a'); bindBtn(
 const touchPad = document.getElementById('touch');
 document.getElementById('btn-cam').addEventListener('click', () => { if (mode === 'ride') toggleCam(); });
 const btnNight = document.getElementById('btn-night');
-if (btnNight) btnNight.addEventListener('click', () => setNight(!isNight));
+if (btnNight) btnNight.addEventListener('click', () => cycleTOD());
 document.getElementById('btn-garage').addEventListener('click', requestGarage);
 {
   // Révéler les coffres sur la minimap contre une pub (hook exploration).
@@ -3676,33 +3679,70 @@ const NIGHT_FOG = new THREE.Color(0x131a30);
 let isNight = false;
 const dayState = { exposure: 0.95, sunI: sun.intensity, hemiI: hemi.intensity,
   sunC: sun.color.clone(), hemiC: hemi.color.clone(), hemiG: hemi.groundColor.clone() };
+/* ---- CYCLE JOUR→COUCHER→NUIT continu (n : 0 = plein jour, 1 = nuit) ---- */
+const NIGHT_SUN = new THREE.Color(0x9db4ff), NIGHT_HEMI = new THREE.Color(0x3a4a80), NIGHT_GROUND = new THREE.Color(0x0a1226);
+const SUNSET_SUN = new THREE.Color(0xff8a45), SUNSET_FOG = new THREE.Color(0xff9a6a);
+const _todSun = new THREE.Color(), _todHemi = new THREE.Color(), _todGround = new THREE.Color(), _todFog = new THREE.Color(), _todTrim = new THREE.Color();
+const _ocFog = new THREE.Color();   // couleur de brouillard océan dédiée (ne mute pas FOG_COLOR partagé)
+const lerpN = (a, b, t) => a + (b - a) * t;
+let todMode = 'auto', todPhase = 0.12, todCur = 0, todApplied = -1, todInit = false;
+const TOD_PERIOD = 210;   // durée d'un cycle complet jour+nuit (s)
 function applyNightBloom() {
   if (!bloomPass) return;
-  bloomPass.strength = isNight ? 0.5 : 0.22;
-  bloomPass.threshold = isNight ? 0.58 : 0.9;
-  bloomPass.radius = isNight ? 0.7 : 0.5;
+  bloomPass.strength = lerpN(0.22, 0.5, todCur); bloomPass.threshold = lerpN(0.9, 0.58, todCur); bloomPass.radius = lerpN(0.5, 0.7, todCur);
 }
-function setNight(on) {
-  // Capture l'état "jour" vivant au moment de basculer (le HDRI a pu mettre à
-  // jour la couleur du soleil/brouillard après le chargement).
-  if (on && !isNight) { dayState.sunC.copy(sun.color); dayState.hemiC.copy(hemi.color); dayState.hemiG.copy(hemi.groundColor); }
-  isNight = on;
-  uNight.value = on ? 1 : 0;
-  renderer.toneMappingExposure = on ? 0.5 : dayState.exposure;
-  sun.intensity = on ? 0.45 : dayState.sunI;
-  hemi.intensity = on ? 0.5 : dayState.hemiI;
-  if (on) { sun.color.set(0x9db4ff); hemi.color.set(0x3a4a80); hemi.groundColor.set(0x0a1226); }
-  else { sun.color.copy(dayState.sunC); hemi.color.copy(dayState.hemiC); hemi.groundColor.copy(dayState.hemiG); }
-  scene.fog.color.copy(on ? NIGHT_FOG : FOG_COLOR);
-  oceanUniforms.uFogColor.value = on ? NIGHT_FOG : FOG_COLOR;
-  const btn = document.getElementById('btn-night');
-  if (btn) btn.textContent = on ? '☀️' : '🌙';
-  // Skyline : fenêtres, néons de couronne et reflets sur l'eau s'allument la nuit.
-  for (const m of towerWindowMats) m.emissiveIntensity = on ? WIN_NIGHT : WIN_DAY;
-  for (const t of neonTrims) t.mat.color.copy(on ? t.night : t.day);
-  for (const r of towerReflections) r.material.opacity = on ? REFL_NIGHT : REFL_DAY;
+function applyTOD(n) {
+  isNight = n > 0.5; uNight.value = n;
+  const sunset = Math.max(0, 1 - Math.abs(n - 0.5) * 2.6);   // pic de coucher/lever
+  const winN = smooth01((n - 0.32) / 0.5);                    // lumières qui s'allument au crépuscule
+  const reflN = smooth01((n - 0.28) / 0.55);
+  renderer.toneMappingExposure = lerpN(dayState.exposure, 0.5, n);
+  sun.intensity = lerpN(dayState.sunI, 0.45, n);
+  hemi.intensity = lerpN(dayState.hemiI, 0.5, n);
+  _todSun.copy(dayState.sunC).lerp(NIGHT_SUN, n).lerp(SUNSET_SUN, sunset * 0.6); sun.color.copy(_todSun);
+  _todHemi.copy(dayState.hemiC).lerp(NIGHT_HEMI, n); hemi.color.copy(_todHemi);
+  _todGround.copy(dayState.hemiG).lerp(NIGHT_GROUND, n); hemi.groundColor.copy(_todGround);
+  _todFog.copy(FOG_COLOR).lerp(NIGHT_FOG, n).lerp(SUNSET_FOG, sunset * 0.5);
+  scene.fog.color.copy(_todFog); _ocFog.copy(_todFog); oceanUniforms.uFogColor.value = _ocFog;
+  for (const m of towerWindowMats) m.emissiveIntensity = lerpN(WIN_DAY, WIN_NIGHT, winN);
+  for (const t of neonTrims) t.mat.color.copy(_todTrim.copy(t.day).lerp(t.night, winN));
+  for (const r of towerReflections) r.material.opacity = lerpN(REFL_DAY, REFL_NIGHT, reflN);
   applyNightBloom();
 }
+function todTarget() {
+  if (todMode === 'day') return 0;
+  if (todMode === 'night') return 1;
+  const p = todPhase;                       // auto : jour -> coucher -> nuit -> lever
+  if (p < 0.40) return 0;
+  if (p < 0.50) return smooth01((p - 0.40) / 0.10);
+  if (p < 0.90) return 1;
+  return 1 - smooth01((p - 0.90) / 0.10);
+}
+function updateTOD(dt) {
+  if (todMode === 'auto') todPhase = (todPhase + dt / TOD_PERIOD) % 1;
+  // Capture l'état "jour" réel une fois le HDRI chargé (évite un jour délavé au boot).
+  if (!todInit) {
+    if (simTime < 2) return;
+    dayState.exposure = renderer.toneMappingExposure; dayState.sunI = sun.intensity; dayState.hemiI = hemi.intensity;
+    dayState.sunC.copy(sun.color); dayState.hemiC.copy(hemi.color); dayState.hemiG.copy(hemi.groundColor); todInit = true;
+  }
+  const tgt = todTarget();
+  todCur += (tgt - todCur) * (1 - Math.exp(-dt * 1.5));
+  if (Math.abs(todCur - tgt) < 0.002) todCur = tgt;
+  if (Math.abs(todCur - todApplied) > 0.0015) { applyTOD(todCur); todApplied = todCur; }
+}
+// Compat (touche N + tests) : bascule en mode manuel jour/nuit.
+function setNight(on) { todMode = on ? 'night' : 'day'; updateBtnNight(); }
+// Bouton HUD : cycle auto -> jour -> nuit -> auto.
+function cycleTOD() { todMode = todMode === 'auto' ? 'day' : todMode === 'day' ? 'night' : 'auto'; updateBtnNight(); }
+function updateBtnNight() {
+  const btn = document.getElementById('btn-night');
+  if (!btn) return;
+  btn.textContent = todMode === 'auto' ? '🌗' : todMode === 'day' ? '☀️' : '🌙';
+  btn.title = todMode === 'auto' ? 'Cycle auto jour/nuit' : todMode === 'day' ? 'Jour (forcé) — clic : nuit' : 'Nuit (forcée) — clic : auto';
+}
+updateBtnNight();
+window.__tod = { setMode: m => { todMode = m; updateBtnNight(); }, setPhase: p => { todPhase = p; }, get n() { return todCur; }, get mode() { return todMode; } };
 setupComposer();
 
 function resize(force) {
@@ -3773,6 +3813,7 @@ function frame() {
   resize(false);
   oceanUniforms.uTime.value = t;
   musicTick();   // séquenceur synthwave (joue au menu comme en jeu)
+  updateTOD(dt); // cycle jour/nuit automatique (tourne aussi au menu)
 
   // FPS
   frames++;
