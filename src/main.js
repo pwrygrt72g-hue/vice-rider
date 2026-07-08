@@ -7,15 +7,15 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=65';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=65';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=65';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=65';
-import { TUNING } from './tuning.js?v=65';
+import { TWO_PI, smooth01, hex } from './util.js?v=66';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=66';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=66';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=66';
+import { TUNING } from './tuning.js?v=66';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v65 · durcissement (collision îlot + garde-fous)';
+const BUILD = 'v66 · favicon + console 100% propre';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
