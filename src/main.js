@@ -7,15 +7,15 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=62';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=62';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=62';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=62';
-import { TUNING } from './tuning.js?v=62';
+import { TWO_PI, smooth01, hex } from './util.js?v=63';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=63';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=63';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=63';
+import { TUNING } from './tuning.js?v=63';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v62 · reflets skyline vivants (shimmer)';
+const BUILD = 'v63 · le jet est DANS l\'eau (flottaison recalée)';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -1278,7 +1278,7 @@ function updateAiFleet(dt, t) {
     const fx = -Math.sin(ai.yaw), fz = -Math.cos(ai.yaw);
     ai.x += fx * ai.spd * dt; ai.z += fz * ai.spd * dt;
     const y = waveHeight(ai.x, ai.z, t);
-    ai.g.position.set(ai.x, y, ai.z);
+    ai.g.position.set(ai.x, y - 0.10, ai.z);   // coque immergée (pas posée sur la surface)
     ai.g.rotation.y = ai.yaw;
     ai.g.rotation.z = -Math.sign(dy) * Math.min(Math.abs(dy), 1) * 0.38;
     ai.g.rotation.x = 0.05 + Math.sin(t * 3.1 + ai.bob) * 0.035;
@@ -1439,7 +1439,7 @@ function updatePolice(dt, t) {
   const fxp = -Math.sin(policeState.yaw), fzp = -Math.cos(policeState.yaw);
   policeState.x += fxp * policeState.spd * dt; policeState.z += fzp * policeState.spd * dt;
   const py = waveHeight(policeState.x, policeState.z, t);
-  police.position.set(policeState.x, py, policeState.z);
+  police.position.set(policeState.x, py - 0.10, policeState.z);   // coque immergée
   police.rotation.y = policeState.yaw;
   police.rotation.z = -Math.sign(dy) * Math.min(Math.abs(dy), 1) * 0.35;
   police.rotation.x = 0.05 + Math.sin(t * 3 + 1) * 0.03;
@@ -2623,11 +2623,16 @@ function buildSki() {
   // proue (jaillissement latéral à vitesse). Le vrai sillage vient du pool
   // wakePuffs en espace-monde (traînée d'écume qui reste derrière), pas d'un
   // plan collé sous la coque.
+  // Gerbes de CHINE : 2 nappes VERTICALES aux hanches qui jaillissent de la ligne
+  // de flottaison en éventail vers l'arrière (spray de coque planante), au lieu de
+  // 2 plans à plat posés au-dessus de l'eau à la proue.
   const sprayMatBase = { color: 0xf0e2e2, map: foamTex, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide };
-  for (const sx of [-0.7, 0.7]) {
-    const sp = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 1.6).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial(sprayMatBase));
-    sp.position.set(sx, 0.1, -0.9);
-    sp.rotation.z = sx > 0 ? -0.3 : 0.3;
+  for (const sx of [-1, 1]) {
+    const sp = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 1.5), new THREE.MeshBasicMaterial(sprayMatBase));
+    sp.position.set(0.6 * sx, 0.05, 0.3);   // à la hanche, près de la flottaison
+    sp.rotation.y = sx * 0.35;               // ouverture en V vers l'arrière
+    sp.rotation.z = -sx * 0.5;               // éventail qui monte vers l'extérieur
+    sp.userData.side = sx;
     ski.add(sp);
     sprays.push(sp);
   }
@@ -3329,12 +3334,12 @@ const CAM_BASE = new THREE.Vector3(0, 1.36, 0.8);
 // yawRate = vitesse de lacet (inertie de rotation : la barre applique un couple).
 const state = { x: 0, z: 0, yaw: 0, speed: 0, vx: 0, vz: 0, throttle: 0, rudder: 0, rpm: 0, yawRate: 0, pitch: 0, roll: 0, y: 0, vy: 0, air: false, airTime: 0, bestAir: 0, showAirUntil: 0 };
 let PHYS = { max: 30, thrust: 8, dragLin: 0.1, dragQuad: 0.008, dragLatQ: 0.06, gripLo: 3.4, gripHi: 1.1, planeLo: 8, planeHi: 18, steerBase: 0.12, steerThrust: 1.0, turn: 2.0 };
-// Hauteur d'assiette au repos (origine du ski au-dessus de la surface). ↑ = le
-// jet monte / a l'air de flotter ; ↓ = il s'enfonce. Réglable à chaud : window.__vice.setDraft(v).
-// Calé pour que le bas de coque (-0.79 local) s'asseye AU FOND de la cuvette
-// que le shader creuse sous le jet (-0.5 au repos) : bas à hw-0.45, juste au
-// ras du fond de cuvette, bourrelet +0.3 qui remonte sur les flancs.
-let DRAFT_REST = TUNING.hull.draftRest;   // réglable à chaud via window.__vice.setDraft(v)
+// Hauteur d'assiette au repos (origine du ski vs surface). ↑ = flotte plus haut ;
+// ↓ = s'enfonce. NÉGATIF depuis v63 : le ski procédural a son bas de carène à
+// -0.06 local, donc l'origine doit passer SOUS la surface pour immerger la coque
+// (~0.16 m, ligne de flottaison au tiers de la carène). Voir TUNING.hull.
+// Réglable à chaud : window.__vice.setDraft(v).
+let DRAFT_REST = TUNING.hull.draftRest;
 function computePhys() {
   const cfg = MODELS.find(m => m.id === sel.ski);
   const vmax = cfg.top / 3.6;                         // vitesse de pointe (m/s)
@@ -3517,7 +3522,8 @@ window.__debug = { scene, camera, THREE, ski, realHullMesh: () => realHullMesh, 
 window.__debug.wh = (x, z) => waveHeight(x || 0, z || 0, simTime);
 window.__debug.rideGeom = () => {
   // Bas de coque exprimé dans le repère LOCAL du ski (indépendant de ski.position.y).
-  const b = new THREE.Box3().setFromObject(realHullMesh);
+  // Mesure le glb s'il existe, sinon le ski PROCÉDURAL (le cas de tous les joueurs).
+  const b = new THREE.Box3().setFromObject(realHullMesh || ski);
   const skiY = ski.position.y;
   const hullBottomLocal = b.min.y - skiY;   // relatif à l'origine du ski
   const hullTopLocal = b.max.y - skiY;
@@ -3921,7 +3927,7 @@ function frame() {
     // Garage : plateau tournant. Modèle réel s'il est fourni (enfant de ski), sinon procédural.
     const hw = waveHeight(0, 0, t);
     ski.visible = true;
-    ski.position.set(0, hw * 0.4, 0);
+    ski.position.set(0, hw + DRAFT_REST, 0);   // même flottaison qu'en jeu (assis dans l'eau)
     if (contactRing) {
       contactRing.visible = true;
       contactRing.position.y = hw - ski.position.y + 0.05;
@@ -3940,9 +3946,9 @@ function frame() {
     }
     ocean.position.set(0, 0, 0);
     sky.position.set(0, 0, 0);
-    // La cuvette + bourrelet doivent rester SOUS le jet exposé au garage
-    // (sinon, au retour d'une session, ils restent au large -> jet posé sur
-    // une eau rigide, exactement le look "au-dessus de l'eau").
+    // Le halo de contact per-pixel (fragment shader) doit rester SOUS le jet
+    // exposé au garage (sinon, au retour d'une session, il reste au large ->
+    // jet posé sur une eau inerte).
     oceanUniforms.uHullPos.value.set(0, ski.position.y, 0);
     oceanUniforms.uHullFwd.value.set(0, 0, -1);
     oceanUniforms.uHullSpeed.value = 0;
@@ -4055,11 +4061,17 @@ function frame() {
     const cdx = (prevX + dxs * tC) - cx, cdz = (prevZ + dzs * tC) - cz;
     const cd = Math.hypot(cdx, cdz);
     if (cd >= minD) return false;                          // le trajet ne frôle pas l'obstacle
+    // Point d'ARRIVÉE : s'il est déjà hors du cercle (frôlement sans tunneling réel),
+    // on ne TÉLÉPORTE pas le jet en arrière — on ne fait qu'amortir la vitesse
+    // rentrante (glisse propre). On ne recale la position que sur une vraie
+    // pénétration (arrivée à l'intérieur) ou un tunneling (segment traversant).
+    const dEnd = Math.hypot(state.x - cx, state.z - cz);
+    const nEx = dEnd > 0.01 ? (state.x - cx) / dEnd : 1, nEz = dEnd > 0.01 ? (state.z - cz) / dEnd : 0;
     // Normale au contact ; si le trajet passe pile par le centre, on repousse à contre-sens.
     let nX, nZ;
     if (cd > 0.01) { nX = cdx / cd; nZ = cdz / cd; }
     else { const l = Math.sqrt(segLen2) || 1; nX = -dxs / l; nZ = -dzs / l; }
-    state.x = cx + nX * minD; state.z = cz + nZ * minD;     // repousse au bord (côté entrée)
+    if (dEnd < minD) { state.x = cx + nEx * minD; state.z = cz + nEz * minD; } // repousse SEULEMENT si dedans
     const vn = state.vx * nX + state.vz * nZ;               // vitesse le long de la normale
     if (vn < 0) {                                            // seulement si on rentre dedans
       state.vx -= vn * (1 + rest) * nX; state.vz -= vn * (1 + rest) * nZ;  // annule+rebond normal
@@ -4132,7 +4144,10 @@ function frame() {
   // Au planage la coque PONTE davantage (skim sur les crêtes) ; au repos elle
   // s'assoit dans le creux (moyenne de l'empreinte).
   const support = hAvg + (hMax - hAvg) * (TUNING.hull.supportRest + TUNING.hull.supportPlane * planing);
-  const draft = DRAFT_REST + planing * TUNING.hull.draftPlane;
+  // Hole-shot squat : plein gaz avant le déjaugeage, la poupe s'enfonce (la pompe
+  // tire la coque dans l'eau) puis la coque se libère en montant au planage.
+  const squat = Math.max(0, state.throttle) * (1 - planing) * TUNING.hull.holeShotSquat;
+  const draft = DRAFT_REST + planing * TUNING.hull.draftPlane - squat;
   const targetY = support + draft;
   // Agitation locale de la mer : calme près de la côte, formée au large.
   const rough = Math.min(1.5, seaFactor(state.x, state.z));
@@ -4168,27 +4183,35 @@ function frame() {
        d'une partie de la chute en glisse avant (la coque plane). Réception vautrée
        (nez haut, chute verticale, face de vague) : gros scrub + grosse secousse. */
     const L = TUNING.hull.land;
-    const vh = Math.hypot(state.vx, state.vz);                 // vitesse horizontale
-    const descent = Math.atan2(impact, Math.max(vh, 2));       // angle de chute (>0)
-    const noseRel = state.pitch + descent;                     // 0 = nez pile dans la pente de chute
-    const slopeAhead = waveHeight(state.x + fx * 2, state.z + fz * 2, t) - hw; // >0 : mur d'eau devant
-    const align = Math.max(0, 1 - Math.abs(noseRel) / L.alignTol)
-                * (1 - Math.min(Math.max(slopeAhead, 0) * L.slopeScrub, 0.7));
-    const hardness = Math.min(impact / L.hardnessRef, 1);
-    const keep = 1 - (L.scrubBase + L.scrubMax * (1 - align)) * (0.4 + 0.6 * hardness);
-    state.vx *= keep; state.vz *= keep; state.speed *= keep;
-    // Reconversion du choc vertical en avancée sur une réception propre à vitesse.
-    if (align > 0.5 && vh > 6) {
-      const carry = Math.min(impact * L.carryGain * align, L.carryMax);
-      state.vx += fx * carry; state.vz += fz * carry; state.speed += carry;
+    // La redirection de momentum ne s'applique qu'aux VRAIS sauts (temps d'air réel).
+    // Les micro-rentrées du clapot au planage (state.airTime≈0, ~1/s en houle)
+    // gardent leur gerbe mais ne scrubbent/carrient/vibrent plus -> plus d'à-coups.
+    if (state.airTime > L.realJumpAir) {
+      const vh = Math.hypot(state.vx, state.vz);               // vitesse horizontale
+      const descent = Math.atan2(impact, Math.max(vh, 2));     // angle de chute (>0)
+      const noseRel = state.pitch + descent;                   // 0 = nez pile dans la pente de chute
+      const slopeAhead = waveHeight(state.x + fx * 2, state.z + fz * 2, t) - hw; // >0 : mur d'eau devant
+      const align = Math.max(0, 1 - Math.abs(noseRel) / L.alignTol)
+                  * (1 - Math.min(Math.max(slopeAhead, 0) * L.slopeScrub, 0.7));
+      const hardness = Math.min(impact / L.hardnessRef, 1);
+      const keep = 1 - (L.scrubBase + L.scrubMax * (1 - align)) * (0.4 + 0.6 * hardness);
+      state.vx *= keep; state.vz *= keep; state.speed *= keep;
+      // Reconversion du choc vertical en avancée sur une réception propre à vitesse.
+      if (align > 0.5 && vh > 6) {
+        const carry = Math.min(impact * L.carryGain * align, L.carryMax);
+        state.vx += fx * carry; state.vz += fz * carry; state.speed += carry;
+      }
+      // Retour caméra/objectif proportionnel au RATÉ : lisse si clean, violent si vautré.
+      const badness = 0.4 + 0.6 * (1 - align);
+      camImpact = Math.min(impact * 0.06 * badness, 0.5);
+      camJolt = Math.max(camJolt, Math.min(impact * 0.5 * badness, 2.4));
+      camLand = Math.max(camLand, Math.min(impact * 0.03, TUNING.cam.landKick)); // "thunk" de suspension
+      rumble(Math.min(impact * 0.08, 0.9), 130);   // vibration manette ∝ dureté de réception
+    } else {
+      // Micro-rebond de clapot : juste une petite secousse, aucun scrub/carry.
+      camImpact = Math.max(camImpact, Math.min(impact * 0.03, 0.16));
+      camJolt = Math.max(camJolt, Math.min(impact * 0.18, 0.6));
     }
-    // Retour caméra/objectif proportionnel au RATÉ : lisse si clean, violent si vautré.
-    const badness = 0.4 + 0.6 * (1 - align);
-    camImpact = Math.min(impact * 0.06 * badness, 0.5);
-    camJolt = Math.min(impact * 0.5 * badness, 2.4);
-    // "Thunk" de suspension DISTINCT : compression verticale brève, ∝ dureté du choc.
-    camLand = Math.max(camLand, Math.min(impact * 0.03, TUNING.cam.landKick));
-    rumble(Math.min(impact * 0.08, 0.9), 130);   // vibration manette ∝ dureté de réception
   }
   lastPlunge = plunge;
   // État "en l'air" (pilotage/effets) : marge pour ignorer les micro-arcs du clapot —
@@ -4229,14 +4252,23 @@ function frame() {
   const hStern = waveHeight(state.x - fx * 1.7, state.z - fz * 1.7, t);
   const hRight = waveHeight(state.x + rx * 0.65, state.z + rz * 0.65, t);
   const hLeft = waveHeight(state.x - rx * 0.65, state.z - rz * 0.65, t);
-  if (!state.air && state.speed > 10 && t > slamCd && (hBow - state.y) > 0.6) {
-    slamCd = t + 0.5;
+  // PERCE-VAGUE : la proue plante dans une face plus haute qu'elle -> gerbe
+  // d'étrave + l'eau ARROSE LE PONT (vélocité opposée à la marche : elle file
+  // vers le pilote) + piqué du nez. Seuil 0.75 : avec le draft v63 (origine
+  // ~0.45 plus basse), équivaut à une face ~0.4 m au-dessus du pont — fréquent
+  // dans la houle à vitesse, comme sur un vrai PWC. slamCd espace les rafales.
+  if (!state.air && state.speed > 10 && t > slamCd && (hBow - state.y) > 0.75) {
+    slamCd = t + 0.6;
     spawnSplash(state.x + fx * 2, hBow, state.z + fz * 2, 1.2);
     burstDrops(state.x + fx * 2.2, hBow + 0.2, state.z + fz * 2.2, 16 + Math.floor(speedF * 14), 0.5 + speedF * 0.6, fx * state.speed, fz * state.speed);
-    lensDrops(2 + Math.floor(speedF * 4));
+    // Arrosage du pont : l'eau embarquée par la proue balaie vers l'ARRIÈRE.
+    burstDrops(state.x + fx * 1.0, state.y + 0.5, state.z + fz * 1.0,
+      14 + Math.floor(speedF * 10), 0.9, -fx * spd * 0.45, -fz * spd * 0.45);
+    lensDrops(3 + Math.floor(speedF * 5));
     camImpact = Math.max(camImpact, 0.12 + speedF * 0.1);
     camJolt = Math.max(camJolt, 0.5 + speedF * 0.7);
     state.vy -= 0.5 * speedF;                          // la coque encaisse le choc de proue
+    state.pitch -= 0.06;                               // le nez PIQUE dans la vague (transitoire)
     audioSplash(0.4 + speedF * 0.4);
     state.vx *= 0.985; state.vz *= 0.985; state.speed *= 0.985;
   }
@@ -4266,7 +4298,11 @@ function frame() {
     // en montant la face (hBow > hStern), proue BASSE en redescendant l'arrière de la
     // vague. + cabrage au hole-shot (le nez se lève quand on remet les gaz) et plongée
     // quand on lâche à vitesse. Le terme (fThr - speedF) fait les deux d'un coup.
-    targetPitch = Math.atan2(hBow - hStern, 3.5) * 1.25 + (fThr - speedF) * 0.20 + 0.02;
+    // v63 : trim statique 0.02->0.045 (un PWC porte ~2.6° nez haut au repos, poupe
+    // chargée par la pompe), + assiette de PLANAGE permanente (l'avant sort de
+    // l'eau à vitesse), + gain de vague 1.25->1.4 (cabrage lisible dans les faces).
+    targetPitch = Math.atan2(hBow - hStern, 3.5) * 1.4 + (fThr - speedF) * 0.20
+                + planing * TUNING.hull.planeTrim + 0.045;
     // Un jetski se couche DANS le virage (le carre intérieur mord) : roulis dans
     // le sens de la barre, d'autant plus marqué qu'on va vite et qu'on est au gaz.
     // + gîte qui suit la pente latérale de la vague (bord haut = tribord relevé).
@@ -4396,9 +4432,12 @@ function frame() {
     camG.yaw += (-state.rudder * 0.05 - camG.yaw) * smoothG; // le regard anticipe le virage
     // 3) En l'air : le regard suit la trajectoire (nez qui monte/descend).
     const airPitch = state.air ? Math.max(-0.28, Math.min(0.22, -Math.atan2(state.vy, Math.max(Math.abs(state.speed), 6)) * 0.45)) : 0;
+    // Dépression totale PLAFONNÉE : sur une grosse réception, l'œil ne plonge plus
+    // sous le guidon/dans le capot (cumul impact+jolt+land borné).
+    const dip = Math.min(camImpact + camJolt * 0.12 + camLand, TUNING.cam.dipMax);
     camera.position.set(
       CAM_BASE.x + bobX + camG.x,
-      CAM_BASE.y + bobY - camImpact - camJolt * 0.12 - camLand,
+      CAM_BASE.y + bobY - dip,
       CAM_BASE.z + camG.z
     );
     camera.rotation.set(
@@ -4412,22 +4451,29 @@ function frame() {
     const near = camMode === 'chaseNear';
     const dist = near ? 2.4 : 5.9;
     const rud = near ? 0.6 : 1.15;
-    chaseTarget.set(state.x - fx * dist - rx * state.rudder * rud, state.y + (near ? 1.5 : 2.2) - camLand, state.z - fz * dist - rz * state.rudder * rud);
+    // Anti-plongée AVANT le lerp : on relève la CIBLE au-dessus de la surface, et le
+    // lissage (4.5-6.5/s) absorbe la remontée -> plus de clamp dur qui fait sauter la
+    // caméra crête après crête au large.
+    let cy = state.y + (near ? 1.5 : 2.2) - camLand;
+    const camWave = waveHeight(state.x - fx * dist, state.z - fz * dist, t) + TUNING.cam.chaseClearWater;
+    if (cy < camWave) cy = camWave;
+    chaseTarget.set(state.x - fx * dist - rx * state.rudder * rud, cy, state.z - fz * dist - rz * state.rudder * rud);
     camera.position.lerp(chaseTarget, 1 - Math.exp(-dt * (near ? 6.5 : 4.5)));
-    // Anti-plongée : la caméra ne passe jamais sous la surface (creux de houle au large).
-    const camWave = waveHeight(camera.position.x, camera.position.z, t) + TUNING.cam.chaseClearWater;
-    if (camera.position.y < camWave) camera.position.y = camWave;
     camera.lookAt(state.x + fx * (near ? 1.1 : 3.6), state.y + (near ? 1.15 : 1.2), state.z + fz * (near ? 1.1 : 3.6));
   }
   // Punch de FOV à l'ACCÉLÉRATION (hole-shot ressenti) : l'accél franche élargit
   // brièvement le champ (montée rapide, relâche lente), en plus du FOV lié à la vitesse.
-  const fovAccel = (state.speed - fovPrevSpeed) / Math.max(dt, 0.001);
-  fovPrevSpeed = state.speed;
+  // Accél = DÉRIVÉE d'une vitesse lissée (EMA), bornée au domaine physique de la
+  // poussée : un pic d'une frame ne déplace l'EMA que d'un chouïa, sa dérivée reste
+  // petite -> le FOV ne POMPE plus sur les impulsions (carry d'atterrissage, scrub).
+  const _emaPrev = fovPrevSpeed;
+  fovPrevSpeed += (state.speed - fovPrevSpeed) * (1 - Math.exp(-dt * TUNING.cam.fovAccelSmooth));
+  const fovAccel = Math.max(-TUNING.cam.fovAccelMax, Math.min(TUNING.cam.fovAccelMax, (fovPrevSpeed - _emaPrev) / Math.max(dt, 0.001)));
   const kickTgt = Math.max(0, Math.min(TUNING.cam.fovKickMax, fovAccel * TUNING.cam.fovKickGain));
   fovKick += (kickTgt - fovKick) * (1 - Math.exp(-dt * (kickTgt > fovKick ? TUNING.cam.fovKickRise : TUNING.cam.fovKickFall)));
   const targetFov = TUNING.cam.fovBase + TUNING.cam.fovSpeedGain * speedF + fovKick;
   if (Math.abs(camera.fov - targetFov) > 0.1) {
-    camera.fov += (targetFov - camera.fov) * sFast;
+    camera.fov += (targetFov - camera.fov) * (1 - Math.exp(-dt * TUNING.cam.fovFollow));
     camera.updateProjectionMatrix();
   }
 
@@ -4444,9 +4490,14 @@ function frame() {
   // posé sur une surface figée).
   const moving = Math.min(1, speedF * 4);
   for (const sp of sprays) {
-    // Petite gerbe LATÉRALE de proue (courte) — surtout pas un long trait devant.
-    sp.material.opacity = state.air ? 0 : Math.min(0.55, (0.35 * speedF + 0.6 * planing) * moving) * (0.55 + 0.45 * Math.sin(t * 14 + sp.position.x * 9));
-    sp.scale.set(1.0 + planing * 0.35, 0.8 + speedF * 0.4 + planing * 0.3, 1);
+    // Nappe de chine : base pincée à la flottaison, jaillit plus fort à vitesse,
+    // au planage et surtout en CARVING (la carre intérieure creuse, l'extérieure gicle).
+    sp.position.y = hw - state.y + 0.12;
+    const side = sp.userData.side || 1;
+    const carv = vLat * side > 0 ? Math.min(Math.abs(vLat) * 0.10, 0.45) : 0;   // gicle côté extérieur
+    sp.material.opacity = state.air ? 0 : Math.min(0.7, (0.28 * speedF + 0.5 * planing + carv) * moving) * (0.6 + 0.4 * Math.sin(t * 16 + sp.position.x * 9));
+    const sc = 0.85 + speedF * 0.6 + planing * 0.5 + carv;
+    sp.scale.set(sc, sc, 1);
   }
   // Anneau d'écume : collé à la ligne de flottaison LOCALE -> il assoit la coque
   // dans l'eau même à l'arrêt (l'eau bouillonne toujours autour d'une coque).
@@ -4456,6 +4507,10 @@ function frame() {
     contactRing.material.opacity = (0.24 + 0.24 * Math.min(state.rpm + speedF, 1)) * (0.85 + 0.15 * Math.sin(t * 6.3));
     const cs = 0.8 + speedF * 0.35 + Math.sin(t * 4.1) * 0.04;
     contactRing.scale.set(cs, 1, cs);
+    // Contre-roulis/tangage : reste PLAQUÉ à plat sur l'eau au lieu de banquer avec
+    // la coque en virage (sinon il lit comme un décalque collé sous un jet incliné).
+    contactRing.rotation.x = -state.pitch;
+    contactRing.rotation.z = -state.roll;
     contactRing.rotation.y = Math.sin(t * 0.7) * 0.25;
   }
   for (const wk of wakes) {
@@ -4465,6 +4520,8 @@ function frame() {
   if (sternWash) {
     // Bout dès que la turbine tourne, collé à la flottaison comme l'anneau
     sternWash.position.y = hw - state.y + 0.07;
+    sternWash.rotation.x = -state.pitch;   // reste à plat sur l'eau (contre-tangage/roulis)
+    sternWash.rotation.z = -state.roll;
     sternWash.material.opacity = state.air ? 0 : Math.min(0.95, 0.4 * state.rpm + Math.min(Math.abs(state.speed) / 7, 1) * 0.6) * (0.82 + 0.18 * Math.sin(t * 11));
     const ws = 1 + Math.min(speedF, 1) * 0.8;
     sternWash.scale.set(ws, 1, 1 + speedF * 1.4);

@@ -4,14 +4,24 @@
    synchronisée avec le vertex shader de l'océan (mêmes vagues, même
    atténuation côtière — voir shaders dans main.js).
 
+   v63 : waveHeight inverse désormais le DÉPLACEMENT HORIZONTAL de Gerstner
+   (2 itérations de point fixe) au lieu de sommer des sinus verticaux : la
+   hauteur retournée est celle de la surface RENDUE au-dessus de (x,z). Avant,
+   au large (houle ~2 m d'amplitude), l'écart horizontal entre la vague
+   physique et la vague affichée atteignait ~2 m -> les objets (et le jet)
+   flottaient à côté de la crête visible.
+
    Zone côtière : grand plateau calme (marina protégée) ; il faut prendre le
    large pour la houle, et encore plus loin pour les très grosses vagues. */
-import { TWO_PI } from './util.js?v=62';
+import { TWO_PI } from './util.js?v=63';
 
-/** [dirX, dirZ, amplitude(raideur), longueur d'onde] — miroir GLSL uWaves[8]. */
+/** [dirX, dirZ, amplitude(raideur), longueur d'onde] — miroir GLSL uWaves[8].
+    v63 : houle dominante ADOUCIE et ALLONGÉE ([0] 0.22/62 -> 0.13/96,
+    [1] 0.18 -> 0.12) : pente réduite de moitié -> le jet SURFE les faces au
+    lieu d'être catapulté en balistique au-dessus des creux. */
 export const WAVES = [
-  [1.0, 0.12, 0.22, 62],
-  [0.85, -0.28, 0.18, 44],
+  [1.0, 0.12, 0.13, 96],
+  [0.85, -0.28, 0.12, 44],
   [0.65, 0.60, 0.15, 33],
   [0.45, -0.85, 0.12, 26],
   [-0.30, 1.0, 0.10, 20],
@@ -35,15 +45,44 @@ export function seaFactor(x, z) {
   return f;
 }
 
-/** Hauteur de la surface au point (x,z) à l'instant t — miroir exact du shader. */
-export function waveHeight(x, z, t) {
-  let y = 0;
-  for (let i = 0; i < WAVES.length; i++) {
-    const w = WAVES[i];
-    const k = TWO_PI / w[3];
-    const c = Math.sqrt(9.8 / k);
-    const len = Math.hypot(w[0], w[1]);
-    y += (w[2] / k) * Math.sin(k * ((w[0] / len) * x + (w[1] / len) * z - c * t));
+/* Constantes de vagues PRÉCALCULÉES (invariantes dans le temps) : évite de refaire
+   k / c / normalize / sqrt à CHAQUE appel de waveHeight (appelé des dizaines de
+   fois par frame). [k, c, ux, uz, amp] par vague. */
+const N_WAVES = WAVES.length;
+const WK = new Float64Array(N_WAVES), WC = new Float64Array(N_WAVES);
+const WUX = new Float64Array(N_WAVES), WUZ = new Float64Array(N_WAVES), WA = new Float64Array(N_WAVES);
+for (let i = 0; i < N_WAVES; i++) {
+  const w = WAVES[i];
+  const k = TWO_PI / w[3];
+  const len = Math.hypot(w[0], w[1]);
+  WK[i] = k; WC[i] = Math.sqrt(9.8 / k); WUX[i] = w[0] / len; WUZ[i] = w[1] / len; WA[i] = w[2] / k;
+}
+
+/** Déplacement Gerstner BRUT [dx, dy, dz] au point de grille (x,z) — miroir
+    exact de la fonction gerstner() du vertex shader (avant facteur côtier). */
+function waveDisp(x, z, t, out) {
+  let dx = 0, dy = 0, dz = 0;
+  for (let i = 0; i < N_WAVES; i++) {
+    const ux = WUX[i], uz = WUZ[i], a = WA[i];
+    const f = WK[i] * (ux * x + uz * z - WC[i] * t);
+    const cf = Math.cos(f), sf = Math.sin(f);
+    dx += ux * a * cf; dy += a * sf; dz += uz * a * cf;
   }
-  return y * seaFactor(x, z);
+  out[0] = dx; out[1] = dy; out[2] = dz;
+}
+
+const _wd = [0, 0, 0];
+/** Hauteur de la surface RENDUE au-dessus du point monde (x,z) à l'instant t.
+    Inverse le déplacement horizontal de Gerstner par point fixe : on cherche le
+    point de grille q tel que q + seaFactor(q)·dispXZ(q) = (x,z), puis on
+    retourne seaFactor(q)·dispY(q) — exactement ce que le shader affiche. */
+export function waveHeight(x, z, t) {
+  let qx = x, qz = z;
+  for (let i = 0; i < 2; i++) {
+    waveDisp(qx, qz, t, _wd);
+    const f = seaFactor(qx, qz);
+    qx = x - _wd[0] * f; qz = z - _wd[2] * f;
+  }
+  waveDisp(qx, qz, t, _wd);
+  return _wd[1] * seaFactor(qx, qz);
 }

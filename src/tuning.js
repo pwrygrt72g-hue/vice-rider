@@ -16,10 +16,18 @@ export const TUNING = {
      + sauts" de la boucle. */
   hull: {
     halfLen: 1.7,        // demi-longueur d'empreinte échantillonnée avant/arrière (m)
-    draftRest: 0.34,     // assiette au repos : origine du ski au-dessus de la surface (↑ = flotte plus haut)
-    draftPlane: 0.34,    // supplément d'assiette au planage (la coque déjauge et se soulève)
+    /* CALAGE v63 (mesuré sur le ski PROCÉDURAL, le seul affiché — le glb est désactivé) :
+       bas de carène à -0.06 local, tubulure de pompe à -0.36. draftRest NÉGATIF
+       = l'origine s'enfonce sous la surface -> carène immergée ~0.16 m (33 %),
+       pompe sous l'eau, la ligne de flottaison COUPE la coque comme sur un vrai
+       PWC au repos. (Ancienne valeur +0.34 : calée sur un bas de coque glb à
+       -0.79 et une cuvette shader supprimée -> le jet flottait 28 cm DANS L'AIR.) */
+    draftRest: -0.10,    // assiette au repos : origine vs surface (↑ = flotte plus haut)
+    draftPlane: 0.10,    // remontée au déjaugeage (validé au banc : clairance creux 0.70->0.15 m, airtime inchangé)
+    holeShotSquat: 0.10, // enfoncement de POUPE au hole-shot (gaz fort à basse vitesse) : le cul s'assoit
+    planeTrim: 0.055,    // assiette de planage : ~3° nez haut permanent à pleine vitesse (l'avant sort, la poupe porte)
     supportRest: 0.15,   // part de la crête portée au repos (0 = s'assoit dans le creux .. 1 = sur la crête)
-    supportPlane: 0.50,  // supplément de portage au planage (skim sur les crêtes)
+    supportPlane: 0.35,  // supplément de portage au planage (0.50->0.35 v63 : s'assoit un peu plus ENTRE les crêtes, skim préservé)
     stiff: 32,           // raideur de la suspension de flottaison (↑ = plus rigide/réactif)
     damp: 9.0,           // amortissement de la suspension (↑ = moins de rebond)
     sinkLimit: 0.8,      // enfoncement max sous la ligne de flottaison (m) — anti "coule"
@@ -33,6 +41,9 @@ export const TUNING = {
        avant : la coque "recolle" et plane). Belly-flop / nez haut / retombée dans
        la face montante d'une vague = on laboure : gros scrub + grosse secousse. */
     land: {
+      realJumpAir: 0.15, // temps de vol mini (s) pour que la réception redirige le momentum —
+                         // les micro-rentrées du clapot (airTime=0) gardent leur gerbe mais ne
+                         // scrubbent/carrient plus (v63 : fini les à-coups permanents en houle)
       scrubBase: 0.05,   // perte de vitesse minimale même sur une réception parfaite
       scrubMax: 0.30,    // perte de vitesse additionnelle sur une réception ratée (désalignée)
       alignTol: 1.0,     // tolérance d'angle nez↔trajectoire (rad) avant scrub max (↑ = plus permissif)
@@ -79,13 +90,20 @@ export const TUNING = {
     joltDecay: 9,        // amortissement de la secousse caméra : exp(-dt·k)
     // Punch de FOV à l'ACCÉLÉRATION (hole-shot ressenti) : l'accél franche élargit
     // brièvement le champ, puis il se relâche. Indépendant de la vue.
+    // v63 : l'accél est dérivée d'une vitesse LISSÉE (EMA) + clampée au domaine
+    // physique de la poussée -> les impulsions d'une frame (carry d'atterrissage,
+    // scrub) ne font plus pomper le FOV.
     fovKickGain: 0.9,    // deg de punch par m/s² d'accélération
     fovKickMax: 9,       // punch de FOV max (deg)
     fovKickRise: 9,      // vitesse de montée du punch : 1-exp(-dt·k)
     fovKickFall: 2.4,    // vitesse de relâche du punch
+    fovAccelSmooth: 6,   // lissage EMA de la vitesse pour dériver l'accél (anti-pompage)
+    fovAccelMax: 12,     // accél max prise en compte (m/s²) ≈ poussée physique max
+    fovFollow: 10,       // vitesse de suivi du FOV (découplé de l'assiette de coque depuis v63)
     // "Thunk" de suspension DISTINCT à l'atterrissage sur l'eau (≠ secousse générique).
     landKick: 0.18,      // compression verticale caméra à la réception (m)
     landKickDecay: 8,    // relâche de la compression : exp(-dt·k)
+    dipMax: 0.55,        // dépression FPV max cumulée (impact+jolt+land) — l'œil ne passe plus sous le guidon
     // Anti-plongée de la caméra chase : elle ne passe jamais sous la surface.
     chaseClearWater: 0.6, // hauteur mini au-dessus de la vague (m)
     // Grain organique de la vibration (casse la périodicité des sinus).
