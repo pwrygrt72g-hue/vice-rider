@@ -16,12 +16,13 @@ export const TUNING = {
      + sauts" de la boucle. */
   hull: {
     halfLen: 1.7,        // demi-longueur d'empreinte échantillonnée avant/arrière (m)
-    /* CALAGE v63 (mesuré sur le ski PROCÉDURAL, le seul affiché — le glb est désactivé) :
-       bas de carène à -0.06 local, tubulure de pompe à -0.36. draftRest NÉGATIF
-       = l'origine s'enfonce sous la surface -> carène immergée ~0.16 m (33 %),
-       pompe sous l'eau, la ligne de flottaison COUPE la coque comme sur un vrai
-       PWC au repos. (Ancienne valeur +0.34 : calée sur un bas de coque glb à
-       -0.79 et une cuvette shader supprimée -> le jet flottait 28 cm DANS L'AIR.) */
+    /* CALAGE v63 (MESURÉ via Box3 sur le ski PROCÉDURAL, le seul affiché — le glb
+       est désactivé) : bas de carène à -0.06 local, pont jusqu'à +0.68 (carène
+       haute de 0.48 m). draftRest NÉGATIF = l'origine s'enfonce sous la surface ->
+       bas de carène à ~0.16 m sous l'eau (immersion 33 % de la carène), la ligne de
+       flottaison COUPE la coque comme sur un vrai PWC au repos. (Ancienne valeur
+       +0.34 : calée sur un bas de coque GLB à -0.79 — modèle absent/désactivé — et
+       une cuvette shader supprimée depuis -> le jet flottait 28 cm DANS L'AIR.) */
     draftRest: -0.10,    // assiette au repos : origine vs surface (↑ = flotte plus haut)
     draftPlane: 0.10,    // remontée au déjaugeage (validé au banc : clairance creux 0.70->0.15 m, airtime inchangé)
     holeShotSquat: 0.10, // enfoncement de POUPE au hole-shot (gaz fort à basse vitesse) : le cul s'assoit
