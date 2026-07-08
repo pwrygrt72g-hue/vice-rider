@@ -7,15 +7,15 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=63';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=63';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=63';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=63';
-import { TUNING } from './tuning.js?v=63';
+import { TWO_PI, smooth01, hex } from './util.js?v=64';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=64';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=64';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=64';
+import { TUNING } from './tuning.js?v=64';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v63 · le jet est DANS l\'eau (flottaison recalée)';
+const BUILD = 'v64 · moins de frein en houle + collision plage';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -4103,6 +4103,22 @@ function frame() {
   }
   const skd = Math.hypot(state.x - (skyline.position.x + 950), state.z - skyline.position.z);
   if (skd > 2600) skyline.position.set(state.x + fx * 1000 - 950, 0, state.z + fz * 1000);
+  // RIVAGE : mur invisible à la ligne d'eau de la plage (on ne roule plus sur le
+  // sable ni à travers les immeubles). La plage fait face à -x en repère skyline ;
+  // on bloque le jet à la ligne d'écume s'il arrive du large dans la bande de plage.
+  {
+    const shoreX = skyline.position.x + 786;            // ligne d'écume (skyline-local ~786)
+    const dzShore = state.z - (skyline.position.z + 55); // centre z de la plage
+    if (state.x > shoreX && state.x < shoreX + 260 && Math.abs(dzShore) < 560) {
+      state.x = shoreX;
+      if (state.vx > 0) {                                // amortit l'élan vers la plage
+        // NB : `hw` n'est calculé que plus bas dans frame() (TDZ) -> on utilise state.y.
+        if (state.speed > 6) { spawnSplash(state.x, state.y, state.z, 1.0); burstDrops(state.x, state.y, state.z, 16, 0.8, -state.vx * 0.4, 0); audioSplash(0.6); camImpact = Math.max(camImpact, 0.2); }
+        state.vx *= 0.15;
+      }
+      state.speed = state.vx * fx + state.vz * fz;
+    }
+  }
   // Feux d'aviation rouges : clignotement lent et décalé par tour.
   for (let b = 0; b < beacons.length; b++) {
     const bl = 0.55 + 0.45 * Math.sin(t * 3.0 + b * 1.7);
@@ -4605,10 +4621,13 @@ function frame() {
 
   /* ---- Immersion : voile sous-marin + traînée d'eau + son étouffé ---- */
   const camWorldY = camMode === 'fpv' ? state.y + 1.25 : camera.position.y;
-  const submerged = camWorldY < hw - 0.1;
+  const submerged = camWorldY < hw - 0.5;   // seuil profond : plus de flash à chaque crête
   uwEl.style.opacity = submerged ? '1' : '0';
-  if (plunge < -0.3) {
-    const kc = Math.exp(-dt * (1.2 + Math.min(2.2, -plunge)));
+  // Frein de PLONGEON : ne mord que si la coque est VRAIMENT enfoncée (nez planté
+  // après une mauvaise réception), plus sur chaque crête de houle qui la lèche —
+  // sinon on ralentit en permanence au large (bug "trop de ralentissement").
+  if (plunge < -TUNING.hull.land.diveDepth) {
+    const kc = Math.exp(-dt * Math.min(1.2, (-plunge - TUNING.hull.land.diveDepth) * TUNING.hull.land.diveDragK));
     state.vx *= kc; state.vz *= kc; state.speed *= kc;
   }
 

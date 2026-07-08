@@ -48,6 +48,8 @@ export const TUNING = {
       scrubBase: 0.05,   // perte de vitesse minimale même sur une réception parfaite
       scrubMax: 0.30,    // perte de vitesse additionnelle sur une réception ratée (désalignée)
       alignTol: 1.0,     // tolérance d'angle nez↔trajectoire (rad) avant scrub max (↑ = plus permissif)
+      diveDepth: 0.62,   // immersion (m) au-delà de laquelle un VRAI plongeon (nez planté) freine
+      diveDragK: 2.5,    // force du frein de plongeon (doux) — ne se déclenche plus sur chaque crête
       hardnessRef: 8,    // vitesse verticale d'impact (m/s) donnant un choc "dur" plein
       slopeScrub: 0.6,   // pénalité d'alignement si on retombe dans un mur d'eau montant
       carryGain: 0.12,   // fraction du choc vertical reconvertie en avancée (réception propre)
