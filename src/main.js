@@ -7,15 +7,15 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=64';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=64';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=64';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=64';
-import { TUNING } from './tuning.js?v=64';
+import { TWO_PI, smooth01, hex } from './util.js?v=65';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=65';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=65';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=65';
+import { TUNING } from './tuning.js?v=65';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v64 · moins de frein en houle + collision plage';
+const BUILD = 'v65 · durcissement (collision îlot + garde-fous)';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -4109,7 +4109,9 @@ function frame() {
   {
     const shoreX = skyline.position.x + 786;            // ligne d'écume (skyline-local ~786)
     const dzShore = state.z - (skyline.position.z + 55); // centre z de la plage
-    if (state.x > shoreX && state.x < shoreX + 260 && Math.abs(dzShore) < 560) {
+    // Bande large (±650 en z, +400 en x) = couvre plage + immeubles + tours : on ne
+    // peut plus se glisser par les côtés dans les bâtiments (trou de collision fermé).
+    if (state.x > shoreX && state.x < shoreX + 400 && Math.abs(dzShore) < 650) {
       state.x = shoreX;
       if (state.vx > 0) {                                // amortit l'élan vers la plage
         // NB : `hw` n'est calculé que plus bas dans frame() (TDZ) -> on utilise state.y.
@@ -4779,7 +4781,7 @@ function frame() {
   /* ---- HUD ---- */
   const kmh = state.speed * 3.6;
   gaugeTick++;
-  const skiModel = MODELS.find(m => m.id === sel.ski);
+  const skiModel = MODELS.find(m => m.id === sel.ski) || MODELS[0];   // garde-fou si un id corrompu était persisté
   if (gaugeTick % 2 === 0) drawOdo(Math.abs(kmh), state.throttle, skiModel.brand, kmh < -0.5);
   hudSpeed.textContent = (kmh < -0.5 ? 'R' : '') + Math.round(Math.abs(kmh));
   let hdg = ((-state.yaw * 180 / Math.PI) % 360 + 360) % 360;
