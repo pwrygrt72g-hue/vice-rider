@@ -24,14 +24,14 @@ export const TUNING = {
        +0.34 : calée sur un bas de coque GLB à -0.79 — modèle absent/désactivé — et
        une cuvette shader supprimée depuis -> le jet flottait 28 cm DANS L'AIR.) */
     draftRest: -0.10,    // assiette au repos : origine vs surface (↑ = flotte plus haut)
-    draftPlane: 0.10,    // remontée au déjaugeage (validé au banc : clairance creux 0.70->0.15 m, airtime inchangé)
+    draftPlane: 0.14,    // remontée au déjaugeage (v67 0.10->0.14 : la coque RIDE plus haut à vitesse, ne s'enterre plus dans les faces de houle)
     holeShotSquat: 0.10, // enfoncement de POUPE au hole-shot (gaz fort à basse vitesse) : le cul s'assoit
     planeTrim: 0.055,    // assiette de planage : ~3° nez haut permanent à pleine vitesse (l'avant sort, la poupe porte)
-    supportRest: 0.15,   // part de la crête portée au repos (0 = s'assoit dans le creux .. 1 = sur la crête)
-    supportPlane: 0.35,  // supplément de portage au planage (0.50->0.35 v63 : s'assoit un peu plus ENTRE les crêtes, skim préservé)
-    stiff: 32,           // raideur de la suspension de flottaison (↑ = plus rigide/réactif)
+    supportRest: 0.25,   // part de la crête portée au repos (v67 0.15->0.25 : s'assoit plus HAUT sur la vague, moins enfoui)
+    supportPlane: 0.42,  // supplément de portage au planage (v67 0.35->0.42 : grimpe les faces au lieu de les labourer)
+    stiff: 42,           // raideur de la suspension de flottaison (v67 32->42 : suit la houle qui monte sans traîner dessous)
     damp: 9.0,           // amortissement de la suspension (↑ = moins de rebond)
-    sinkLimit: 0.8,      // enfoncement max sous la ligne de flottaison (m) — anti "coule"
+    sinkLimit: 0.5,      // enfoncement max sous la ligne de flottaison (m) — anti "coule" (v67 0.8->0.5 : ne s'enfonce plus jusqu'au pilote)
     airPlunge: 0.28,     // dépassement de la surface portante au-delà duquel on est "en l'air"
     airArmTime: 0.35,    // temps d'air mini (s) avant d'armer l'accumulation des figures
     attitudeFollow: 10,  // vitesse de suivi de l'assiette pitch/roll : 1-exp(-dt·k) (↑ = colle à la vague)

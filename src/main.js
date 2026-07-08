@@ -7,15 +7,15 @@ import { RGBELoader } from '../vendor/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from '../vendor/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/jsm/loaders/DRACOLoader.js';
 import { OBJLoader } from '../vendor/jsm/loaders/OBJLoader.js';
-import { TWO_PI, smooth01, hex } from './util.js?v=66';
-import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=66';
-import { WAVES, seaFactor, waveHeight } from './sea.js?v=66';
-import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=66';
-import { TUNING } from './tuning.js?v=66';
+import { TWO_PI, smooth01, hex } from './util.js?v=67';
+import { MODELS, JETSKIS, PILOTES, SUITS, QUALITIES } from './data.js?v=67';
+import { WAVES, seaFactor, waveHeight } from './sea.js?v=67';
+import { SKY_FUNC, ENV_FUNC, FilmShader } from './shaders.js?v=67';
+import { TUNING } from './tuning.js?v=67';
 
 // Témoin de version : si ce texte s'affiche en bas à droite, le NOUVEAU code tourne
 // (sinon = cache navigateur -> recharge en navigation privée).
-const BUILD = 'v66 · favicon + console 100% propre';
+const BUILD = 'v67 · le jet ski RIDE la houle (fini "il traverse l\'eau")';
 console.info('[Vice Rider] BUILD', BUILD);
 { const _b = document.getElementById('build'); if (_b) _b.textContent = 'build ' + BUILD; }
 
@@ -377,7 +377,7 @@ void main(){
   float d0 = length(wp.xz);
   float coast = 0.05 + 0.95 * smoothstep(130.0, 640.0, d0);
   float far = clamp((d0 - 640.0) / 900.0, 0.0, 1.0);
-  coast += far * far * 0.6; // grosses vagues au large (miroir de seaFactor)
+  coast += far * far * 0.35; // grosses vagues au large (miroir de seaFactor OFFSHORE_BOOST v67)
   disp *= coast;
   // Les dérivées suivent la même atténuation côtière que le déplacement,
   // sinon normales et écume seraient fausses près du bord. (mix borné à 1)

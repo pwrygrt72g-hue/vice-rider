@@ -13,25 +13,29 @@
 
    Zone côtière : grand plateau calme (marina protégée) ; il faut prendre le
    large pour la houle, et encore plus loin pour les très grosses vagues. */
-import { TWO_PI } from './util.js?v=66';
+import { TWO_PI } from './util.js?v=67';
 
 /** [dirX, dirZ, amplitude(raideur), longueur d'onde] — miroir GLSL uWaves[8].
     v63 : houle dominante ADOUCIE et ALLONGÉE ([0] 0.22/62 -> 0.13/96,
     [1] 0.18 -> 0.12) : pente réduite de moitié -> le jet SURFE les faces au
     lieu d'être catapulté en balistique au-dessus des creux. */
+/* v67 : RAIDEUR globale réduite ~15-20 % (les 2 houles longues dominantes
+   0.13/0.12 -> 0.10) + boost du large 0.6 -> 0.35 : au large la houle passe de
+   ~5.9 m à ~4.75 m crête-creux, le jet ski RIDE les vagues au lieu de s'y
+   enterrer (retour joueur « il traverse l'eau, pas de rapport eau/jetski »). */
 export const WAVES = [
-  [1.0, 0.12, 0.13, 96],
-  [0.85, -0.28, 0.12, 44],
-  [0.65, 0.60, 0.15, 33],
-  [0.45, -0.85, 0.12, 26],
-  [-0.30, 1.0, 0.10, 20],
-  [1.0, 0.55, 0.08, 16.5],
-  [0.20, 1.0, 0.06, 14],
-  [-0.70, 0.55, 0.045, 12.5]
+  [1.0, 0.12, 0.10, 96],
+  [0.85, -0.28, 0.10, 44],
+  [0.65, 0.60, 0.13, 33],
+  [0.45, -0.85, 0.11, 26],
+  [-0.30, 1.0, 0.09, 20],
+  [1.0, 0.55, 0.07, 16.5],
+  [0.20, 1.0, 0.055, 14],
+  [-0.70, 0.55, 0.04, 12.5]
 ];
 
 export const COAST_INNER = 130, COAST_OUTER = 640, COAST_CALM = 0.05;
-export const OFFSHORE_START = 640, OFFSHORE_SPAN = 900, OFFSHORE_BOOST = 0.6;
+export const OFFSHORE_START = 640, OFFSHORE_SPAN = 900, OFFSHORE_BOOST = 0.35;
 
 /** Facteur d'agitation locale : ~0.05 à la côte, 1 au large, jusqu'à 1.6 très loin. */
 export function seaFactor(x, z) {
