@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLACKSITE FPV — Usine abandonnée</title>
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBhMGYwYSIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTYiIHI9IjkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzZmZTA2ZiIgc3Ryb2tlLXdpZHRoPSIxLjUiLz48cGF0aCBkPSJNMTYgNXYycTAgMCAwIDBNMTYgMjV2Mk01IDE2aDJNMjUgMTZoMiIgc3Ryb2tlPSIjNmZlMDZmIiBzdHJva2Utd2lkdGg9IjEuNSIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTYiIHI9IjIiIGZpbGw9IiM2ZmUwNmYiLz48L3N2Zz4=">
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",ui-monospace,monospace;}
+  #c3d{position:fixed;inset:0;display:block;}
+  #hud{position:fixed;inset:0;pointer-events:none;}
+  /* --- effets écran caméra militaire --- */
+  #fx-scan{position:fixed;inset:0;pointer-events:none;z-index:5;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px);}
+  #fx-vig{position:fixed;inset:0;pointer-events:none;z-index:6;
+    background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.5) 100%);}
+  #fx-tint{position:fixed;inset:0;pointer-events:none;z-index:4;background:rgba(70,255,120,.035);mix-blend-mode:screen;}
+  /* --- écrans --- */
+  .screen{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(2,8,3,.88);color:#9df59d;text-align:center;cursor:pointer;user-select:none;}
+  .screen h1{font-size:clamp(26px,5vw,54px);letter-spacing:.35em;margin:0 0 6px;font-weight:700;text-shadow:0 0 18px rgba(110,255,140,.5);}
+  .screen h2{font-size:clamp(11px,1.4vw,15px);letter-spacing:.5em;margin:0 0 34px;color:#57b06a;font-weight:400;}
+  .screen .ctl{display:grid;grid-template-columns:auto auto;gap:7px 18px;font-size:clamp(12px,1.5vw,16px);text-align:left;margin-bottom:36px;}
+  .screen .ctl b{color:#d9ffd9;text-align:right;}
+  .screen .go{font-size:clamp(14px,2vw,20px);letter-spacing:.3em;padding:12px 34px;border:1px solid #6fe06f;
+    animation:blink 1.2s steps(2) infinite;}
+  .screen small{margin-top:26px;color:#4d7f57;letter-spacing:.15em;}
+  @keyframes blink{50%{opacity:.35}}
+  #screen-crash{display:none;background:rgba(8,2,2,.6);}
+  #screen-crash h1{color:#ff5b5b;text-shadow:0 0 18px rgba(255,80,80,.6);}
+  #screen-pause{display:none;}
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+<canvas id="c3d"></canvas>
+<canvas id="hud"></canvas>
+<div id="fx-tint"></div>
+<div id="fx-scan"></div>
+<div id="fx-vig"></div>
+
+<div id="screen-start" class="screen">
+  <h1>BLACKSITE FPV</h1>
+  <h2>UAV-07 // USINE ABANDONNÉE — SECTEUR K</h2>
+  <div class="ctl">
+    <b>SOURIS</b><span>gyroscope — glisser vers l'avant = piquer / accélérer</span>
+    <b>GAUCHE / DROITE</b><span>inclinaison = virage</span>
+    <b>Z</b><span>monter</span>
+    <b>S</b><span>descendre</span>
+    <b>ESPACE</b><span>remise à plat instantanée</span>
+    <b>R</b><span>reprendre au point de départ</span>
+    <b>M</b><span>son on/off</span>
+  </div>
+  <div class="go">CLIQUER POUR DÉCOLLER</div>
+  <small>FLUX VIDÉO 5.8 GHz — CANAL R7 — CRYPTAGE AES</small>
+</div>
+
+<div id="screen-crash" class="screen">
+  <h1>SIGNAL PERDU</h1>
+  <h2 id="crash-sub">IMPACT DÉTECTÉ — LIAISON INTERROMPUE</h2>
+  <div class="go">CLIQUER POUR RELANCER LE DRONE</div>
+</div>
+
+<div id="screen-pause" class="screen">
+  <h1>PAUSE</h1>
+  <h2>LIAISON EN VEILLE</h2>
+  <div class="go">CLIQUER POUR REPRENDRE</div>
+</div>
+
+<script type="module">
+import * as THREE from '../vendor/three.module.js';
+
+/* ============================================================
+   BLACKSITE FPV — drone FPV réaliste, souris-gyroscope
+   ============================================================ */
+
+const DEG = Math.PI/180;
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp  = (a,b,t)=>a+(b-a)*t;
+
+/* ---------- tuning ---------- */
+const T = {
+  maxPitch: 38*DEG,      // inclinaison avant max (plein manche)
+  maxRoll:  36*DEG,
+  sens:     1/260,       // pixels de souris pour plein débattement
+  yawGain:  1.7,         // rad/s à pleine inclinaison latérale
+  g:        9.81,
+  dragLin:  0.115,
+  dragQuad: 0.0036,
+  latSlip:  0.30,        // portion de l'accél latérale (dérapage en virage)
+  vzMax:    6.5,         // m/s montée/descente
+  vzAccel:  14,
+  camTiltComp: 0.62,     // la caméra compense 62% du tangage (caméra FPV inclinée)
+  fovBase:  78,
+  fovSpeed: 9,
+  crashSpeed: 8.5,       // m/s d'impact => crash
+  bounce:   0.22,
+  droneR:   0.28,        // rayon de collision
+  batteryMin: 9,         // minutes d'autonomie
+};
+
+/* ---------- état drone ---------- */
+const spawn = { x:-38, y:1.6, z:0, yaw:-Math.PI/2 }; // face au grand hall (+x)
+const S = {
+  pos: new THREE.Vector3(spawn.x, spawn.y, spawn.z),
+  vel: new THREE.Vector3(),
+  yaw: spawn.yaw, pitch: 0, roll: 0,
+  stickX: 0, stickY: 0,          // manche virtuel accumulé par la souris [-1,1]
+  vyInput: 0,
+  time: 0, battery: 100,
+  crashed: false, started: false, paused: false,
+  gForce: 1, impactFlash: 0,
+};
+const keys = {};
+let mouseDX = 0, mouseDY = 0;
+
+/* ============================================================
+   RENDU
+   ============================================================ */
+const canvas = document.getElementById('c3d');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.02;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x8a8f88, 0.0038);
+
+const camera = new THREE.PerspectiveCamera(T.fovBase, innerWidth/innerHeight, 0.05, 900);
+
+/* ---------- ciel ---------- */
+{
+  const cv = document.createElement('canvas'); cv.width=16; cv.height=256;
+  const g = cv.getContext('2d');
+  const gr = g.createLinearGradient(0,0,0,256);
+  gr.addColorStop(0.00,'#5d6d78'); gr.addColorStop(0.45,'#8a938f');
+  gr.addColorStop(0.62,'#b0ab97'); gr.addColorStop(1.00,'#c4b892');
+  g.fillStyle=gr; g.fillRect(0,0,16,256);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(700,24,16),
+    new THREE.MeshBasicMaterial({map:tex, side:THREE.BackSide, fog:false}));
+  scene.add(sky);
+}
+
+/* ---------- lumières ---------- */
+scene.add(new THREE.HemisphereLight(0x9aa5ac, 0x4a463a, 1.1));
+const sun = new THREE.DirectionalLight(0xffe8c0, 2.2);
+sun.position.set(35, 80, -30);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left=-90; sun.shadow.camera.right=90;
+sun.shadow.camera.top=70;  sun.shadow.camera.bottom=-70;
+sun.shadow.camera.far=220; sun.shadow.bias=-0.0008;
+scene.add(sun);
+const fillIn = new THREE.PointLight(0xfff2d0, 55, 70, 1.8);
+fillIn.position.set(-12, 10, 0); scene.add(fillIn);
+
+/* ============================================================
+   TEXTURES PROCÉDURALES
+   ============================================================ */
+function makeTex(draw, w=512, h=512, rx=1, ry=1){
+  const cv = document.createElement('canvas'); cv.width=w; cv.height=h;
+  draw(cv.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(rx, ry);
+  t.anisotropy = 4;
+  return t;
+}
+let seed = 7;
+const rnd = ()=>{ seed = (seed*16807)%2147483647; return seed/2147483647; };
+function noiseSplat(g,w,h,n,cols,a0,a1,r0,r1){
+  for(let i=0;i<n;i++){
+    g.fillStyle = cols[(rnd()*cols.length)|0];
+    g.globalAlpha = a0 + rnd()*(a1-a0);
+    const r = r0 + rnd()*(r1-r0);
+    g.beginPath(); g.arc(rnd()*w, rnd()*h, r, 0, 7); g.fill();
+  }
+  g.globalAlpha = 1;
+}
+
+const texConcrete = makeTex((g,w,h)=>{
+  g.fillStyle='#7d7c74'; g.fillRect(0,0,w,h);
+  noiseSplat(g,w,h,2600,['#6e6d66','#8a897f','#75746c','#83816f'],.08,.2,2,14);
+  noiseSplat(g,w,h,300,['#4d4c45','#3f3e38'],.06,.14,4,26);
+  g.strokeStyle='rgba(40,40,36,.35)'; g.lineWidth=1.4;
+  for(let i=0;i<14;i++){ // fissures
+    g.beginPath(); let x=rnd()*w, y=rnd()*h; g.moveTo(x,y);
+    for(let k=0;k<7;k++){ x+=(rnd()-.5)*70; y+=(rnd()-.5)*70; g.lineTo(x,y); }
+    g.stroke();
+  }
+}, 512,512, 8,8);
+
+const texFloor = makeTex((g,w,h)=>{
+  g.fillStyle='#6b6a62'; g.fillRect(0,0,w,h);
+  noiseSplat(g,w,h,3000,['#5e5d55','#787770','#63625a','#565549'],.08,.22,2,12);
+  noiseSplat(g,w,h,140,['#33322c','#2a2925'],.10,.25,8,40);  // taches d'huile
+  g.strokeStyle='rgba(180,150,40,.28)'; g.lineWidth=9;        // marquage jaune délavé
+  g.setLineDash([46,26]);
+  g.beginPath(); g.moveTo(0,h*.30); g.lineTo(w,h*.30); g.stroke();
+  g.beginPath(); g.moveTo(0,h*.72); g.lineTo(w,h*.72); g.stroke();
+  g.setLineDash([]);
+  g.strokeStyle='rgba(30,30,28,.5)'; g.lineWidth=2;           // joints de dalles
+  for(let i=1;i<4;i++){ g.beginPath(); g.moveTo(i*w/4,0); g.lineTo(i*w/4,h); g.stroke();
+                        g.beginPath(); g.moveTo(0,i*h/4); g.lineTo(w,i*h/4); g.stroke(); }
+}, 512,512, 12,6);
+
+const texBrick = makeTex((g,w,h)=>{
+  g.fillStyle='#5e5049'; g.fillRect(0,0,w,h);
+  const bw=64, bh=26;
+  for(let y=0, row=0; y<h; y+=bh, row++){
+    for(let x=-bw; x<w+bw; x+=bw){
+      const ox = (row%2)*bw/2;
+      const c = 92+rnd()*46, r=c+18+rnd()*20;
+      g.fillStyle=`rgb(${r|0},${(c*.72)|0},${(c*.58)|0})`;
+      g.fillRect(x+ox+2, y+2, bw-4, bh-4);
+      if(rnd()<.12){ g.fillStyle='rgba(40,42,40,.45)'; g.fillRect(x+ox+2,y+2,bw-4,bh-4); }
+    }
+  }
+  noiseSplat(g,w,h,900,['#3c3833','#57524b','#2e2b27'],.06,.2,3,22);
+  const gr=g.createLinearGradient(0,0,0,h); // crasse en bas
+  gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(1,'rgba(20,22,18,.55)');
+  g.fillStyle=gr; g.fillRect(0,0,w,h);
+}, 512,512, 6,2);
+
+const texRust = makeTex((g,w,h)=>{
+  g.fillStyle='#6a5c4d'; g.fillRect(0,0,w,h);
+  noiseSplat(g,w,h,2200,['#7d4a2b','#8a5a33','#5a4632','#4a3a2a','#96562c'],.1,.3,3,30);
+  noiseSplat(g,w,h,500,['#3a3229','#2e2822'],.1,.3,2,10);
+  const gr=g.createLinearGradient(0,0,0,h);
+  gr.addColorStop(0,'rgba(255,235,200,.10)'); gr.addColorStop(1,'rgba(0,0,0,.35)');
+  g.fillStyle=gr; g.fillRect(0,0,w,h);
+}, 512,512, 2,2);
+
+const texMetal = makeTex((g,w,h)=>{
+  g.fillStyle='#5f6360'; g.fillRect(0,0,w,h);
+  for(let x=0;x<w;x+=16){ // tôle ondulée
+    const sh = Math.sin(x*.4)*10;
+    g.fillStyle=`rgba(255,255,255,${.05+ .05*Math.sin(x*.39)})`; g.fillRect(x,0,8,h);
+    g.fillStyle=`rgba(0,0,0,${.10+.08*Math.cos(x*.39)})`; g.fillRect(x+8,0,8,h);
+  }
+  noiseSplat(g,w,h,900,['#7d4a2b','#5a4632','#43392c'],.08,.25,3,20);
+}, 512,512, 6,2);
+
+const texGround = makeTex((g,w,h)=>{
+  g.fillStyle='#5c5a48'; g.fillRect(0,0,w,h);
+  noiseSplat(g,w,h,3400,['#514f3f','#67654f','#494738','#6d6a52','#3f4034'],.1,.28,2,16);
+  noiseSplat(g,w,h,220,['#3a4030','#465038'],.15,.3,6,30); // touffes d'herbe morte
+}, 512,512, 40,40);
+
+/* ---------- matériaux ---------- */
+const M = {
+  concrete: new THREE.MeshStandardMaterial({map:texConcrete, roughness:.95}),
+  floor:    new THREE.MeshStandardMaterial({map:texFloor, roughness:.92}),
+  brick:    new THREE.MeshStandardMaterial({map:texBrick, roughness:.9}),
+  rust:     new THREE.MeshStandardMaterial({map:texRust, roughness:.85, metalness:.25}),
+  metal:    new THREE.MeshStandardMaterial({map:texMetal, roughness:.7, metalness:.35}),
+  darkSteel:new THREE.MeshStandardMaterial({color:0x3a3f42, roughness:.6, metalness:.6}),
+  ground:   new THREE.MeshStandardMaterial({map:texGround, roughness:1}),
+  glassBroken: new THREE.MeshStandardMaterial({color:0xaebdc4, roughness:.3, metalness:.1,
+                transparent:true, opacity:.25, side:THREE.DoubleSide}),
+};
+
+/* ============================================================
+   COLLISIONS
+   ============================================================ */
+const boxColliders = [];   // {min,max}
+const cylColliders = [];   // {x,z,r,y0,y1}
+
+function addBox(w,h,d, x,y,z, mat, opt={}){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+  m.position.set(x,y,z);
+  m.castShadow = opt.cast !== false;
+  m.receiveShadow = true;
+  scene.add(m);
+  if(opt.collide !== false){
+    boxColliders.push({
+      min:new THREE.Vector3(x-w/2, y-h/2, z-d/2),
+      max:new THREE.Vector3(x+w/2, y+h/2, z+d/2)
+    });
+  }
+  return m;
+}
+function addCyl(r,h, x,y,z, mat, opt={}){
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,opt.seg||20), mat);
+  m.position.set(x,y,z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  if(opt.collide !== false) cylColliders.push({x,z,r:r+0.05, y0:y-h/2, y1:y+h/2});
+  return m;
+}
+
+/* ============================================================
+   L'USINE
+   ============================================================ */
+const HALL = { x0:-45, x1:45, z0:-20, z1:20, H:14 };
+const WT = 0.6;
+
+/* sol intérieur + dalle extérieure + terrain */
+{
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(800,800), M.ground);
+  ground.rotation.x = -Math.PI/2; ground.position.y = -0.02;
+  ground.receiveShadow = true; scene.add(ground);
+  const slab = new THREE.Mesh(new THREE.PlaneGeometry(96, 46), M.floor);
+  slab.rotation.x = -Math.PI/2; slab.position.set(0, 0.0, 0);
+  slab.receiveShadow = true; scene.add(slab);
+  const apron = new THREE.Mesh(new THREE.PlaneGeometry(30, 20), M.concrete);
+  apron.rotation.x = -Math.PI/2; apron.position.set(58, 0.0, 0);
+  apron.receiveShadow = true; scene.add(apron);
+}
+
+/* murs latéraux avec fenêtres cassées (y 8→12) */
+function sideWall(zc){
+  const L = HALL.x1-HALL.x0;               // 90
+  addBox(L+WT, 8, WT, 0, 4, zc, M.brick);                 // bandeau bas 0..8
+  addBox(L+WT, 2, WT, 0, 13, zc, M.brick);                // bandeau haut 12..14
+  const winC = [-36,-24,-12,0,12,24,36], winW=6;
+  let prev = HALL.x0;
+  for(const c of winC){
+    const a = c-winW/2;
+    addBox(a-prev, 4, WT, (prev+a)/2, 10, zc, M.brick);   // pilier entre fenêtres
+    prev = c+winW/2;
+    // restes de vitres + croisillons rouillés
+    const fr = addBox(winW, 4, 0.12, c, 10, zc, M.darkSteel, {collide:false, cast:false});
+    fr.scale.set(0.04, 1, 1); fr.position.x = c - winW/2 + 0.2;
+    const bar = addBox(winW-0.4, 0.1, 0.1, c, 10, zc, M.darkSteel, {collide:false, cast:false});
+    if(((c/12)|0)%2===0){
+      const gl = new THREE.Mesh(new THREE.PlaneGeometry(winW*0.45, 3.4), M.glassBroken);
+      gl.position.set(c-winW*0.22, 10, zc); scene.add(gl);
+    }
+  }
+  addBox(HALL.x1-prev, 4, WT, (prev+HALL.x1)/2, 10, zc, M.brick);
+}
+sideWall(HALL.z0-WT/2);
+sideWall(HALL.z1+WT/2);
+
+/* murs d'extrémité avec grande porte (10 de large, 9 de haut) */
+function endWall(xc){
+  addBox(WT, HALL.H, 15, xc, HALL.H/2, -12.5, M.brick);   // z -20..-5
+  addBox(WT, HALL.H, 15, xc, HALL.H/2,  12.5, M.brick);   // z 5..20
+  addBox(WT, 5, 10, xc, 11.5, 0, M.brick);                // linteau 9..14
+  // porte coulissante entrouverte
+  addBox(0.25, 8.6, 4.5, xc + (xc>0?0.5:-0.5), 4.3, -6.9, M.metal);
+}
+endWall(HALL.x0-WT/2);
+endWall(HALL.x1+WT/2);
+
+/* toit avec 2 verrières effondrées (trous) */
+{
+  const RT=0.4, y=HALL.H+RT/2;
+  const seg=(x0,x1,z0,z1)=>addBox(x1-x0, RT, z1-z0, (x0+x1)/2, y, (z0+z1)/2, M.concrete);
+  seg(-45,-20,-20,20);
+  seg(-20, -4,-20,-8);  seg(-20,-4, 8,20);      // trou 1 : x -20..-4, z -8..8
+  seg( -4,  8,-20,20);
+  seg(  8, 28,-20,-10); seg(8,28, 6,20);        // trou 2 : x 8..28, z -10..6
+  seg( 28, 45,-20,20);
+  // débris de verrière qui pendent
+  for(const [x,z,rx] of [[-19,7,-.4],[-5,-7,.5],[9,5,-.35],[27,-9,.3]]){
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(3.5,2.4), M.glassBroken);
+    p.position.set(x, HALL.H-0.8, z); p.rotation.set(rx, 0.3, 0.5); scene.add(p);
+  }
+}
+
+/* colonnes acier + fermes de toit */
+for(let x=-36; x<=36; x+=12){
+  addBox(0.7, HALL.H, 0.7, x, HALL.H/2, -12, M.rust);
+  addBox(0.7, HALL.H, 0.7, x, HALL.H/2,  12, M.rust);
+  addBox(0.5, 0.9, 40, x, 12.9, 0, M.darkSteel);          // ferme transversale
+  for(let z=-10; z<=10; z+=5){                            // diagonales décor
+    const d = addBox(0.12, 2.2, 0.12, x, 11.7, z, M.darkSteel, {collide:false, cast:false});
+    d.rotation.x = (z%2===0? .6 : -.6);
+  }
+}
+
+/* passerelle centrale y=6 le long du hall */
+{
+  addBox(60, 0.18, 2.2, 0, 6, 2, M.metal);
+  for(let x=-28; x<=28; x+=8){
+    addBox(0.22, 6, 0.22, x, 3, 1.1, M.rust);
+    addBox(0.22, 6, 0.22, x, 3, 2.9, M.rust);
+  }
+  for(const zz of [0.95, 3.05]){
+    addBox(60, 0.08, 0.08, 0, 7.1, zz, M.darkSteel, {collide:false, cast:false});
+    addBox(60, 0.08, 0.08, 0, 6.6, zz, M.darkSteel, {collide:false, cast:false});
+  }
+  // escalier condamné
+  const st = addBox(2, 0.2, 7, -30.5, 3, 4.5, M.metal, {collide:false});
+  st.rotation.x = -0.7;
+}
+
+/* cuves / silos rouillés */
+addCyl(3.2, 11, 30, 5.5, -13, M.rust);
+addCyl(2.6, 9, 22.5, 4.5, -14, M.rust);
+addCyl(0.35, 6, 26.5, 3, -13.5, M.darkSteel);             // tuyau entre cuves
+{ // cuve horizontale sur berceaux
+  const t = new THREE.Mesh(new THREE.CylinderGeometry(1.8,1.8,9,18), M.rust);
+  t.rotation.z = Math.PI/2; t.position.set(-28, 2.6, 14.5);
+  t.castShadow=t.receiveShadow=true; scene.add(t);
+  boxColliders.push({min:new THREE.Vector3(-32.5,0.8,12.7), max:new THREE.Vector3(-23.5,4.4,16.3)});
+  addBox(1.2,1.6,3.8,-31,0.8,14.5,M.concrete); addBox(1.2,1.6,3.8,-25,0.8,14.5,M.concrete);
+}
+
+/* convoyeur le long de z=-6 */
+{
+  addBox(26, 0.5, 2, 1, 1.35, -6, M.darkSteel);
+  const belt = addBox(25.4, 0.06, 1.6, 1, 1.66, -6, new THREE.MeshStandardMaterial({color:0x22201e, roughness:.95}), {collide:false, cast:false});
+  for(let x=-10; x<=12; x+=4){ addBox(0.3,1.2,1.8, x,0.6,-6, M.rust); }
+  addBox(2.4, 3.2, 2.4, 15.5, 1.6, -6, M.rust);           // trémie en bout
+}
+
+/* presse industrielle + machines mortes */
+addBox(4, 5, 3, -4, 2.5, -13, M.rust);
+addBox(2.2, 7, 2.2, -4, 3.5, -15.5, M.darkSteel);
+addCyl(1.3, 0.6, -4, 5.6, -13, M.darkSteel, {collide:false});
+addBox(3, 2.2, 2, -9, 1.1, -13.5, M.metal);
+addBox(5, 1.8, 2.6, 8, 0.9, 13.5, M.rust);                // établi effondré
+addBox(1.4, 2.6, 1.2, 11.5, 1.3, 14, M.darkSteel);        // armoire électrique
+addBox(1.4, 2.6, 1.2, 13.1, 1.2, 14.1, M.darkSteel).rotation.z = 0.12;
+
+/* caisses et palettes */
+const crateSpots = [[-20,0,8],[-18.4,0,8.4],[-19.2,1,8.2],[18,0,10],[19.7,0,9.4],[18.8,1,9.8],
+                    [34,0,6],[-34,0,-8],[-32.3,0,-8.5],[0,0,7.5],[36,0,-4],[36.8,1,-4.2]];
+for(const [x,lvl,z] of crateSpots){
+  const s = 1.5+rnd()*0.4;
+  addBox(s,s,s, x, lvl>0 ? s*1.48 : s/2, z, M.rust);
+}
+/* barils */
+for(let i=0;i<16;i++){
+  const x = -40+rnd()*80, z = (rnd()<.5?-1:1)*(9+rnd()*8);
+  if(Math.abs(x-spawn.x)<4 && Math.abs(z)<4) continue;
+  const b = addCyl(0.38, 0.95, x, 0.475, z, M.rust, {seg:12});
+  if(rnd()<.3){ b.rotation.z = Math.PI/2; b.position.y = 0.38; }
+}
+
+/* tuyauterie haute le long des murs */
+for(const zz of [-19.2, 19.2]){
+  const p = new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,88,10), M.rust);
+  p.rotation.z = Math.PI/2; p.position.set(0, 10.5, zz);
+  p.castShadow = true; scene.add(p);
+  const p2 = p.clone(); p2.position.y = 9.6; scene.add(p2);
+}
+
+/* ---------- extérieur ---------- */
+addCyl(2.2, 32, 62, 16, -32, M.brick);                    // cheminée
+addCyl(2.5, 3, 62, 33.2, -32, M.rust, {collide:false});
+{ // château d'eau
+  for(const [dx,dz] of [[-3,-3],[3,-3],[-3,3],[3,3]])
+    addBox(0.5, 16, 0.5, -66+dx, 8, 26+dz, M.rust);
+  addCyl(4.2, 5, -66, 18.5, 26, M.rust);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(4.4, 2.4, 16), M.metal);
+  cone.position.set(-66, 22.2, 26); cone.castShadow = true; scene.add(cone);
+}
+addBox(16, 7, 10, 62, 3.5, 22, M.metal);                  // hangar annexe
+addBox(3.5, 5.5, 0.3, 62, 2.75, 16.8, M.rust, {collide:false});
+/* clôture grillagée (décor, pas de collision) */
+{
+  const fenceMat = new THREE.MeshStandardMaterial({color:0x777d80, roughness:.8, metalness:.4,
+    transparent:true, opacity:.35, side:THREE.DoubleSide});
+  const mk=(w,x,z,ry)=>{ const f=new THREE.Mesh(new THREE.PlaneGeometry(w,2.4), fenceMat);
+    f.position.set(x,1.2,z); f.rotation.y=ry; scene.add(f); };
+  mk(190, 0, -55, 0); mk(190, 0, 55, 0); mk(110, 95, 0, Math.PI/2); mk(110, -95, 0, Math.PI/2);
+  for(let x=-90;x<=90;x+=10){ addCyl(0.06,2.6,x,1.3,-55,M.darkSteel,{collide:false,seg:6});
+                              addCyl(0.06,2.6,x,1.3, 55,M.darkSteel,{collide:false,seg:6}); }
+}
+/* gravats + végétation morte */
+for(let i=0;i<26;i++){
+  const x=-90+rnd()*180, z=(rnd()<.5?-1:1)*(24+rnd()*28);
+  const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5+rnd()*1.4,0), rnd()<.5?M.concrete:M.rust);
+  r.position.set(x, 0.3, z); r.rotation.set(rnd()*3,rnd()*3,rnd()*3);
+  r.castShadow=r.receiveShadow=true; scene.add(r);
+}
+const bushMat = new THREE.MeshStandardMaterial({color:0x4a4f35, roughness:1});
+for(let i=0;i<20;i++){
+  const b = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5+rnd()*0.9,0), bushMat);
+  b.position.set(-100+rnd()*200, 0.3, (rnd()<.5?-1:1)*(23+rnd()*30));
+  b.scale.y=0.6; scene.add(b);
+}
+
+/* ---------- rais de lumière + poussière ---------- */
+{
+  const cv=document.createElement('canvas'); cv.width=128; cv.height=256;
+  const g=cv.getContext('2d');
+  const gr=g.createLinearGradient(0,0,0,256);
+  gr.addColorStop(0,'rgba(255,240,200,.5)'); gr.addColorStop(1,'rgba(255,240,200,0)');
+  g.fillStyle=gr; g.fillRect(0,0,128,256);
+  const t=new THREE.CanvasTexture(cv);
+  const mat=new THREE.MeshBasicMaterial({map:t, transparent:true, opacity:.28,
+    blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide, fog:false});
+  for(const [x,z,w] of [[-12,0,14],[18,-2,16]]){
+    const s=new THREE.Mesh(new THREE.PlaneGeometry(w,15), mat);
+    s.position.set(x,7.2,z); s.rotation.set(0,0,-0.28); scene.add(s);
+    const s2=s.clone(); s2.rotation.y=Math.PI/2.3; scene.add(s2);
+  }
+}
+let dust;
+{
+  const N=420, pos=new Float32Array(N*3), spd=new Float32Array(N);
+  for(let i=0;i<N;i++){
+    pos[i*3]=-44+Math.random()*88; pos[i*3+1]=Math.random()*13; pos[i*3+2]=-19+Math.random()*38;
+    spd[i]=0.1+Math.random()*0.3;
+  }
+  dust=new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({
+    color:0xfff4d8, size:0.06, transparent:true, opacity:.55, sizeAttenuation:true,
+    blending:THREE.AdditiveBlending, depthWrite:false}));
+  dust.geometry.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  dust.userData.spd=spd; scene.add(dust);
+}
+
+/* ============================================================
+   AUDIO (procédural)
+   ============================================================ */
+let AC=null, motorGain, motorOsc1, motorOsc2, motorFilter, windGain, windSrc, windFilter, muted=false;
+function initAudio(){
+  if(AC) return;
+  AC = new (window.AudioContext||window.webkitAudioContext)();
+  const master = AC.createGain(); master.gain.value=.9; master.connect(AC.destination);
+  motorFilter = AC.createBiquadFilter(); motorFilter.type='lowpass'; motorFilter.frequency.value=1400; motorFilter.Q.value=2;
+  motorGain = AC.createGain(); motorGain.gain.value=0;
+  motorOsc1 = AC.createOscillator(); motorOsc1.type='sawtooth';
+  motorOsc2 = AC.createOscillator(); motorOsc2.type='square';
+  const g2=AC.createGain(); g2.gain.value=.4;
+  motorOsc1.connect(motorFilter); motorOsc2.connect(g2); g2.connect(motorFilter);
+  motorFilter.connect(motorGain); motorGain.connect(master);
+  motorOsc1.start(); motorOsc2.start();
+  const len=AC.sampleRate*2, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  windSrc=AC.createBufferSource(); windSrc.buffer=buf; windSrc.loop=true;
+  windFilter=AC.createBiquadFilter(); windFilter.type='bandpass'; windFilter.frequency.value=500; windFilter.Q.value=.6;
+  windGain=AC.createGain(); windGain.gain.value=0;
+  windSrc.connect(windFilter); windFilter.connect(windGain); windGain.connect(master);
+  windSrc.start();
+}
+function audioTick(thr, speed){
+  if(!AC) return;
+  const on = !muted && S.started && !S.paused && !S.crashed;
+  const f = 150 + thr*300 + speed*2.2;
+  motorOsc1.frequency.setTargetAtTime(f, AC.currentTime, .05);
+  motorOsc2.frequency.setTargetAtTime(f*.502, AC.currentTime, .05);
+  motorFilter.frequency.setTargetAtTime(900+thr*1600, AC.currentTime, .08);
+  motorGain.gain.setTargetAtTime(on? .045+thr*.075 : 0, AC.currentTime, .07);
+  windFilter.frequency.setTargetAtTime(350+speed*45, AC.currentTime, .1);
+  windGain.gain.setTargetAtTime(on? Math.min(speed/38,1)*.24 : 0, AC.currentTime, .12);
+}
+function crashSound(){
+  if(!AC||muted) return;
+  const len=AC.sampleRate*.4, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
+  const s=AC.createBufferSource(); s.buffer=buf;
+  const g=AC.createGain(); g.gain.value=.5;
+  s.connect(g); g.connect(AC.destination); s.start();
+}
+
+/* ============================================================
+   ENTRÉES
+   ============================================================ */
+const elStart=document.getElementById('screen-start');
+const elCrash=document.getElementById('screen-crash');
+const elPause=document.getElementById('screen-pause');
+
+addEventListener('keydown', e=>{
+  const k=e.key.toLowerCase(); keys[k]=true;
+  if(k===' '){ S.stickX=0; S.stickY=0; e.preventDefault(); }
+  if(k==='r') respawn();
+  if(k==='m') muted=!muted;
+});
+addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
+
+addEventListener('mousemove', e=>{
+  if(document.pointerLockElement){ mouseDX+=e.movementX; mouseDY+=e.movementY; }
+});
+document.addEventListener('pointerlockchange', ()=>{
+  if(!document.pointerLockElement && S.started && !S.crashed){
+    S.paused=true; elPause.style.display='flex';
+  }
+});
+
+function grab(){ canvas.requestPointerLock?.(); }
+elStart.addEventListener('click', ()=>{
+  initAudio(); AC.resume?.();
+  S.started=true; elStart.style.display='none'; grab();
+});
+elPause.addEventListener('click', ()=>{
+  S.paused=false; elPause.style.display='none'; grab();
+});
+elCrash.addEventListener('click', ()=>{ respawn(); grab(); });
+
+function respawn(){
+  S.pos.set(spawn.x, spawn.y, spawn.z);
+  S.vel.set(0,0,0);
+  S.yaw=spawn.yaw; S.pitch=0; S.roll=0; S.stickX=0; S.stickY=0;
+  S.crashed=false; S.battery=Math.max(S.battery, 25); S.impactFlash=0;
+  elCrash.style.display='none';
+}
+function crash(reason){
+  if(S.crashed) return;
+  S.crashed=true; crashSound();
+  document.getElementById('crash-sub').textContent =
+    (reason||'IMPACT DÉTECTÉ') + ' — LIAISON INTERROMPUE';
+  setTimeout(()=>{ elCrash.style.display='flex'; }, 450);
+}
+
+/* ============================================================
+   PHYSIQUE
+   ============================================================ */
+const tmpV = new THREE.Vector3();
+function physics(dt){
+  // — manche virtuel depuis la souris (gyroscope persistant) —
+  S.stickY = clamp(S.stickY + (-mouseDY)*T.sens, -1, 1);  // avant = piquer
+  S.stickX = clamp(S.stickX + ( mouseDX)*T.sens, -1, 1);
+  mouseDX=0; mouseDY=0;
+
+  // attitude cible = position du manche (mode angle, réponse rapide)
+  const tgtPitch = S.stickY*T.maxPitch, tgtRoll = S.stickX*T.maxRoll;
+  S.pitch += (tgtPitch-S.pitch)*Math.min(1, dt*10);
+  S.roll  += (tgtRoll -S.roll )*Math.min(1, dt*10);
+
+  // lacet couplé à l'inclinaison (virage coordonné)
+  S.yaw -= S.stickX * T.yawGain * dt;
+
+  // — vertical : Z monte, S descend, sinon tenue d'altitude —
+  const up = (keys['z']||keys['w'])?1:0, dn = keys['s']?1:0;
+  S.vyInput = up-dn;
+  const tiltMag = Math.sqrt(S.pitch*S.pitch + S.roll*S.roll);
+  let vzTgt = S.vyInput * T.vzMax;
+  vzTgt -= Math.max(0, tiltMag-30*DEG)*1.5;          // ça s'enfonce un peu en inclinaison max
+  S.vel.y += clamp(vzTgt - S.vel.y, -T.vzAccel*dt, T.vzAccel*dt);
+
+  // — horizontal : la poussée inclinée accélère le drone —
+  // forward = (-sin(yaw), 0, -cos(yaw)) ; right = (cos(yaw), 0, -sin(yaw))
+  const aF = T.g*Math.tan(S.pitch);                  // avant (piquer = accélérer)
+  const aL = T.g*Math.tan(S.roll)*T.latSlip;         // dérive latérale
+  const fwdX=-Math.sin(S.yaw), fwdZ=-Math.cos(S.yaw);
+  const rgtX= Math.cos(S.yaw), rgtZ=-Math.sin(S.yaw);
+
+  // sous-pas : jamais plus de ~0.18 m parcourus par pas (anti-tunneling)
+  const nSub = clamp(Math.ceil(S.vel.length()*dt/0.18), 1, 12);
+  const h = dt/nSub;
+  let impact = 0;
+  const r = T.droneR;
+  for(let sub=0; sub<nSub; sub++){
+  S.vel.x += (fwdX*aF + rgtX*aL)*h;
+  S.vel.z += (fwdZ*aF + rgtZ*aL)*h;
+
+  // traînée
+  const hv = Math.hypot(S.vel.x, S.vel.z);
+  const drag = T.dragLin + T.dragQuad*hv;
+  S.vel.x -= S.vel.x*drag*h*(1+hv*0.004);
+  S.vel.z -= S.vel.z*drag*h*(1+hv*0.004);
+  S.vel.y -= S.vel.y*0.4*h;
+
+  S.pos.addScaledVector(S.vel, h);
+
+  // — collisions —
+  // sol
+  if(S.pos.y < r){
+    impact = Math.max(impact, -S.vel.y);
+    S.pos.y = r;
+    if(-S.vel.y > T.crashSpeed || hv > T.crashSpeed*1.4){ crash('IMPACT SOL'); }
+    S.vel.y = Math.max(0, S.vel.y*-T.bounce);
+    S.vel.x*=0.85; S.vel.z*=0.85;
+  }
+  // boîtes
+  for(const b of boxColliders){
+    const cx=clamp(S.pos.x,b.min.x,b.max.x), cyy=clamp(S.pos.y,b.min.y,b.max.y), cz=clamp(S.pos.z,b.min.z,b.max.z);
+    const dx=S.pos.x-cx, dy=S.pos.y-cyy, dz=S.pos.z-cz;
+    const d2=dx*dx+dy*dy+dz*dz;
+    if(d2 < r*r){
+      let nx,ny,nz,dist;
+      if(d2>1e-9){ dist=Math.sqrt(d2); nx=dx/dist; ny=dy/dist; nz=dz/dist; }
+      else{ // centre à l'intérieur : pousser vers la face la plus proche
+        const px=Math.min(S.pos.x-b.min.x, b.max.x-S.pos.x);
+        const py=Math.min(S.pos.y-b.min.y, b.max.y-S.pos.y);
+        const pz=Math.min(S.pos.z-b.min.z, b.max.z-S.pos.z);
+        if(px<=py&&px<=pz){ nx=(S.pos.x-b.min.x < b.max.x-S.pos.x)?-1:1; ny=0; nz=0; }
+        else if(py<=pz){ ny=(S.pos.y-b.min.y < b.max.y-S.pos.y)?-1:1; nx=0; nz=0; }
+        else{ nz=(S.pos.z-b.min.z < b.max.z-S.pos.z)?-1:1; nx=0; ny=0; }
+        dist=0;
+      }
+      S.pos.x=cx+nx*r; S.pos.y=cyy+ny*r; S.pos.z=cz+nz*r;
+      const vn = S.vel.x*nx + S.vel.y*ny + S.vel.z*nz;
+      if(vn<0){
+        impact = Math.max(impact, -vn);
+        S.vel.x -= (1+T.bounce)*vn*nx;
+        S.vel.y -= (1+T.bounce)*vn*ny;
+        S.vel.z -= (1+T.bounce)*vn*nz;
+        S.vel.multiplyScalar(0.9);
+      }
+    }
+  }
+  // cylindres
+  for(const c of cylColliders){
+    if(S.pos.y<c.y0-r || S.pos.y>c.y1+r) continue;
+    const dx=S.pos.x-c.x, dz=S.pos.z-c.z, d=Math.hypot(dx,dz), R=c.r+r;
+    if(d<R && d>1e-6){
+      const nx=dx/d, nz=dz/d;
+      S.pos.x=c.x+nx*R; S.pos.z=c.z+nz*R;
+      const vn=S.vel.x*nx+S.vel.z*nz;
+      if(vn<0){
+        impact=Math.max(impact,-vn);
+        S.vel.x-=(1+T.bounce)*vn*nx; S.vel.z-=(1+T.bounce)*vn*nz;
+        S.vel.multiplyScalar(0.9);
+      }
+    }
+  }
+  } // fin des sous-pas
+  if(impact > T.crashSpeed) crash('COLLISION STRUCTURE');
+  else if(impact > 2) S.impactFlash = 1;
+
+  // batterie & G
+  S.battery = Math.max(0, S.battery - dt/(T.batteryMin*60)*100);
+  S.gForce = 1/Math.max(0.35, Math.cos(tiltMag));
+  S.time += dt;
+}
+
+/* ============================================================
+   CAMÉRA FPV
+   ============================================================ */
+let shake=0;
+function updateCamera(dt, t){
+  camera.position.copy(S.pos);
+  const camPitch = -S.pitch*(1-T.camTiltComp);            // caméra FPV inclinée vers le haut
+  const thr = clamp(0.45 + S.vyInput*0.3 + Math.abs(S.pitch)/T.maxPitch*0.3, 0, 1.15);
+  shake = lerp(shake, thr*0.004 + Math.min(S.vel.length()/40,1)*0.006 + S.impactFlash*0.03, dt*8);
+  S.impactFlash = Math.max(0, S.impactFlash - dt*3);
+  const n1=Math.sin(t*61)*shake, n2=Math.cos(t*47)*shake, n3=Math.sin(t*83)*shake*0.7;
+  camera.quaternion.setFromEuler(new THREE.Euler(camPitch+n1, S.yaw+n2, S.roll+n3, 'YXZ'));
+  // léger recul de l'objectif dans le châssis
+  camera.translateZ(-0.02);
+  camera.fov = T.fovBase + Math.min(S.vel.length()/38,1)*T.fovSpeed;
+  camera.updateProjectionMatrix();
+}
+
+/* ============================================================
+   HUD MILITAIRE (canvas 2D)
+   ============================================================ */
+const hud = document.getElementById('hud');
+const hctx = hud.getContext('2d');
+function sizeHud(){
+  hud.width = innerWidth*devicePixelRatio; hud.height = innerHeight*devicePixelRatio;
+  hud.style.width = innerWidth+'px'; hud.style.height = innerHeight+'px';
+}
+sizeHud();
+
+const GRN='#8dfa9a', GRN2='rgba(141,250,154,.75)', GRN3='rgba(141,250,154,.35)', AMB='#ffd257', RED='#ff6060';
+function drawHUD(t){
+  const dpr=devicePixelRatio, W=hud.width/dpr, H=hud.height/dpr;
+  hctx.setTransform(dpr,0,0,dpr,0,0);
+  hctx.clearRect(0,0,W,H);
+  if(!S.started) return;
+
+  const cx=W/2, cyH=H/2;
+  hctx.lineWidth=1.4; hctx.strokeStyle=GRN2; hctx.fillStyle=GRN;
+  hctx.font='13px "Courier New",monospace';
+  hctx.shadowColor='rgba(120,255,140,.5)'; hctx.shadowBlur=4;
+
+  const speedK = S.vel.length()*3.6;
+  const hSpeed = Math.hypot(S.vel.x,S.vel.z)*3.6;
+  const alt = S.pos.y;
+  const hdg = ((( -S.yaw)/DEG)%360+360)%360;
+
+  /* --- statique : coins, REC, infos mission --- */
+  const bk=26;
+  hctx.beginPath();
+  for(const [x,y,sx,sy] of [[18,18,1,1],[W-18,18,-1,1],[18,H-18,1,-1],[W-18,H-18,-1,-1]]){
+    hctx.moveTo(x, y+bk*sy); hctx.lineTo(x,y); hctx.lineTo(x+bk*sx, y);
+  }
+  hctx.stroke();
+  hctx.textAlign='left';
+  hctx.fillText('UAV-07 // FPV CAM 01', 30, 34);
+  hctx.fillText('5.8GHz CH-R7  AES-256', 30, 50);
+  hctx.textAlign='right';
+  if(Math.floor(t*1.6)%2===0){ hctx.fillStyle=RED; hctx.fillText('● REC', W-30, 34); }
+  hctx.fillStyle=GRN;
+  const mm=String(Math.floor(S.time/60)).padStart(2,'0'), ss=String(Math.floor(S.time%60)).padStart(2,'0');
+  hctx.fillText(`T+${mm}:${ss}`, W-30, 50);
+  hctx.fillText(`48°51'${(12+S.pos.x*0.01).toFixed(2)}"N  2°21'${(30+S.pos.z*0.01).toFixed(2)}"E`, W-30, H-30);
+  hctx.textAlign='left';
+  hctx.fillText('MODE ANGLE  GPS 11 SAT', 30, H-30);
+
+  /* --- bande de cap (haut) --- */
+  const tapeW=Math.min(420,W*0.5);
+  hctx.save();
+  hctx.beginPath(); hctx.rect(cx-tapeW/2, 20, tapeW, 44); hctx.clip();
+  hctx.textAlign='center'; hctx.strokeStyle=GRN3;
+  for(let d=-60; d<=60; d+=5){
+    const h2=(Math.round(hdg/5)*5+d+360)%360;
+    const off=((h2-hdg+540)%360)-180;
+    const xx=cx+off*(tapeW/120);
+    if(h2%10===0){
+      hctx.beginPath(); hctx.moveTo(xx,52); hctx.lineTo(xx,62); hctx.stroke();
+      const lbl = h2===0?'N':h2===90?'E':h2===180?'S':h2===270?'W':String(h2/10|0).padStart(2,'0');
+      hctx.fillText(lbl, xx, 46);
+    } else {
+      hctx.beginPath(); hctx.moveTo(xx,57); hctx.lineTo(xx,62); hctx.stroke();
+    }
+  }
+  hctx.restore();
+  hctx.strokeStyle=GRN2;
+  hctx.beginPath(); hctx.moveTo(cx-7,70); hctx.lineTo(cx,62); hctx.lineTo(cx+7,70); hctx.stroke();
+  hctx.textAlign='center';
+  hctx.strokeRect(cx-26, 72, 52, 18);
+  hctx.fillText(String(Math.round(hdg)).padStart(3,'0')+'°', cx, 86);
+
+  /* --- échelle de tangage + horizon (centre, tourne avec le roulis) --- */
+  hctx.save();
+  hctx.translate(cx, cyH);
+  hctx.rotate(-S.roll);                       // incliné à droite => horizon tourne CCW
+  const pxPerDeg = H/70;
+  const pitchOff = (-S.pitch/DEG)*pxPerDeg;   // piquer => l'horizon monte à l'écran
+  hctx.translate(0, pitchOff);
+  hctx.strokeStyle=GRN2; hctx.textAlign='left';
+  for(let a=-40; a<=40; a+=10){
+    const y=-a*pxPerDeg;
+    if(Math.abs(y + pitchOff) > H*0.36) continue;
+    const w2 = a===0? 150 : 70;
+    hctx.setLineDash(a<0? [7,6]:[]);
+    hctx.beginPath();
+    hctx.moveTo(-w2, y); hctx.lineTo(-24, y);
+    hctx.moveTo( 24, y); hctx.lineTo( w2, y);
+    hctx.stroke();
+    if(a!==0){ hctx.fillText(String(Math.abs(a)), w2+6, y+4); hctx.fillText(String(Math.abs(a)), -w2-22, y+4); }
+  }
+  hctx.setLineDash([]);
+  hctx.restore();
+
+  /* --- réticule central + vecteur vitesse --- */
+  hctx.strokeStyle=GRN;
+  hctx.beginPath();
+  hctx.moveTo(cx-16,cyH); hctx.lineTo(cx-5,cyH);
+  hctx.moveTo(cx+5,cyH);  hctx.lineTo(cx+16,cyH);
+  hctx.moveTo(cx,cyH-5);  hctx.lineTo(cx,cyH-12);
+  hctx.stroke();
+  hctx.beginPath(); hctx.arc(cx,cyH,2,0,7); hctx.fill();
+  { // flight-path marker
+    const fwdX=-Math.sin(S.yaw), fwdZ=-Math.cos(S.yaw);
+    const rgtX=Math.cos(S.yaw),  rgtZ=-Math.sin(S.yaw);
+    const vF=S.vel.x*fwdX+S.vel.z*fwdZ, vR=S.vel.x*rgtX+S.vel.z*rgtZ;
+    if(Math.abs(vF)>1){
+      const ang=Math.atan2(vR,Math.abs(vF)), vang=Math.atan2(S.vel.y,Math.abs(vF));
+      const mx=cx+clamp(ang/DEG,-30,30)*6, my=cyH-clamp(vang/DEG,-25,25)*5;
+      hctx.strokeStyle=GRN2;
+      hctx.beginPath(); hctx.arc(mx,my,6,0,7); hctx.stroke();
+      hctx.beginPath();
+      hctx.moveTo(mx-12,my); hctx.lineTo(mx-6,my);
+      hctx.moveTo(mx+6,my);  hctx.lineTo(mx+12,my);
+      hctx.moveTo(mx,my-6);  hctx.lineTo(mx,my-10);
+      hctx.stroke();
+    }
+  }
+
+  /* --- cadran VITESSE (gauche) --- */
+  const lx=Math.max(70,cx-tapeW/2-120);
+  hctx.strokeStyle=GRN2; hctx.textAlign='right';
+  hctx.strokeRect(lx-58, cyH-26, 86, 40);
+  hctx.font='26px "Courier New",monospace';
+  hctx.fillText(String(Math.round(speedK)), lx+16, cyH+4);
+  hctx.font='11px "Courier New",monospace';
+  hctx.fillText('KM/H', lx+16, cyH-30);
+  hctx.fillText('SOL '+Math.round(hSpeed), lx+16, cyH+30);
+  // ruban vertical
+  hctx.save();
+  hctx.beginPath(); hctx.rect(lx+34, cyH-90, 22, 180); hctx.clip();
+  hctx.strokeStyle=GRN3; hctx.textAlign='left';
+  for(let v=Math.floor((speedK-45)/10)*10; v<=speedK+45; v+=10){
+    if(v<0) continue;
+    const y=cyH+(speedK-v)*2;
+    hctx.beginPath(); hctx.moveTo(lx+34,y); hctx.lineTo(lx+ (v%50===0?46:40), y); hctx.stroke();
+  }
+  hctx.restore();
+
+  /* --- cadran ALTITUDE (droite) --- */
+  const rx=Math.min(W-70,cx+tapeW/2+120);
+  hctx.textAlign='left'; hctx.strokeStyle=GRN2;
+  hctx.strokeRect(rx-28, cyH-26, 86, 40);
+  hctx.font='26px "Courier New",monospace';
+  hctx.fillStyle = alt<1.2 && S.vel.y<-2 ? RED : GRN;
+  hctx.fillText(alt.toFixed(1), rx-16, cyH+4);
+  hctx.fillStyle=GRN;
+  hctx.font='11px "Courier New",monospace';
+  hctx.fillText('ALT M', rx-16, cyH-30);
+  const vsi=S.vel.y;
+  hctx.fillText('VZ '+(vsi>=0?'+':'')+vsi.toFixed(1), rx-16, cyH+30);
+  // flèche VSI
+  hctx.strokeStyle=GRN2;
+  hctx.beginPath(); hctx.moveTo(rx+66, cyH); hctx.lineTo(rx+66, cyH-clamp(vsi,-8,8)*7); hctx.stroke();
+  const ay=cyH-clamp(vsi,-8,8)*7;
+  hctx.beginPath();
+  hctx.moveTo(rx+62, ay+(vsi>0?5:-5)); hctx.lineTo(rx+66, ay); hctx.lineTo(rx+70, ay+(vsi>0?5:-5));
+  if(Math.abs(vsi)>.3) hctx.stroke();
+
+  /* --- bas : batterie, gaz, signal, G --- */
+  const by=H-64;
+  hctx.textAlign='left';
+  const bat=S.battery;
+  hctx.fillStyle = bat<20 ? (Math.floor(t*3)%2? RED:'rgba(255,96,96,.3)') : GRN;
+  hctx.fillText(`BAT ${bat.toFixed(0)}%`, 30, by);
+  hctx.strokeStyle=GRN2; hctx.strokeRect(95, by-11, 84, 13);
+  hctx.fillStyle = bat<20? RED : GRN2;
+  hctx.fillRect(97, by-9, 80*bat/100, 9);
+  const thr = clamp(0.45 + S.vyInput*0.35 + Math.abs(S.pitch)/T.maxPitch*0.25, 0, 1);
+  hctx.fillStyle=GRN;
+  hctx.fillText('GAZ', 30, by+22);
+  hctx.strokeRect(95, by+11, 84, 13);
+  hctx.fillStyle=GRN2; hctx.fillRect(97, by+13, 80*thr, 9);
+  hctx.textAlign='right'; hctx.fillStyle=GRN;
+  hctx.fillText(`G ${S.gForce.toFixed(1)}`, W-30, by);
+  hctx.fillText('LINK', W-108, by+22);
+  for(let i=0;i<5;i++){
+    hctx.fillStyle = i<4? GRN2 : GRN3;
+    hctx.fillRect(W-100+i*10, by+22-4-i*2.5, 6, 4+i*2.5);
+  }
+
+  /* --- alertes centre-bas --- */
+  hctx.textAlign='center'; hctx.font='15px "Courier New",monospace';
+  const warns=[];
+  if(alt<1.6 && S.vel.y<-2.5) warns.push('PROXIMITÉ SOL');
+  if(speedK>110) warns.push('SURVITESSE');
+  if(bat<20) warns.push('BATTERIE FAIBLE');
+  if(bat<=0) warns.push('RETOUR IMMÉDIAT');
+  warns.forEach((w,i)=>{
+    if(Math.floor(t*2.5)%2===0){ hctx.fillStyle=AMB; hctx.fillText('⚠ '+w, cx, H-100-i*20); }
+  });
+  hctx.shadowBlur=0;
+
+  /* flash blanc sur impact léger */
+  if(S.impactFlash>0){
+    hctx.fillStyle=`rgba(255,255,255,${S.impactFlash*0.25})`;
+    hctx.fillRect(0,0,W,H);
+  }
+  /* neige analogique sur crash */
+  if(S.crashed){
+    for(let i=0;i<900;i++){
+      const g2=(Math.random()*160)|0;
+      hctx.fillStyle=`rgb(${g2},${g2+((Math.random()*40)|0)},${g2})`;
+      hctx.fillRect(Math.random()*W, Math.random()*H, 2.5, 2.5);
+    }
+  }
+}
+
+/* ============================================================
+   BOUCLE
+   ============================================================ */
+let last=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  const t=now/1000;
+
+  if(S.started && !S.paused && !S.crashed) physics(dt);
+  updateCamera(dt, t);
+
+  // poussière qui flotte
+  const dp=dust.geometry.attributes.position.array, spd=dust.userData.spd;
+  for(let i=0;i<spd.length;i++){
+    dp[i*3+1]-=spd[i]*dt*0.4;
+    dp[i*3]+=Math.sin(t*.7+i)*dt*0.12;
+    if(dp[i*3+1]<0.2) dp[i*3+1]=13;
+  }
+  dust.geometry.attributes.position.needsUpdate=true;
+
+  const thr=clamp(0.45+S.vyInput*0.35+Math.abs(S.pitch)/T.maxPitch*0.25,0,1);
+  audioTick(thr, S.vel.length());
+
+  renderer.render(scene, camera);
+  drawHUD(t);
+}
+requestAnimationFrame(loop);
+
+addEventListener('resize', ()=>{
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  sizeHud();
+});
+
+/* hooks de test */
+window.__drone = {
+  state:S, keys, T, respawn, crash,
+  setStick(x,y){ S.stickX=clamp(x,-1,1); S.stickY=clamp(y,-1,1); },
+  start(){ if(!S.started){ S.started=true; elStart.style.display='none'; } },
+  cam:camera, scene, THREE,
+};
+</script>
+</body>
+</html>
