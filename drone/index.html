@@ -44,14 +44,15 @@
   <h1>BLACKSITE FPV</h1>
   <h2>UAV-07 // ZONE D'EXCLUSION — SECTEUR K</h2>
   <div class="ctl">
-    <b>SOURIS</b><span>gyroscope — glisser vers l'avant = piquer / accélérer</span>
-    <b>GAUCHE / DROITE</b><span>inclinaison = virage</span>
-    <b>Z</b><span>monter</span>
-    <b>S</b><span>descendre</span>
+    <b>Z / S</b><span>avancer / reculer</span>
+    <b>Q / D</b><span>gauche / droite</span>
+    <b>A / E</b><span>monter / descendre</span>
+    <b>SOURIS</b><span>viser — le drone tire là où tu regardes</span>
     <b>CLIC</b><span>tir — munitions explosives</span>
+    <b>MAJ</b><span>boost</span>
+    <b>ESPACE</b><span>frein</span>
     <b>F</b><span>recharger</span>
     <b>N</b><span>jour → nuit → vision nocturne</span>
-    <b>ESPACE</b><span>remise à plat instantanée</span>
     <b>R</b><span>reprendre au point de départ</span>
     <b>M</b><span>son on/off</span>
   </div>
@@ -88,17 +89,16 @@ const lerp  = (a,b,t)=>a+(b-a)*t;
 
 /* ---------- tuning ---------- */
 const T = {
-  maxPitch: 38*DEG,      // inclinaison avant max (plein manche)
-  maxRoll:  36*DEG,
-  sens:     1/260,       // pixels de souris pour plein débattement
-  yawGain:  1.7,         // rad/s à pleine inclinaison latérale
-  g:        9.81,
-  dragLin:  0.115,
-  dragQuad: 0.0036,
-  latSlip:  0.30,        // portion de l'accél latérale (dérapage en virage)
-  vzMax:    6.5,         // m/s montée/descente
-  vzAccel:  14,
-  camTiltComp: 0.62,     // la caméra compense 62% du tangage (caméra FPV inclinée)
+  lookSens: 0.0022,      // rad par pixel de souris (visée)
+  maxLook:  1.32,        // visée verticale max (±76°)
+  maxFwd:   24,          // m/s en avant
+  maxBack:  15,
+  maxStr:   13,          // m/s latéral
+  vzMax:    7,           // m/s montée/descente
+  accel:    20,          // m/s² vers la vitesse cible
+  vzAccel:  15,
+  boost:    1.65,        // multiplicateur MAJ
+  visTilt:  0.30,        // inclinaison visuelle du châssis (rad)
   fovBase:  78,
   fovSpeed: 9,
   crashSpeed: 8.5,       // m/s d'impact => crash
@@ -112,8 +112,8 @@ const spawn = { x:-38, y:1.6, z:0, yaw:-Math.PI/2 }; // face au grand hall (+x)
 const S = {
   pos: new THREE.Vector3(spawn.x, spawn.y, spawn.z),
   vel: new THREE.Vector3(),
-  yaw: spawn.yaw, pitch: 0, roll: 0,
-  stickX: 0, stickY: 0,          // manche virtuel accumulé par la souris [-1,1]
+  yaw: spawn.yaw, camPitch: 0,   // visée souris
+  pitch: 0, roll: 0,             // inclinaison visuelle du châssis
   vyInput: 0,
   time: 0, battery: 100,
   crashed: false, started: false, paused: false,
@@ -1407,7 +1407,7 @@ const elPause=document.getElementById('screen-pause');
 
 addEventListener('keydown', e=>{
   const k=e.key.toLowerCase(); keys[k]=true;
-  if(k===' '){ S.stickX=0; S.stickY=0; e.preventDefault(); }
+  if(k===' ') e.preventDefault();      // frein (lu via keys[' '])
   if(k==='r') respawn();
   if(k==='m') muted=!muted;
   if(k==='n') S.mode=(S.mode+1)%3;
@@ -1440,7 +1440,7 @@ elCrash.addEventListener('click', ()=>{ respawn(); grab(); });
 function respawn(){
   S.pos.set(spawn.x, spawn.y, spawn.z);
   S.vel.set(0,0,0);
-  S.yaw=spawn.yaw; S.pitch=0; S.roll=0; S.stickX=0; S.stickY=0;
+  S.yaw=spawn.yaw; S.camPitch=0; S.pitch=0; S.roll=0;
   S.crashed=false; S.battery=Math.max(S.battery, 25); S.impactFlash=0;
   S.ammo=8; S.reloadT=0; S.recoil=0;
   elCrash.style.display='none';
@@ -1458,33 +1458,37 @@ function crash(reason){
    ============================================================ */
 const tmpV = new THREE.Vector3();
 function physics(dt){
-  // — manche virtuel depuis la souris (gyroscope persistant) —
-  S.stickY = clamp(S.stickY + (-mouseDY)*T.sens, -1, 1);  // avant = piquer
-  S.stickX = clamp(S.stickX + ( mouseDX)*T.sens, -1, 1);
+  // — visée souris (comme un FPS) —
+  S.yaw     -= mouseDX*T.lookSens;
+  S.camPitch = clamp(S.camPitch - mouseDY*T.lookSens, -T.maxLook, T.maxLook);
   mouseDX=0; mouseDY=0;
 
-  // attitude cible = position du manche (mode angle, réponse rapide)
-  const tgtPitch = S.stickY*T.maxPitch, tgtRoll = S.stickX*T.maxRoll;
-  S.pitch += (tgtPitch-S.pitch)*Math.min(1, dt*10);
-  S.roll  += (tgtRoll -S.roll )*Math.min(1, dt*10);
+  // — déplacements ZQSD + A/E —
+  const fIn = ((keys['z']||keys['w'])?1:0) - (keys['s']?1:0);
+  const sIn = (keys['d']?1:0) - (keys['q']?1:0);
+  const uIn = (keys['a']?1:0) - (keys['e']?1:0);
+  const brake = !!keys[' '];
+  const boost = keys['shift'] ? T.boost : 1;
+  S.vyInput = uIn;
 
-  // lacet couplé à l'inclinaison (virage coordonné)
-  S.yaw -= S.stickX * T.yawGain * dt;
+  // vitesse cible dans le repère du regard (Z avance là où tu vises, A/E en plus)
+  const cp = Math.cos(S.camPitch), sp = Math.sin(S.camPitch);
+  const fwdX=-Math.sin(S.yaw)*cp, fwdY=sp, fwdZ=-Math.cos(S.yaw)*cp;
+  const rgtX= Math.cos(S.yaw),             rgtZ=-Math.sin(S.yaw);
+  const vF = fIn * (fIn>0 ? T.maxFwd : T.maxBack) * boost;
+  const vS = sIn * T.maxStr * boost;
+  let tvx = fwdX*vF + rgtX*vS;
+  let tvy = fwdY*vF + uIn*T.vzMax*boost;
+  let tvz = fwdZ*vF + rgtZ*vS;
+  if(brake){ tvx=0; tvy=0; tvz=0; }
+  const acc = T.accel*(brake?1.6:1)*boost;
+  S.vel.x += clamp(tvx-S.vel.x, -acc*dt, acc*dt);
+  S.vel.z += clamp(tvz-S.vel.z, -acc*dt, acc*dt);
+  S.vel.y += clamp(tvy-S.vel.y, -T.vzAccel*boost*dt, T.vzAccel*boost*dt);
 
-  // — vertical : Z monte, S descend, sinon tenue d'altitude —
-  const up = (keys['z']||keys['w'])?1:0, dn = keys['s']?1:0;
-  S.vyInput = up-dn;
-  const tiltMag = Math.sqrt(S.pitch*S.pitch + S.roll*S.roll);
-  let vzTgt = S.vyInput * T.vzMax;
-  vzTgt -= Math.max(0, tiltMag-30*DEG)*1.5;          // ça s'enfonce un peu en inclinaison max
-  S.vel.y += clamp(vzTgt - S.vel.y, -T.vzAccel*dt, T.vzAccel*dt);
-
-  // — horizontal : la poussée inclinée accélère le drone —
-  // forward = (-sin(yaw), 0, -cos(yaw)) ; right = (cos(yaw), 0, -sin(yaw))
-  const aF = T.g*Math.tan(S.pitch);                  // avant (piquer = accélérer)
-  const aL = T.g*Math.tan(S.roll)*T.latSlip;         // dérive latérale
-  const fwdX=-Math.sin(S.yaw), fwdZ=-Math.cos(S.yaw);
-  const rgtX= Math.cos(S.yaw), rgtZ=-Math.sin(S.yaw);
+  // inclinaison visuelle du châssis (avance = pique du nez, strafe = gîte)
+  S.pitch += (fIn*T.visTilt - S.pitch)*Math.min(1, dt*6);
+  S.roll  += (sIn*T.visTilt - S.roll )*Math.min(1, dt*6);
 
   // sous-pas : jamais plus de ~0.18 m parcourus par pas (anti-tunneling)
   const nSub = clamp(Math.ceil(S.vel.length()*dt/0.18), 1, 12);
@@ -1492,16 +1496,7 @@ function physics(dt){
   let impact = 0;
   const r = T.droneR;
   for(let sub=0; sub<nSub; sub++){
-  S.vel.x += (fwdX*aF + rgtX*aL)*h;
-  S.vel.z += (fwdZ*aF + rgtZ*aL)*h;
-
-  // traînée
   const hv = Math.hypot(S.vel.x, S.vel.z);
-  const drag = T.dragLin + T.dragQuad*hv;
-  S.vel.x -= S.vel.x*drag*h*(1+hv*0.004);
-  S.vel.z -= S.vel.z*drag*h*(1+hv*0.004);
-  S.vel.y -= S.vel.y*0.4*h;
-
   S.pos.addScaledVector(S.vel, h);
 
   // — collisions —
@@ -1562,7 +1557,7 @@ function physics(dt){
 
   // batterie & G
   S.battery = Math.max(0, S.battery - dt/(T.batteryMin*60)*100);
-  S.gForce = 1/Math.max(0.35, Math.cos(tiltMag));
+  S.gForce = 1 + Math.min(2.5, Math.hypot(S.pitch, S.roll)*2.2);
   S.time += dt;
 }
 
@@ -1572,12 +1567,12 @@ function physics(dt){
 let shake=0;
 function updateCamera(dt, t){
   camera.position.copy(S.pos);
-  const camPitch = -S.pitch*(1-T.camTiltComp);            // caméra FPV inclinée vers le haut
-  const thr = clamp(0.45 + S.vyInput*0.3 + Math.abs(S.pitch)/T.maxPitch*0.3, 0, 1.15);
+  const thr = clamp(0.35 + S.vel.length()/30*0.5 + Math.abs(S.vel.y)/T.vzMax*0.3, 0, 1.15);
   shake = lerp(shake, thr*0.004 + Math.min(S.vel.length()/40,1)*0.006 + S.impactFlash*0.03, dt*8);
   S.impactFlash = Math.max(0, S.impactFlash - dt*3);
   const n1=Math.sin(t*61)*shake, n2=Math.cos(t*47)*shake, n3=Math.sin(t*83)*shake*0.7;
-  camera.quaternion.setFromEuler(new THREE.Euler(camPitch+n1+S.recoil, S.yaw+n2, S.roll+n3, 'YXZ'));
+  camera.quaternion.setFromEuler(new THREE.Euler(
+    S.camPitch - S.pitch*0.22 + n1 + S.recoil, S.yaw+n2, S.roll*0.55+n3, 'YXZ'));
   // léger recul de l'objectif dans le châssis
   camera.translateZ(-0.02);
   camera.fov = T.fovBase + Math.min(S.vel.length()/38,1)*T.fovSpeed;
@@ -1632,7 +1627,7 @@ function drawHUD(t){
   hctx.fillText(`T+${mm}:${ss}`, W-30, 50);
   hctx.fillText(`48°51'${(12+S.pos.x*0.01).toFixed(2)}"N  2°21'${(30+S.pos.z*0.01).toFixed(2)}"E`, W-30, H-30);
   hctx.textAlign='left';
-  hctx.fillText('MODE ANGLE  GPS 11 SAT', 30, H-30);
+  hctx.fillText('MODE COMBAT  GPS 11 SAT', 30, H-30);
 
   /* --- bande de cap (haut) --- */
   const tapeW=Math.min(420,W*0.5);
@@ -1663,7 +1658,7 @@ function drawHUD(t){
   hctx.translate(cx, cyH);
   hctx.rotate(-S.roll);                       // incliné à droite => horizon tourne CCW
   const pxPerDeg = H/70;
-  const pitchOff = (-S.pitch/DEG)*pxPerDeg;   // piquer => l'horizon monte à l'écran
+  const pitchOff = (S.camPitch/DEG)*pxPerDeg; // viser en haut => l'horizon descend à l'écran
   hctx.translate(0, pitchOff);
   hctx.strokeStyle=GRN2; hctx.textAlign='left';
   for(let a=-40; a<=40; a+=10){
@@ -1754,7 +1749,7 @@ function drawHUD(t){
   hctx.strokeStyle=GRN2; hctx.strokeRect(95, by-11, 84, 13);
   hctx.fillStyle = bat<20? RED : GRN2;
   hctx.fillRect(97, by-9, 80*bat/100, 9);
-  const thr = clamp(0.45 + S.vyInput*0.35 + Math.abs(S.pitch)/T.maxPitch*0.25, 0, 1);
+  const thr = clamp(0.35 + S.vel.length()/30*0.5 + Math.abs(S.vel.y)/T.vzMax*0.3, 0, 1);
   hctx.fillStyle=GRN;
   hctx.fillText('GAZ', 30, by+22);
   hctx.strokeRect(95, by+11, 84, 13);
@@ -1890,7 +1885,7 @@ function loop(now){
     ash.geometry.attributes.position.needsUpdate=true;
   }
 
-  const thr=clamp(0.45+S.vyInput*0.35+Math.abs(S.pitch)/T.maxPitch*0.25,0,1);
+  const thr=clamp(0.35 + S.vel.length()/30*0.5 + Math.abs(S.vel.y)/T.vzMax*0.3, 0, 1);
   audioTick(thr, S.vel.length());
 
   renderer.render(scene, camera);
@@ -1907,7 +1902,7 @@ addEventListener('resize', ()=>{
 /* hooks de test */
 window.__drone = {
   state:S, keys, T, respawn, crash, fire, explode, zombies, targets,
-  setStick(x,y){ S.stickX=clamp(x,-1,1); S.stickY=clamp(y,-1,1); },
+  setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
   setMode(m){ S.mode=m%3; },
   start(){ if(!S.started){ S.started=true; elStart.style.display='none'; } },
   cam:camera, scene, THREE,
