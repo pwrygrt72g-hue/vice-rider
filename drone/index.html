@@ -49,6 +49,7 @@
     <b>A / E</b><span>monter / descendre</span>
     <b>SOURIS</b><span>viser — le drone tire là où tu regardes</span>
     <b>CLIC</b><span>tir — munitions explosives</span>
+    <b>CLIC DROIT</b><span>zoom (maintenir) — molette : x2 / x4 / x6</span>
     <b>MAJ</b><span>boost</span>
     <b>ESPACE</b><span>frein</span>
     <b>F</b><span>recharger</span>
@@ -120,8 +121,10 @@ const S = {
   gForce: 1, impactFlash: 0,
   mode: 0, nightT: 0,            // 0 jour, 1 nuit, 2 nuit+NV
   ammo: 8, reloadT: 0, recoil: 0,
+  zoomT: 0, zoomX: 4,            // zoom d'arme (clic droit), grossissement molette
   kills: 0, targetsHit: 0,
 };
+let zoomHeld = false;
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
 
@@ -1043,7 +1046,7 @@ function explode(p){
     S.vel.add(push); S.impactFlash = 1;
     if(dd < 2.2) crash('SOUFFLE DE L\'EXPLOSION');
   }
-  shake += 0.04/Math.max(1, dd*0.25);
+  shake += 0.02/Math.max(1, dd*0.25);
 }
 
 /* --- tir --- */
@@ -1061,7 +1064,7 @@ function fire(){
   b.pos.y -= 0.12;
   b.vel.copy(bDir).multiplyScalar(85).add(S.vel);
   b.life = 3; b.on = true; b.m.visible = true; b.m.position.copy(b.pos);
-  S.recoil = 0.022; shake += 0.012;
+  S.recoil = 0.022*(1 - 0.4*S.zoomT);
   gun.userData.flash.visible = true;
   gun.userData.flash.rotation.z = Math.random()*6.28;
   setTimeout(()=>{ gun.userData.flash.visible=false; }, 55);
@@ -1414,8 +1417,19 @@ addEventListener('keydown', e=>{
   if(k==='f' && S.ammo<8 && S.reloadT<=0) S.reloadT=1.8;
 });
 addEventListener('mousedown', e=>{
-  if(e.button===0 && document.pointerLockElement) fire();
+  if(!document.pointerLockElement) return;
+  if(e.button===0) fire();
+  if(e.button===2) zoomHeld = true;
 });
+addEventListener('mouseup', e=>{ if(e.button===2) zoomHeld = false; });
+addEventListener('contextmenu', e=>{ if(S.started) e.preventDefault(); });
+addEventListener('wheel', e=>{
+  if(!document.pointerLockElement) return;
+  const levels = [2,4,6];
+  let i = levels.indexOf(S.zoomX);
+  i = clamp(i + (e.deltaY>0 ? -1 : 1), 0, levels.length-1);
+  S.zoomX = levels[i];
+}, {passive:true});
 addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
 
 addEventListener('mousemove', e=>{
@@ -1458,9 +1472,10 @@ function crash(reason){
    ============================================================ */
 const tmpV = new THREE.Vector3();
 function physics(dt){
-  // — visée souris (comme un FPS) —
-  S.yaw     -= mouseDX*T.lookSens;
-  S.camPitch = clamp(S.camPitch - mouseDY*T.lookSens, -T.maxLook, T.maxLook);
+  // — visée souris (comme un FPS) — sensibilité réduite quand on zoome
+  const sens = T.lookSens * lerp(1, 1.4/S.zoomX, S.zoomT);
+  S.yaw     -= mouseDX*sens;
+  S.camPitch = clamp(S.camPitch - mouseDY*sens, -T.maxLook, T.maxLook);
   mouseDX=0; mouseDY=0;
 
   // — déplacements ZQSD + A/E —
@@ -1567,16 +1582,20 @@ function physics(dt){
 let shake=0;
 function updateCamera(dt, t){
   camera.position.copy(S.pos);
-  const thr = clamp(0.35 + S.vel.length()/30*0.5 + Math.abs(S.vel.y)/T.vzMax*0.3, 0, 1.15);
-  shake = lerp(shake, thr*0.004 + Math.min(S.vel.length()/40,1)*0.006 + S.impactFlash*0.03, dt*8);
+  // caméra stabilisée : ne tremble qu'aux impacts et explosions
+  shake = lerp(shake, S.impactFlash*0.018, dt*10);
   S.impactFlash = Math.max(0, S.impactFlash - dt*3);
   const n1=Math.sin(t*61)*shake, n2=Math.cos(t*47)*shake, n3=Math.sin(t*83)*shake*0.7;
   camera.quaternion.setFromEuler(new THREE.Euler(
     S.camPitch - S.pitch*0.22 + n1 + S.recoil, S.yaw+n2, S.roll*0.55+n3, 'YXZ'));
   // léger recul de l'objectif dans le châssis
   camera.translateZ(-0.02);
-  camera.fov = T.fovBase + Math.min(S.vel.length()/38,1)*T.fovSpeed;
+  // zoom d'arme (clic droit maintenu)
+  S.zoomT = lerp(S.zoomT, zoomHeld?1:0, Math.min(1, dt*9));
+  const baseFov = T.fovBase + Math.min(S.vel.length()/38,1)*T.fovSpeed;
+  camera.fov = lerp(baseFov, T.fovBase/S.zoomX, S.zoomT);
   camera.updateProjectionMatrix();
+  gun.visible = S.zoomT < 0.35;        // le pod sort du champ en visée optique
 }
 
 /* ============================================================
@@ -1698,6 +1717,37 @@ function drawHUD(t){
       hctx.moveTo(mx,my-6);  hctx.lineTo(mx,my-10);
       hctx.stroke();
     }
+  }
+
+  /* --- réticule de précision quand on zoome --- */
+  if(S.zoomT > 0.4){
+    const a = (S.zoomT-0.4)/0.6;
+    hctx.save();
+    hctx.globalAlpha = a;
+    hctx.strokeStyle = GRN;
+    hctx.lineWidth = 1;
+    const R = Math.min(W,H)*0.26;
+    hctx.beginPath();                                  // croix fine
+    hctx.moveTo(cx-R, cyH); hctx.lineTo(cx-14, cyH);
+    hctx.moveTo(cx+14, cyH); hctx.lineTo(cx+R, cyH);
+    hctx.moveTo(cx, cyH-R); hctx.lineTo(cx, cyH-14);
+    hctx.moveTo(cx, cyH+14); hctx.lineTo(cx, cyH+R);
+    hctx.stroke();
+    for(let k=1; k<=4; k++){                           // graduations mil-dot
+      const o = k*R/5;
+      hctx.beginPath();
+      hctx.moveTo(cx-o, cyH-4); hctx.lineTo(cx-o, cyH+4);
+      hctx.moveTo(cx+o, cyH-4); hctx.lineTo(cx+o, cyH+4);
+      hctx.moveTo(cx-4, cyH-o); hctx.lineTo(cx+4, cyH-o);
+      hctx.moveTo(cx-4, cyH+o); hctx.lineTo(cx+4, cyH+o);
+      hctx.stroke();
+    }
+    hctx.beginPath(); hctx.arc(cx, cyH, R, 0, 7); hctx.stroke();  // cercle d'optique
+    hctx.textAlign='center'; hctx.font='14px "Courier New",monospace';
+    hctx.fillStyle=GRN;
+    hctx.fillText(`ZOOM x${S.zoomX}`, cx, cyH+R+22);
+    hctx.fillText('STAB ●', cx, cyH-R-12);
+    hctx.restore();
   }
 
   /* --- cadran VITESSE (gauche) --- */
@@ -1904,6 +1954,7 @@ window.__drone = {
   state:S, keys, T, respawn, crash, fire, explode, zombies, targets,
   setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
   setMode(m){ S.mode=m%3; },
+  setZoom(held,x){ zoomHeld=!!held; if(x) S.zoomX=x; },
   start(){ if(!S.started){ S.started=true; elStart.style.display='none'; } },
   cam:camera, scene, THREE,
 };
