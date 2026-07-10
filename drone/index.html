@@ -8,6 +8,7 @@
 <style>
   html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",ui-monospace,monospace;}
   #c3d{position:fixed;inset:0;display:block;}
+  #c3d.nv{filter:grayscale(1) sepia(1) hue-rotate(58deg) saturate(5) brightness(2.35) contrast(1.12);}
   #hud{position:fixed;inset:0;pointer-events:none;}
   /* --- effets écran caméra militaire --- */
   #fx-scan{position:fixed;inset:0;pointer-events:none;z-index:5;
@@ -47,6 +48,9 @@
     <b>GAUCHE / DROITE</b><span>inclinaison = virage</span>
     <b>Z</b><span>monter</span>
     <b>S</b><span>descendre</span>
+    <b>CLIC</b><span>tir — munitions explosives</span>
+    <b>F</b><span>recharger</span>
+    <b>N</b><span>jour → nuit → vision nocturne</span>
     <b>ESPACE</b><span>remise à plat instantanée</span>
     <b>R</b><span>reprendre au point de départ</span>
     <b>M</b><span>son on/off</span>
@@ -114,6 +118,9 @@ const S = {
   time: 0, battery: 100,
   crashed: false, started: false, paused: false,
   gForce: 1, impactFlash: 0,
+  mode: 0, nightT: 0,            // 0 jour, 1 nuit, 2 nuit+NV
+  ammo: 8, reloadT: 0, recoil: 0,
+  kills: 0, targetsHit: 0,
 };
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
@@ -138,7 +145,7 @@ const camera = new THREE.PerspectiveCamera(T.fovBase, innerWidth/innerHeight, 0.
 
 /* ---------- ciel atmosphérique (shader : diffusion, soleil bas, nuages FBM) ---------- */
 const SUN_DIR = new THREE.Vector3(-0.62, 0.21, -0.42).normalize();  // fin d'après-midi, soleil bas
-const skyUni = { uSun:{value:SUN_DIR}, uT:{value:0} };
+const skyUni = { uSun:{value:SUN_DIR}, uT:{value:0}, uNight:{value:0} };
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(1400, 40, 24),
   new THREE.ShaderMaterial({
@@ -164,42 +171,55 @@ const sky = new THREE.Mesh(
         for(int i=0;i<5;i++){ s+=a*vnoise(p); p=p*2.13+vec2(17.3,9.1); a*=0.52; }
         return s;
       }
+      uniform float uNight;
       void main(){
         vec3 dir = normalize(vDir);
         float sd = clamp(dot(dir, uSun), -1.0, 1.0);
         float y  = dir.y;
 
-        // gradient : zénith bleu-gris délavé -> horizon ocre poussiéreux
+        // ----- JOUR : zénith bleu-gris délavé -> horizon ocre poussiéreux -----
         vec3 zen = vec3(0.208, 0.263, 0.329);
         vec3 mid = vec3(0.545, 0.482, 0.376);
         vec3 hor = vec3(0.788, 0.545, 0.302);
-        vec3 col = mix(mid, zen, pow(clamp(y,0.0,1.0), 0.62));
-        col = mix(hor, col, smoothstep(-0.02, 0.30, y));
-        // bande de poussière/suie à l'horizon
-        col = mix(vec3(0.478,0.373,0.263), col, smoothstep(-0.05, 0.14, y));
-        // réchauffement du côté du soleil
-        col += vec3(0.55,0.28,0.10) * pow(max(sd,0.0), 6.0) * smoothstep(-0.05,0.25,y);
+        vec3 day = mix(mid, zen, pow(clamp(y,0.0,1.0), 0.62));
+        day = mix(hor, day, smoothstep(-0.02, 0.30, y));
+        day = mix(vec3(0.478,0.373,0.263), day, smoothstep(-0.05, 0.14, y));
+        day += vec3(0.55,0.28,0.10) * pow(max(sd,0.0), 6.0) * smoothstep(-0.05,0.25,y);
+        day += vec3(1.0,0.62,0.30) * pow(max(sd,0.0), 14.0)  * 0.55;
+        day += vec3(1.1,0.80,0.50) * pow(max(sd,0.0), 180.0) * 1.4;
+        day += vec3(2.6,2.1,1.6)   * smoothstep(0.99962, 0.99991, sd);
 
-        // soleil : disque + halo de poussière
-        col += vec3(1.0,0.62,0.30) * pow(max(sd,0.0), 14.0)  * 0.55;
-        col += vec3(1.1,0.80,0.50) * pow(max(sd,0.0), 180.0) * 1.4;
-        col += vec3(2.6,2.1,1.6)   * smoothstep(0.99962, 0.99991, sd);
+        // ----- NUIT : ciel profond + lune + étoiles -----
+        vec3 night = mix(vec3(0.030,0.040,0.062), vec3(0.004,0.006,0.013), pow(clamp(y,0.0,1.0), 0.5));
+        night = mix(vec3(0.050,0.055,0.075), night, smoothstep(-0.03, 0.12, y));
+        float md = clamp(dot(dir, -uSun), 0.0, 1.0);      // lune à l'opposé du soleil
+        night += vec3(0.80,0.90,1.05) * smoothstep(0.99955, 0.99987, md) * 1.6;
+        night += vec3(0.28,0.34,0.46) * pow(md, 120.0) * 0.8;
+        night += vec3(0.05,0.06,0.09) * pow(md, 8.0);
+        vec3 sq = floor(dir*270.0);
+        float st = hash(sq.xy + sq.z*13.7);
+        float star = step(0.9982, st) * smoothstep(0.04, 0.14, y)
+                   * (0.55 + 0.45*sin(uT*2.5 + st*97.0));
 
-        // nuages fracto (stratocumulus déchirés qui dérivent)
+        vec3 col = mix(day, night, uNight);
+
+        // ----- nuages (teinte jour/nuit) -----
+        float cov = 0.0, horFade = 0.0; vec3 cc = vec3(0.0);
         if(y > 0.015){
           vec2 cuv = dir.xz / (y + 0.14);
           cuv = cuv*0.55 + vec2(uT*0.006, uT*0.0022);
           float f  = fbm(cuv*1.35);
           float f2 = fbm(cuv*3.1 + f*1.7);
-          float cov = smoothstep(0.46, 0.72, f*0.72 + f2*0.38);
-          float horFade = smoothstep(0.015, 0.12, y);
-          // base sombre, bords éclairés côté soleil
+          cov = smoothstep(0.46, 0.72, f*0.72 + f2*0.38);
+          horFade = smoothstep(0.015, 0.12, y);
           float litEdge = smoothstep(0.3, 0.9, f2) * (0.35 + 0.65*pow(max(sd,0.0),2.0));
-          vec3 cbase = vec3(0.239,0.224,0.220) * (0.85 + 0.5*pow(max(sd,0.0),4.0));
-          vec3 clit  = vec3(0.85,0.66,0.47);
-          vec3 cc = mix(cbase, clit, litEdge);
-          col = mix(col, cc, cov * horFade * 0.92);
+          vec3 ccDay = mix(vec3(0.239,0.224,0.220) * (0.85 + 0.5*pow(max(sd,0.0),4.0)),
+                           vec3(0.85,0.66,0.47), litEdge);
+          vec3 ccNight = vec3(0.012,0.015,0.024) + vec3(0.030,0.036,0.052)*smoothstep(0.3,0.9,f2)*pow(md,2.0);
+          cc = mix(ccDay, ccNight, uNight);
         }
+        col += vec3(1.0,0.97,0.90) * star * uNight * (1.0 - cov);
+        col = mix(col, cc, cov * horFade * 0.92);
 
         // léger grain anti-banding
         col += (hash(dir.xy*913.7 + fract(uT)) - 0.5) * 0.012;
@@ -214,7 +234,10 @@ sky.frustumCulled = false; sky.renderOrder = -1;
 scene.add(sky);
 
 /* ---------- lumières ---------- */
-scene.add(new THREE.HemisphereLight(0xbfae97, 0x4c4437, 1.0));
+const hemi = new THREE.HemisphereLight(0xbfae97, 0x4c4437, 1.0);
+scene.add(hemi);
+const nvAmb = new THREE.AmbientLight(0xd8ffd8, 0);   // ampli lumière (vision nocturne)
+scene.add(nvAmb);
 const sun = new THREE.DirectionalLight(0xffbd7a, 2.9);
 sun.position.copy(SUN_DIR).multiplyScalar(260);
 sun.castShadow = true;
@@ -223,6 +246,8 @@ sun.shadow.camera.left=-95; sun.shadow.camera.right=95;
 sun.shadow.camera.top=80;  sun.shadow.camera.bottom=-80;
 sun.shadow.camera.far=600; sun.shadow.bias=-0.0008;
 scene.add(sun); scene.add(sun.target);
+const C_SUN_DAY = new THREE.Color(0xffbd7a), C_SUN_NIGHT = new THREE.Color(0x8fa3cc);
+const C_FOG_DAY = new THREE.Color(0xb1a087), C_FOG_NIGHT = new THREE.Color(0x14171d);
 const fillIn = new THREE.PointLight(0xfff2d0, 55, 70, 1.8);
 fillIn.position.set(-12, 10, 0); scene.add(fillIn);
 
@@ -930,6 +955,327 @@ let ash;
   ash.frustumCulled=false; scene.add(ash);
 }
 
+/* ============================================================
+   ARMEMENT — canon, munitions explosives, cibles, zombies
+   ============================================================ */
+scene.add(camera);   // nécessaire pour attacher le canon à la caméra
+
+/* --- canon sous la caméra --- */
+const gun = new THREE.Group();
+{
+  const gm = new THREE.MeshStandardMaterial({color:0x22262a, roughness:.5, metalness:.7, emissive:0x11151a, emissiveIntensity:.6});
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.07,0.07,0.24), gm);
+  receiver.position.set(0.10,-0.145,-0.38);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.02,0.34,10), gm);
+  barrel.rotation.x = Math.PI/2; barrel.position.set(0.10,-0.135,-0.60);
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(0.02,0.05,0.16), gm);
+  rail.position.set(0.10,-0.10,-0.34);
+  gun.add(receiver, barrel, rail);
+  // flash de bouche
+  const flashTex=(()=>{ const cv=document.createElement('canvas'); cv.width=cv.height=64;
+    const g=cv.getContext('2d'); const gr=g.createRadialGradient(32,32,2,32,32,30);
+    gr.addColorStop(0,'rgba(255,240,190,1)'); gr.addColorStop(.4,'rgba(255,170,60,.8)');
+    gr.addColorStop(1,'rgba(255,120,20,0)'); g.fillStyle=gr; g.fillRect(0,0,64,64);
+    return new THREE.CanvasTexture(cv); })();
+  const flash = new THREE.Mesh(new THREE.PlaneGeometry(0.22,0.22),
+    new THREE.MeshBasicMaterial({map:flashTex, transparent:true, blending:THREE.AdditiveBlending,
+      depthWrite:false, depthTest:false}));
+  flash.position.set(0.10,-0.135,-0.79); flash.visible=false;
+  gun.add(flash);
+  gun.userData.flash = flash;
+  gun.scale.setScalar(0.42);            // pod discret monté sous la caméra
+  gun.position.set(0.02, -0.065, 0);
+  camera.add(gun);
+}
+
+/* --- balles explosives (pool) --- */
+const bullets = [];
+const bulletGeo = new THREE.SphereGeometry(0.05, 8, 6);
+const bulletMat = new THREE.MeshBasicMaterial({color:0xffcf7a});
+for(let i=0;i<12;i++){
+  const m = new THREE.Mesh(bulletGeo, bulletMat);
+  m.visible=false; scene.add(m);
+  bullets.push({m, pos:new THREE.Vector3(), vel:new THREE.Vector3(), life:0, on:false});
+}
+
+/* --- explosions (pool) --- */
+const explosions = [];
+for(let i=0;i<4;i++){
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10),
+    new THREE.MeshBasicMaterial({color:0xffa044, transparent:true, opacity:.9,
+      blending:THREE.AdditiveBlending, depthWrite:false}));
+  ball.visible=false; scene.add(ball);
+  const light = new THREE.PointLight(0xff8830, 0, 42, 1.8); scene.add(light);
+  const N=26, sp=new Float32Array(N*3), sv=[];
+  for(let k=0;k<N;k++) sv.push(new THREE.Vector3());
+  const sparks = new THREE.Points(new THREE.BufferGeometry(),
+    new THREE.PointsMaterial({color:0xffb050, size:0.16, transparent:true, opacity:1,
+      blending:THREE.AdditiveBlending, depthWrite:false}));
+  sparks.geometry.setAttribute('position', new THREE.BufferAttribute(sp,3));
+  sparks.visible=false; sparks.frustumCulled=false; scene.add(sparks);
+  explosions.push({ball, light, sparks, sp, sv, t:-1, pos:new THREE.Vector3()});
+}
+let expIdx = 0;
+function explode(p){
+  const e = explosions[expIdx++ % explosions.length];
+  e.t = 0; e.pos.copy(p);
+  e.ball.position.copy(p); e.ball.visible=true; e.ball.scale.setScalar(0.3);
+  e.light.position.copy(p);
+  for(let k=0;k<e.sv.length;k++){
+    e.sv[k].set(Math.random()-.5, Math.random()*.7, Math.random()-.5).normalize()
+      .multiplyScalar(6+Math.random()*13);
+    e.sp[k*3]=p.x; e.sp[k*3+1]=p.y; e.sp[k*3+2]=p.z;
+  }
+  e.sparks.visible=true; e.sparks.material.opacity=1;
+  boomSound(p.distanceTo(S.pos));
+  // dégâts de zone
+  for(const z of zombies){
+    if(!z.alive) continue;
+    const d = Math.hypot(z.pos.x-p.x, z.pos.z-p.z);
+    if(d < 6 && Math.abs(p.y - (z.pos.y+1.2)) < 5) killZombie(z, p);
+  }
+  for(const tg of targets){
+    if(!tg.hit && tg.grp.position.distanceTo(p) < 4) hitTarget(tg);
+  }
+  const dd = S.pos.distanceTo(p);
+  if(dd < 5){
+    const push = new THREE.Vector3().copy(S.pos).sub(p).normalize().multiplyScalar((5-dd)*4);
+    S.vel.add(push); S.impactFlash = 1;
+    if(dd < 2.2) crash('SOUFFLE DE L\'EXPLOSION');
+  }
+  shake += 0.04/Math.max(1, dd*0.25);
+}
+
+/* --- tir --- */
+let lastShot = 0;
+const bDir = new THREE.Vector3(), bUp = new THREE.Vector3();
+function fire(){
+  if(!S.started || S.paused || S.crashed || S.reloadT>0) return;
+  const now = performance.now();
+  if(now-lastShot < 220 || S.ammo<=0) return;
+  lastShot = now; S.ammo--;
+  if(S.ammo<=0) S.reloadT = 1.8;
+  const b = bullets.find(b=>!b.on) || bullets[0];
+  camera.getWorldDirection(bDir);
+  b.pos.copy(camera.position).addScaledVector(bDir, 0.9);
+  b.pos.y -= 0.12;
+  b.vel.copy(bDir).multiplyScalar(85).add(S.vel);
+  b.life = 3; b.on = true; b.m.visible = true; b.m.position.copy(b.pos);
+  S.recoil = 0.022; shake += 0.012;
+  gun.userData.flash.visible = true;
+  gun.userData.flash.rotation.z = Math.random()*6.28;
+  setTimeout(()=>{ gun.userData.flash.visible=false; }, 55);
+  gunSound();
+}
+function pointHitsWorld(p, r){
+  if(p.y < r) return true;
+  for(const b of boxColliders){
+    if(p.x>b.min.x-r && p.x<b.max.x+r && p.y>b.min.y-r && p.y<b.max.y+r && p.z>b.min.z-r && p.z<b.max.z+r) return true;
+  }
+  for(const c of cylColliders){
+    if(p.y>c.y0-r && p.y<c.y1+r && Math.hypot(p.x-c.x,p.z-c.z) < c.r+r) return true;
+  }
+  return false;
+}
+
+/* --- cibles de tir --- */
+const texTarget = makeTex((g,w,h)=>{
+  g.fillStyle='#ddd6c2'; g.fillRect(0,0,w,h);
+  const rings=[['#c8402e',.46],['#ddd6c2',.36],['#c8402e',.26],['#ddd6c2',.16],['#c8402e',.07]];
+  for(const [c,r] of rings){ g.fillStyle=c; g.beginPath(); g.arc(w/2,h/2,w*r,0,7); g.fill(); }
+  noiseSplat(g,w,h,300,['#8a8474','#6e6a5e'],.06,.18,2,10);
+}, 128,128,1,1);
+const targets = [];
+function addTarget(x,y,z,ry){
+  const grp = new THREE.Group();
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.09,y,0.09), M.darkSteel);
+  post.position.y = -y/2; grp.add(post);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.62, 24),
+    new THREE.MeshStandardMaterial({map:texTarget, roughness:.85, side:THREE.DoubleSide}));
+  const back = new THREE.Mesh(new THREE.CylinderGeometry(0.64,0.64,0.05,24), M.rust);
+  back.rotation.x = Math.PI/2; back.position.z = -0.035;
+  grp.add(disc, back);
+  grp.position.set(x,y,z); grp.rotation.y = ry;
+  grp.traverse(o=>{ o.castShadow=true; });
+  scene.add(grp);
+  targets.push({grp, disc, hit:false, ht:0});
+}
+addTarget(  58, 2.2,  12, Math.PI/2);
+addTarget(  70, 2.4,  52, 0);
+addTarget( 122, 4.6,  62, 0);
+addTarget(  30, 2.6, -58, 0);
+addTarget( -60, 2.2,  36, Math.PI);
+addTarget(-104, 3.0, -55, 0);
+addTarget( -20, 2.8, -10, Math.PI/2);
+addTarget(  14, 7.6,   3.2, Math.PI);
+addTarget( 168, 8.0, -47, 0.6);
+addTarget( -29, 2.6, -70, 0);
+function hitTarget(tg){
+  if(tg.hit) return;
+  tg.hit = true; tg.ht = 0; S.targetsHit++;
+}
+
+/* --- zombies --- */
+const zombies = [];
+const zSkin  = new THREE.MeshStandardMaterial({color:0x8a9678, roughness:.95});
+const zCloth = new THREE.MeshStandardMaterial({color:0x3c3a33, roughness:1});
+const zCloth2= new THREE.MeshStandardMaterial({color:0x4a3630, roughness:1});
+const zEye   = new THREE.MeshBasicMaterial({color:0xff4020});
+function addZombie(x,z){
+  const grp = new THREE.Group();
+  const cloth = rnd()<.5 ? zCloth : zCloth2;
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.72,0.30), cloth);
+  torso.position.y = 1.14;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17,10,8), zSkin);
+  head.position.y = 1.68;
+  const e1 = new THREE.Mesh(new THREE.SphereGeometry(0.028,6,4), zEye);
+  const e2 = e1.clone();
+  e1.position.set(-0.06,1.71,0.15); e2.position.set(0.06,1.71,0.15);
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.11,0.58,0.11), zSkin);
+  const armR = armL.clone();
+  armL.position.set(-0.33,1.42,0.22); armR.position.set(0.33,1.42,0.22);
+  armL.rotation.x = armR.rotation.x = -1.25;
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.80,0.16), cloth);
+  const legR = legL.clone();
+  legL.position.set(-0.13,0.40,0); legR.position.set(0.13,0.40,0);
+  grp.add(torso,head,e1,e2,armL,armR,legL,legR);
+  grp.position.set(x,0,z);
+  grp.rotation.y = rnd()*6.28;
+  grp.traverse(o=>{ o.castShadow = true; });
+  scene.add(grp);
+  zombies.push({grp, pos:grp.position, armL, armR, alive:true, deadT:-1,
+    dir:rnd()*6.28, spd:0.5+rnd()*0.7, ph:rnd()*6.28, swatCd:0});
+}
+/* hordes : usine, carrefour, immeubles, parc à conteneurs */
+const zSpots = [
+  [-25,5],[-10,-8],[8,6],[20,-4],                       // dans le hall
+  [55,30],[62,40],[70,26],[84,38],[95,30],              // carrefour / route
+  [170,-48],[181,-62],[164,-66],                        // immeuble A
+  [-144,74],[-155,88],                                  // immeuble B
+  [112,66],[130,80],[118,88],                           // conteneurs
+  [-100,-64],[-118,-76],                                // cuves
+  [30,60],[-40,50],[10,-40],[-70,-30],[140,10]          // errants
+];
+for(const [x,z] of zSpots) addZombie(x,z);
+function killZombie(z, from){
+  z.alive = false; z.deadT = 0;
+  S.kills++;
+  const away = Math.atan2(z.pos.z-from.z, z.pos.x-from.x);
+  z.flingX = Math.cos(away)*3.5; z.flingZ = Math.sin(away)*3.5;
+}
+
+/* --- boucle de combat --- */
+let groanT = 3;
+function combat(dt, t){
+  // recharge
+  if(S.reloadT>0){ S.reloadT-=dt; if(S.reloadT<=0){ S.ammo=8; S.reloadT=0; } }
+  S.recoil *= Math.max(0, 1-dt*9);
+
+  // balles (sous-pas anti-tunneling, chute balistique légère)
+  for(const b of bullets){
+    if(!b.on) continue;
+    b.life -= dt;
+    if(b.life<=0){ b.on=false; b.m.visible=false; continue; }
+    const steps = Math.max(1, Math.ceil(b.vel.length()*dt/0.5));
+    const h = dt/steps;
+    let boom = false;
+    for(let s=0; s<steps && !boom; s++){
+      b.vel.y -= 3.5*h;
+      b.pos.addScaledVector(b.vel, h);
+      if(pointHitsWorld(b.pos, 0.12)) boom = true;
+      if(!boom) for(const z of zombies){
+        if(!z.alive) continue;
+        if(Math.hypot(b.pos.x-z.pos.x, b.pos.z-z.pos.z) < 0.55
+           && b.pos.y > z.pos.y && b.pos.y < z.pos.y+1.95){ boom=true; break; }
+      }
+      if(!boom) for(const tg of targets){
+        if(!tg.hit && b.pos.distanceTo(tg.grp.position) < 0.8){ hitTarget(tg); boom=true; break; }
+      }
+    }
+    b.m.position.copy(b.pos);
+    if(boom){ b.on=false; b.m.visible=false; explode(b.pos); }
+  }
+
+  // explosions
+  for(const e of explosions){
+    if(e.t<0) continue;
+    e.t += dt;
+    const k = e.t/0.55;
+    if(k>=1){ e.t=-1; e.ball.visible=false; e.sparks.visible=false; e.light.intensity=0; continue; }
+    e.ball.scale.setScalar(0.4 + k*10);
+    e.ball.material.opacity = 0.85*(1-k);
+    e.light.intensity = 520*(1-k);
+    for(let i=0;i<e.sv.length;i++){
+      e.sv[i].y -= 9.8*dt;
+      e.sp[i*3] += e.sv[i].x*dt; e.sp[i*3+1] += e.sv[i].y*dt; e.sp[i*3+2] += e.sv[i].z*dt;
+      if(e.sp[i*3+1] < 0.05) e.sp[i*3+1] = 0.05;
+    }
+    e.sparks.material.opacity = 1-k;
+    e.sparks.geometry.attributes.position.needsUpdate = true;
+  }
+
+  // cibles touchées : elles basculent
+  for(const tg of targets){
+    if(!tg.hit || tg.ht>1) continue;
+    tg.ht += dt*2.2;
+    tg.grp.rotation.x = -Math.min(1, tg.ht)*Math.PI/2*0.94;
+  }
+
+  // zombies
+  for(const z of zombies){
+    if(!z.alive){
+      if(z.deadT>=0 && z.deadT<1){
+        z.deadT += dt*2;
+        const k = Math.min(1, z.deadT);
+        z.grp.rotation.x = k*Math.PI/2*0.96;
+        z.pos.x += (z.flingX||0)*dt; z.pos.z += (z.flingZ||0)*dt;
+      }
+      continue;
+    }
+    const dx = S.pos.x-z.pos.x, dz = S.pos.z-z.pos.z;
+    const d = Math.hypot(dx, dz);
+    const hunting = d<55 && S.pos.y<22;
+    let tgt = z.dir;
+    if(hunting) tgt = Math.atan2(dz, dx);
+    else if(Math.random()<0.004) z.dir += (Math.random()-.5)*1.6;
+    let turn = tgt - z.dir;
+    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+    z.dir += clamp(turn, -1.4*dt, 1.4*dt);
+    const chase = hunting ? 1.9 : 1;
+    z.pos.x += Math.cos(z.dir)*z.spd*chase*dt;
+    z.pos.z += Math.sin(z.dir)*z.spd*chase*dt;
+    if(Math.abs(z.pos.x)>320 || Math.abs(z.pos.z)>320) z.dir += Math.PI;
+    z.grp.rotation.y = Math.atan2(Math.cos(z.dir), Math.sin(z.dir));
+    // claudication + bras tendus qui oscillent
+    z.ph += dt*(3+z.spd*2)*chase;
+    z.grp.position.y = Math.abs(Math.sin(z.ph))*0.06;
+    z.grp.rotation.z = Math.sin(z.ph)*0.07;
+    z.armL.rotation.x = -1.25 + Math.sin(z.ph*0.9)*0.25;
+    z.armR.rotation.x = -1.25 + Math.cos(z.ph*0.8)*0.25;
+    // coup de griffe si le drone traîne trop bas
+    z.swatCd -= dt;
+    if(d<2.4 && S.pos.y<3.0 && z.swatCd<=0){
+      z.swatCd = 1.2;
+      const a = Math.atan2(dz,dx) + (Math.random()-.5)*0.8;
+      S.vel.x += Math.cos(a)*7; S.vel.z += Math.sin(a)*7; S.vel.y += 2.5;
+      S.impactFlash = 1; shake += 0.05;
+      groanSound(1);
+    }
+  }
+
+  // grognements d'ambiance
+  groanT -= dt;
+  if(groanT<=0){
+    let best = 1e9;
+    for(const z of zombies) if(z.alive){
+      const d = Math.hypot(S.pos.x-z.pos.x, S.pos.z-z.pos.z);
+      if(d<best) best=d;
+    }
+    if(best<38) groanSound(best);
+    groanT = 2.2 + Math.random()*3.5;
+  }
+}
+
 /* ---------- rais de lumière + poussière ---------- */
 {
   const cv=document.createElement('canvas'); cv.width=128; cv.height=256;
@@ -1003,6 +1349,54 @@ function crashSound(){
   const g=AC.createGain(); g.gain.value=.5;
   s.connect(g); g.connect(AC.destination); s.start();
 }
+function gunSound(){
+  if(!AC||muted) return;
+  const len=AC.sampleRate*.09, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++){ const k=1-i/len; d[i]=(Math.random()*2-1)*k*k; }
+  const s=AC.createBufferSource(); s.buffer=buf;
+  const f=AC.createBiquadFilter(); f.type='bandpass'; f.frequency.value=1600; f.Q.value=.8;
+  const g=AC.createGain(); g.gain.value=.4;
+  s.connect(f); f.connect(g); g.connect(AC.destination); s.start();
+  const o=AC.createOscillator(); o.type='square'; o.frequency.setValueAtTime(160,AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(55,AC.currentTime+.07);
+  const g2=AC.createGain(); g2.gain.setValueAtTime(.22,AC.currentTime);
+  g2.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.08);
+  o.connect(g2); g2.connect(AC.destination); o.start(); o.stop(AC.currentTime+.09);
+}
+function boomSound(dist){
+  if(!AC||muted) return;
+  const att = clamp(1.4/(1+dist*0.045), .04, 1);
+  const len=AC.sampleRate*.6, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++){ const k=1-i/len; d[i]=(Math.random()*2-1)*k*k*k; }
+  const s=AC.createBufferSource(); s.buffer=buf;
+  const f=AC.createBiquadFilter(); f.type='lowpass';
+  f.frequency.setValueAtTime(600,AC.currentTime);
+  f.frequency.exponentialRampToValueAtTime(70,AC.currentTime+.5);
+  const g=AC.createGain(); g.gain.value=.85*att;
+  s.connect(f); f.connect(g); g.connect(AC.destination); s.start();
+  const o=AC.createOscillator(); o.frequency.setValueAtTime(72,AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(26,AC.currentTime+.45);
+  const g2=AC.createGain(); g2.gain.setValueAtTime(.55*att,AC.currentTime);
+  g2.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.5);
+  o.connect(g2); g2.connect(AC.destination); o.start(); o.stop(AC.currentTime+.55);
+}
+function groanSound(dist){
+  if(!AC||muted) return;
+  const att = clamp(.5/(1+dist*0.09), .02, .4);
+  const o=AC.createOscillator(); o.type='sawtooth';
+  o.frequency.setValueAtTime(68+Math.random()*24, AC.currentTime);
+  o.frequency.linearRampToValueAtTime(48, AC.currentTime+.7);
+  const lfo=AC.createOscillator(); lfo.frequency.value=6+Math.random()*4;
+  const lg=AC.createGain(); lg.gain.value=9;
+  lfo.connect(lg); lg.connect(o.frequency);
+  const f=AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=280;
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.0001,AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(att,AC.currentTime+.15);
+  g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.8);
+  o.connect(f); f.connect(g); g.connect(AC.destination);
+  o.start(); lfo.start(); o.stop(AC.currentTime+.85); lfo.stop(AC.currentTime+.85);
+}
 
 /* ============================================================
    ENTRÉES
@@ -1016,6 +1410,11 @@ addEventListener('keydown', e=>{
   if(k===' '){ S.stickX=0; S.stickY=0; e.preventDefault(); }
   if(k==='r') respawn();
   if(k==='m') muted=!muted;
+  if(k==='n') S.mode=(S.mode+1)%3;
+  if(k==='f' && S.ammo<8 && S.reloadT<=0) S.reloadT=1.8;
+});
+addEventListener('mousedown', e=>{
+  if(e.button===0 && document.pointerLockElement) fire();
 });
 addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
 
@@ -1043,6 +1442,7 @@ function respawn(){
   S.vel.set(0,0,0);
   S.yaw=spawn.yaw; S.pitch=0; S.roll=0; S.stickX=0; S.stickY=0;
   S.crashed=false; S.battery=Math.max(S.battery, 25); S.impactFlash=0;
+  S.ammo=8; S.reloadT=0; S.recoil=0;
   elCrash.style.display='none';
 }
 function crash(reason){
@@ -1177,7 +1577,7 @@ function updateCamera(dt, t){
   shake = lerp(shake, thr*0.004 + Math.min(S.vel.length()/40,1)*0.006 + S.impactFlash*0.03, dt*8);
   S.impactFlash = Math.max(0, S.impactFlash - dt*3);
   const n1=Math.sin(t*61)*shake, n2=Math.cos(t*47)*shake, n3=Math.sin(t*83)*shake*0.7;
-  camera.quaternion.setFromEuler(new THREE.Euler(camPitch+n1, S.yaw+n2, S.roll+n3, 'YXZ'));
+  camera.quaternion.setFromEuler(new THREE.Euler(camPitch+n1+S.recoil, S.yaw+n2, S.roll+n3, 'YXZ'));
   // léger recul de l'objectif dans le châssis
   camera.translateZ(-0.02);
   camera.fov = T.fovBase + Math.min(S.vel.length()/38,1)*T.fovSpeed;
@@ -1222,6 +1622,9 @@ function drawHUD(t){
   hctx.textAlign='left';
   hctx.fillText('UAV-07 // FPV CAM 01', 30, 34);
   hctx.fillText('5.8GHz CH-R7  AES-256', 30, 50);
+  hctx.fillText(`CIBLES ${String(S.targetsHit).padStart(2,'0')}/10  HOSTILES ${String(S.kills).padStart(2,'0')}/${zombies.length}`, 30, 66);
+  if(S.mode===2){ hctx.fillStyle='#c8ffc8'; hctx.fillText('NVG ● AMPLI x4', 30, 84); hctx.fillStyle=GRN; }
+  else if(S.mode===1){ hctx.fillStyle=AMB; hctx.fillText('MODE NUIT — NVG OFF (N)', 30, 84); hctx.fillStyle=GRN; }
   hctx.textAlign='right';
   if(Math.floor(t*1.6)%2===0){ hctx.fillStyle=RED; hctx.fillText('● REC', W-30, 34); }
   hctx.fillStyle=GRN;
@@ -1357,6 +1760,18 @@ function drawHUD(t){
   hctx.strokeRect(95, by+11, 84, 13);
   hctx.fillStyle=GRN2; hctx.fillRect(97, by+13, 80*thr, 9);
   hctx.textAlign='right'; hctx.fillStyle=GRN;
+  // munitions explosives
+  hctx.font='15px "Courier New",monospace';
+  if(S.reloadT>0){
+    if(Math.floor(t*3)%2===0){ hctx.fillStyle=AMB; hctx.fillText('RECHARGEMENT', W-30, by-24); }
+    hctx.strokeStyle=GRN2; hctx.strokeRect(W-114, by-18, 84, 7);
+    hctx.fillStyle=GRN2; hctx.fillRect(W-112, by-16.5, 80*(1-S.reloadT/1.8), 4);
+    hctx.fillStyle=GRN;
+  } else {
+    hctx.fillText(`EXPL ${S.ammo}/8`, W-30, by-24);
+    for(let i=0;i<S.ammo;i++) hctx.fillRect(W-114+i*10, by-18, 6, 8);
+  }
+  hctx.font='13px "Courier New",monospace';
   hctx.fillText(`G ${S.gForce.toFixed(1)}`, W-30, by);
   hctx.fillText('LINK', W-108, by+22);
   for(let i=0;i<5;i++){
@@ -1376,6 +1791,14 @@ function drawHUD(t){
   });
   hctx.shadowBlur=0;
 
+  /* grain d'amplification en vision nocturne */
+  if(S.mode===2){
+    hctx.fillStyle='rgba(140,255,150,.06)';
+    for(let i=0;i<230;i++) hctx.fillRect(Math.random()*W, Math.random()*H, 2, 2);
+    const band=(t*140)%(H+140)-140;             // balayage vertical léger
+    hctx.fillStyle='rgba(160,255,170,.04)';
+    hctx.fillRect(0, band, W, 90);
+  }
   /* flash blanc sur impact léger */
   if(S.impactFlash>0){
     hctx.fillStyle=`rgba(255,255,255,${S.impactFlash*0.25})`;
@@ -1417,6 +1840,22 @@ function loop(now){
   skyUni.uT.value = t;
   sun.position.copy(S.pos).addScaledVector(SUN_DIR, 260);
   sun.target.position.copy(S.pos);
+
+  // transitions jour / nuit / vision nocturne
+  const nTgt = S.mode>=1 ? 1 : 0;
+  S.nightT += clamp(nTgt-S.nightT, -dt*0.7, dt*0.7);
+  skyUni.uNight.value = S.nightT;
+  sun.intensity  = lerp(2.9, 0.10, S.nightT);
+  sun.color.lerpColors(C_SUN_DAY, C_SUN_NIGHT, S.nightT);
+  hemi.intensity = lerp(1.0, 0.13, S.nightT);
+  scene.fog.color.lerpColors(C_FOG_DAY, C_FOG_NIGHT, S.nightT);
+  scene.fog.density = lerp(0.0016, 0.0022, S.nightT);
+  fillIn.intensity = lerp(55, 14, S.nightT);
+  const nvOn = S.mode===2;
+  nvAmb.intensity += clamp((nvOn?3.0:0)-nvAmb.intensity, -dt*9, dt*9);
+  if(canvas.classList.contains('nv') !== nvOn) canvas.classList.toggle('nv', nvOn);
+
+  if(S.started && !S.paused && !S.crashed) combat(dt, t);
 
   // colonnes de fumée
   for(const s of smokes){
@@ -1467,8 +1906,9 @@ addEventListener('resize', ()=>{
 
 /* hooks de test */
 window.__drone = {
-  state:S, keys, T, respawn, crash,
+  state:S, keys, T, respawn, crash, fire, explode, zombies, targets,
   setStick(x,y){ S.stickX=clamp(x,-1,1); S.stickY=clamp(y,-1,1); },
+  setMode(m){ S.mode=m%3; },
   start(){ if(!S.started){ S.started=true; elStart.style.display='none'; } },
   cam:camera, scene, THREE,
 };
