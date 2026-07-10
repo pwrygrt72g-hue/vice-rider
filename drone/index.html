@@ -9,6 +9,12 @@
   html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",ui-monospace,monospace;}
   #c3d{position:fixed;inset:0;display:block;}
   #c3d.nv{filter:grayscale(1) sepia(1) hue-rotate(58deg) saturate(5) brightness(2.35) contrast(1.12);}
+  #c3d.thermal{filter:grayscale(1) brightness(1.3) contrast(1.8);}
+  .panel{display:flex;flex-direction:column;gap:16px;margin-bottom:30px;font-size:14px;letter-spacing:.12em;}
+  .panel label{display:flex;align-items:center;gap:14px;justify-content:space-between;width:min(420px,80vw);}
+  .panel input[type=range]{flex:1;accent-color:#6fe06f;}
+  .panel select{background:#0a140b;color:#9df59d;border:1px solid #3f7a4a;font-family:inherit;padding:4px 8px;}
+  .panel span{min-width:36px;text-align:right;color:#d9ffd9;}
   #hud{position:fixed;inset:0;pointer-events:none;}
   /* --- effets écran caméra militaire --- */
   #fx-scan{position:fixed;inset:0;pointer-events:none;z-index:5;
@@ -48,12 +54,13 @@
     <b>Q / D</b><span>gauche / droite</span>
     <b>A / E</b><span>monter / descendre</span>
     <b>SOURIS</b><span>viser — le drone tire là où tu regardes</span>
-    <b>CLIC</b><span>tir — munitions explosives</span>
+    <b>CLIC</b><span>tir</span>
+    <b>1 / 2</b><span>mitrailleuse / lance-grenades explosif</span>
     <b>CLIC DROIT</b><span>zoom (maintenir) — molette : x2 / x4 / x6</span>
     <b>MAJ</b><span>boost</span>
     <b>ESPACE</b><span>frein</span>
     <b>F</b><span>recharger</span>
-    <b>N</b><span>jour → nuit → vision nocturne</span>
+    <b>N</b><span>jour → nuit → NVG → thermique</span>
     <b>R</b><span>reprendre au point de départ</span>
     <b>M</b><span>son on/off</span>
   </div>
@@ -67,10 +74,17 @@
   <div class="go">CLIQUER POUR RELANCER LE DRONE</div>
 </div>
 
-<div id="screen-pause" class="screen">
+<div id="screen-pause" class="screen" style="cursor:default;">
   <h1>PAUSE</h1>
   <h2>LIAISON EN VEILLE</h2>
-  <div class="go">CLIQUER POUR REPRENDRE</div>
+  <div class="panel">
+    <label>SENSIBILITÉ SOURIS <input id="set-sens" type="range" min="40" max="220" value="100"><span id="set-sens-v">1.0</span></label>
+    <label>VOLUME <input id="set-vol" type="range" min="0" max="100" value="90"><span id="set-vol-v">90</span></label>
+    <label>QUALITÉ <select id="set-q">
+      <option value="0">BASSE</option><option value="1">MOYENNE</option><option value="2" selected>HAUTE</option>
+    </select></label>
+  </div>
+  <div class="go" id="btn-resume" style="cursor:pointer;">REPRENDRE</div>
 </div>
 
 <script type="importmap">
@@ -123,8 +137,22 @@ const S = {
   ammo: 8, reloadT: 0, recoil: 0,
   zoomT: 0, zoomX: 4,            // zoom d'arme (clic droit), grossissement molette
   kills: 0, targetsHit: 0,
+  hp: 100,                       // intégrité du drone
+  weapon: 1,                     // 0 = mitrailleuse, 1 = lance-grenades
+  mgAmmo: 40, explReserve: 24,
+  score: 0, best: +(localStorage.getItem('bs-best')||0),
+  wave: 1, waveT: 0, combo: 0, comboT: 0,
+  cuves: 0, zoomKills: 0, c1: false, c2: false, c3: false,   // contrats
+  banner: '', bannerT: 0, splats: [],
 };
 let zoomHeld = false;
+let slowT = 0;                   // bullet-cam : ralenti restant (s réelles)
+const SETTINGS = Object.assign({sens:1, vol:0.9, q:2},
+  JSON.parse(localStorage.getItem('bs-settings')||'{}'));
+function saveBest(){
+  if(S.score > S.best){ S.best = S.score; localStorage.setItem('bs-best', S.best); }
+}
+function setBanner(txt){ S.banner = txt; S.bannerT = 2.6; }
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
 
@@ -148,7 +176,7 @@ const camera = new THREE.PerspectiveCamera(T.fovBase, innerWidth/innerHeight, 0.
 
 /* ---------- ciel atmosphérique (shader : diffusion, soleil bas, nuages FBM) ---------- */
 const SUN_DIR = new THREE.Vector3(-0.62, 0.21, -0.42).normalize();  // fin d'après-midi, soleil bas
-const skyUni = { uSun:{value:SUN_DIR}, uT:{value:0}, uNight:{value:0} };
+const skyUni = { uSun:{value:SUN_DIR}, uT:{value:0}, uNight:{value:0}, uWx:{value:0}, uFlash:{value:0} };
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(1400, 40, 24),
   new THREE.ShaderMaterial({
@@ -174,7 +202,7 @@ const sky = new THREE.Mesh(
         for(int i=0;i<5;i++){ s+=a*vnoise(p); p=p*2.13+vec2(17.3,9.1); a*=0.52; }
         return s;
       }
-      uniform float uNight;
+      uniform float uNight; uniform float uWx; uniform float uFlash;
       void main(){
         vec3 dir = normalize(vDir);
         float sd = clamp(dot(dir, uSun), -1.0, 1.0);
@@ -213,7 +241,7 @@ const sky = new THREE.Mesh(
           cuv = cuv*0.55 + vec2(uT*0.006, uT*0.0022);
           float f  = fbm(cuv*1.35);
           float f2 = fbm(cuv*3.1 + f*1.7);
-          cov = smoothstep(0.46, 0.72, f*0.72 + f2*0.38);
+          cov = smoothstep(0.46 - uWx*0.22, 0.72 - uWx*0.18, f*0.72 + f2*0.38);
           horFade = smoothstep(0.015, 0.12, y);
           float litEdge = smoothstep(0.3, 0.9, f2) * (0.35 + 0.65*pow(max(sd,0.0),2.0));
           vec3 ccDay = mix(vec3(0.239,0.224,0.220) * (0.85 + 0.5*pow(max(sd,0.0),4.0)),
@@ -223,6 +251,8 @@ const sky = new THREE.Mesh(
         }
         col += vec3(1.0,0.97,0.90) * star * uNight * (1.0 - cov);
         col = mix(col, cc, cov * horFade * 0.92);
+        col *= 1.0 - uWx*0.42;                          // chape météo
+        col += vec3(0.85,0.92,1.15) * uFlash;           // éclair
 
         // léger grain anti-banding
         col += (hash(dir.xy*913.7 + fract(uT)) - 0.5) * 0.012;
@@ -462,6 +492,8 @@ function addCyl(r,h, x,y,z, mat, opt={}){
   if(opt.collide !== false) cylColliders.push({x,z,r:r+0.05, y0:y-h/2, y1:y+h/2});
   return m;
 }
+
+const cuves = [];   // cuves destructibles (remplies par le parc de cuves)
 
 /* ============================================================
    L'USINE
@@ -786,10 +818,11 @@ ruinedBuilding( -80, 130, 18, 14, 4, 3.5, 0.45);
   }
 }
 
-/* --- parc de cuves + murets --- */
+/* --- parc de cuves + murets (destructibles → contrat) --- */
 {
   for(const [x,z] of [[-104,-62],[-120,-62],[-104,-80],[-120,-80]]){
-    addCyl(7, 11, x, 5.5, z, M.rust, {seg:24});
+    const m = addCyl(7, 11, x, 5.5, z, M.rust.clone(), {seg:24});
+    cuves.push({mesh:m, col:cylColliders[cylColliders.length-1], x, z, hp:2, alive:true});
     addCyl(0.28, 8, x+7, 4, z, M.darkSteel, {collide:false});
   }
   addBox(40, 1.4, 0.5, -112, 0.7, -50, M.concrete);
@@ -944,6 +977,22 @@ for(const [x,z] of [[-112,-71],[175,-55]]){
       opacity:.5, blending:THREE.AdditiveBlending, depthWrite:false}));
   glow.rotation.x=-Math.PI/2; glow.position.set(x,0.3,z); scene.add(glow);
 }
+/* --- météo : rideau de pluie qui suit la caméra --- */
+let rain;
+{
+  const N=900, pos=new Float32Array(N*3);
+  for(let i=0;i<N;i++){
+    pos[i*3]=(Math.random()-.5)*240; pos[i*3+1]=Math.random()*70; pos[i*3+2]=(Math.random()-.5)*240;
+  }
+  rain = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({
+    color:0xaebccb, size:0.14, transparent:true, opacity:0, depthWrite:false}));
+  rain.geometry.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  rain.frustumCulled=false; rain.visible=false; scene.add(rain);
+}
+const WX = { state:0, t:55, rain:0, dark:0, fogMul:1, flashT:5 };
+const WX_TGT = [ [1,0,0], [2.6,0,0.30], [1.9,1,0.45], [2.3,1,0.65] ]; // clair, brume, pluie, orage
+const WX_NAMES = ['CLAIR','BRUME','PLUIE','ORAGE'];
+
 /* cendres portées par le vent (suivent la caméra, enveloppe 320 m) */
 let ash;
 {
@@ -1019,32 +1068,44 @@ for(let i=0;i<4;i++){
   explosions.push({ball, light, sparks, sp, sv, t:-1, pos:new THREE.Vector3()});
 }
 let expIdx = 0;
-function explode(p){
+function explode(p, power=1){
   const e = explosions[expIdx++ % explosions.length];
-  e.t = 0; e.pos.copy(p);
-  e.ball.position.copy(p); e.ball.visible=true; e.ball.scale.setScalar(0.3);
+  e.t = 0; e.pos.copy(p); e.power = power;
+  e.ball.position.copy(p); e.ball.visible=true; e.ball.scale.setScalar(0.3*power);
   e.light.position.copy(p);
   for(let k=0;k<e.sv.length;k++){
     e.sv[k].set(Math.random()-.5, Math.random()*.7, Math.random()-.5).normalize()
-      .multiplyScalar(6+Math.random()*13);
+      .multiplyScalar((6+Math.random()*13)*Math.max(0.3,power));
     e.sp[k*3]=p.x; e.sp[k*3+1]=p.y; e.sp[k*3+2]=p.z;
   }
   e.sparks.visible=true; e.sparks.material.opacity=1;
-  boomSound(p.distanceTo(S.pos));
+  boomSound(p.distanceTo(S.pos), Math.min(1,power));
+  if(power < 0.5) return;   // simple impact de mitrailleuse : pas de dégâts de zone
+
   // dégâts de zone
   for(const z of zombies){
     if(!z.alive) continue;
     const d = Math.hypot(z.pos.x-p.x, z.pos.z-p.z);
-    if(d < 6 && Math.abs(p.y - (z.pos.y+1.2)) < 5) killZombie(z, p);
+    if(d < 6*power && Math.abs(p.y - (z.pos.y+1.2)) < 5*power) damageZombie(z, 5, p);
   }
   for(const tg of targets){
     if(!tg.hit && tg.grp.position.distanceTo(p) < 4) hitTarget(tg);
   }
+  // bidons et cuves : réaction en chaîne
+  for(const bl of barrels){
+    if(bl.alive && !bl.pending && Math.hypot(bl.x-p.x, bl.z-p.z) < 3.6 && Math.abs(bl.y-p.y) < 3.5){
+      bl.pending = true;
+      chainQ.push({barrel: bl, t: 0.13 + Math.random()*0.1});
+    }
+  }
+  for(const cv of cuves){
+    if(cv.alive && Math.hypot(cv.x-p.x, cv.z-p.z) < 9.5 && p.y < 13) damageCuve(cv);
+  }
   const dd = S.pos.distanceTo(p);
-  if(dd < 5){
-    const push = new THREE.Vector3().copy(S.pos).sub(p).normalize().multiplyScalar((5-dd)*4);
-    S.vel.add(push); S.impactFlash = 1;
-    if(dd < 2.2) crash('SOUFFLE DE L\'EXPLOSION');
+  if(dd < 5*power){
+    const push = new THREE.Vector3().copy(S.pos).sub(p).normalize().multiplyScalar((5*power-dd)*4);
+    S.vel.add(push);
+    damage((5*power-dd)*13 + 6, 'SOUFFLE DE L\'EXPLOSION');
   }
   shake += 0.02/Math.max(1, dd*0.25);
 }
@@ -1055,20 +1116,25 @@ const bDir = new THREE.Vector3(), bUp = new THREE.Vector3();
 function fire(){
   if(!S.started || S.paused || S.crashed || S.reloadT>0) return;
   const now = performance.now();
-  if(now-lastShot < 220 || S.ammo<=0) return;
-  lastShot = now; S.ammo--;
-  if(S.ammo<=0) S.reloadT = 1.8;
+  const mg = S.weapon===0;
+  if(now-lastShot < (mg? 95 : 240)) return;
+  if(mg ? S.mgAmmo<=0 : S.ammo<=0) return;
+  lastShot = now;
+  if(mg){ S.mgAmmo--; if(S.mgAmmo<=0) S.reloadT=1.4; }
+  else  { S.ammo--;   if(S.ammo<=0 && S.explReserve>0) S.reloadT=1.8; }
   const b = bullets.find(b=>!b.on) || bullets[0];
   camera.getWorldDirection(bDir);
   b.pos.copy(camera.position).addScaledVector(bDir, 0.9);
   b.pos.y -= 0.12;
-  b.vel.copy(bDir).multiplyScalar(85).add(S.vel);
+  b.vel.copy(bDir).multiplyScalar(mg? 140 : 85).add(S.vel);
+  b.kind = S.weapon;
   b.life = 3; b.on = true; b.m.visible = true; b.m.position.copy(b.pos);
-  S.recoil = 0.022*(1 - 0.4*S.zoomT);
+  b.m.scale.setScalar(mg? 0.55 : 1);
+  S.recoil = (mg? 0.006 : 0.022)*(1 - 0.4*S.zoomT);
   gun.userData.flash.visible = true;
   gun.userData.flash.rotation.z = Math.random()*6.28;
   setTimeout(()=>{ gun.userData.flash.visible=false; }, 55);
-  gunSound();
+  gunSound(mg);
 }
 function pointHitsWorld(p, r){
   if(p.y < r) return true;
@@ -1118,23 +1184,35 @@ function hitTarget(tg){
   tg.hit = true; tg.ht = 0; S.targetsHit++;
 }
 
-/* --- zombies --- */
+/* --- zombies (4 types) --- */
 const zombies = [];
-const zSkin  = new THREE.MeshStandardMaterial({color:0x8a9678, roughness:.95});
-const zCloth = new THREE.MeshStandardMaterial({color:0x3c3a33, roughness:1});
-const zCloth2= new THREE.MeshStandardMaterial({color:0x4a3630, roughness:1});
-const zEye   = new THREE.MeshBasicMaterial({color:0xff4020});
-function addZombie(x,z){
+const zSkin   = new THREE.MeshStandardMaterial({color:0x8a9678, roughness:.95});
+const zSkinR  = new THREE.MeshStandardMaterial({color:0x9a6a58, roughness:.95});  // coureur
+const zSkinB  = new THREE.MeshStandardMaterial({color:0x5f6a52, roughness:.95});  // colosse
+const zSkinS  = new THREE.MeshStandardMaterial({color:0x74a066, roughness:.9});   // cracheur
+const zCloth  = new THREE.MeshStandardMaterial({color:0x3c3a33, roughness:1});
+const zCloth2 = new THREE.MeshStandardMaterial({color:0x4a3630, roughness:1});
+const zEye    = new THREE.MeshBasicMaterial({color:0xff4020});
+const zEyeS   = new THREE.MeshBasicMaterial({color:0x66ff40});
+const Z_STATS = {
+  normal: {hp:2, spd:[0.5,1.2],  scale:1.0,  chase:55, dmg:12, pts:100},
+  runner: {hp:2, spd:[2.1,2.7],  scale:0.94, chase:72, dmg:12, pts:150},
+  brute:  {hp:8, spd:[0.4,0.55], scale:1.5,  chase:55, dmg:24, pts:250},
+  spitter:{hp:3, spd:[0.6,0.9],  scale:1.05, chase:60, dmg:12, pts:200},
+};
+function addZombie(x,z,type='normal'){
+  const st = Z_STATS[type];
+  const skin = type==='runner'?zSkinR : type==='brute'?zSkinB : type==='spitter'?zSkinS : zSkin;
   const grp = new THREE.Group();
   const cloth = rnd()<.5 ? zCloth : zCloth2;
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.72,0.30), cloth);
   torso.position.y = 1.14;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17,10,8), zSkin);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17,10,8), skin);
   head.position.y = 1.68;
-  const e1 = new THREE.Mesh(new THREE.SphereGeometry(0.028,6,4), zEye);
+  const e1 = new THREE.Mesh(new THREE.SphereGeometry(0.028,6,4), type==='spitter'?zEyeS:zEye);
   const e2 = e1.clone();
   e1.position.set(-0.06,1.71,0.15); e2.position.set(0.06,1.71,0.15);
-  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.11,0.58,0.11), zSkin);
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.11,0.58,0.11), skin);
   const armR = armL.clone();
   armL.position.set(-0.33,1.42,0.22); armR.position.set(0.33,1.42,0.22);
   armL.rotation.x = armR.rotation.x = -1.25;
@@ -1144,12 +1222,14 @@ function addZombie(x,z){
   grp.add(torso,head,e1,e2,armL,armR,legL,legR);
   grp.position.set(x,0,z);
   grp.rotation.y = rnd()*6.28;
+  grp.scale.setScalar(st.scale);
   grp.traverse(o=>{ o.castShadow = true; });
   scene.add(grp);
-  zombies.push({grp, pos:grp.position, armL, armR, alive:true, deadT:-1,
-    dir:rnd()*6.28, spd:0.5+rnd()*0.7, ph:rnd()*6.28, swatCd:0});
+  zombies.push({grp, pos:grp.position, armL, armR, alive:true, deadT:-1, type,
+    hp:st.hp, chaseR:st.chase, swatDmg:st.dmg, pts:st.pts, stunT:0, spitCd:2+rnd()*3,
+    dir:rnd()*6.28, spd:st.spd[0]+rnd()*(st.spd[1]-st.spd[0]), ph:rnd()*6.28, swatCd:0});
 }
-/* hordes : usine, carrefour, immeubles, parc à conteneurs */
+/* points d'apparition : usine, carrefour, immeubles, parc à conteneurs */
 const zSpots = [
   [-25,5],[-10,-8],[8,6],[20,-4],                       // dans le hall
   [55,30],[62,40],[70,26],[84,38],[95,30],              // carrefour / route
@@ -1160,19 +1240,203 @@ const zSpots = [
   [30,60],[-40,50],[10,-40],[-70,-30],[140,10]          // errants
 ];
 for(const [x,z] of zSpots) addZombie(x,z);
+addZombie(48, 20, 'runner'); addZombie(-60, -20, 'spitter');   // avant-goût dès la vague 1
+
+function damageZombie(z, n, from){
+  if(!z.alive) return;
+  z.hp -= n;
+  z.stunT = 0.25;
+  const away = Math.atan2(z.pos.z-from.z, z.pos.x-from.x);
+  z.pos.x += Math.cos(away)*0.25; z.pos.z += Math.sin(away)*0.25;
+  if(z.hp <= 0) killZombie(z, from);
+}
 function killZombie(z, from){
   z.alive = false; z.deadT = 0;
   S.kills++;
   const away = Math.atan2(z.pos.z-from.z, z.pos.x-from.x);
   z.flingX = Math.cos(away)*3.5; z.flingZ = Math.sin(away)*3.5;
+  // score + combo
+  S.comboT = 3.5; S.combo++;
+  const mult = Math.min(5, S.combo);
+  S.score += z.pts * mult;
+  if(S.zoomT > 0.5) S.zoomKills++;
+  const d = Math.hypot(S.pos.x-z.pos.x, S.pos.z-z.pos.z);
+  if(d > 55){                                  // bullet-cam : kill longue distance
+    slowT = 0.9; S.score += 150;
+    setBanner(`KILL CONFIRMÉ — ${d|0} m  +150`);
+  } else if(mult>1){
+    setBanner(`COMBO x${mult}  +${z.pts*mult}`);
+  }
+}
+
+/* --- vagues (mode horde) --- */
+function aliveCount(){ let n=0; for(const z of zombies) if(z.alive) n++; return n; }
+function spawnWave(){
+  S.wave++;
+  for(const z of zombies) scene.remove(z.grp);   // nettoie les cadavres
+  zombies.length = 0;
+  const n = Math.min(40, 16 + S.wave*6);
+  for(let i=0;i<n;i++){
+    const sp = zSpots[(Math.random()*zSpots.length)|0];
+    const rr = Math.random();
+    let type = 'normal';
+    if(S.wave>=2 && rr<0.20) type='runner';
+    else if(S.wave>=3 && rr<0.34) type='brute';
+    else if(S.wave>=3 && rr<0.46) type='spitter';
+    addZombie(sp[0]+(Math.random()-.5)*16, sp[1]+(Math.random()-.5)*16, type);
+  }
+  setBanner(`VAGUE ${S.wave} — ${n} HOSTILES`);
+}
+
+/* --- projectiles acides des cracheurs --- */
+const spits = [];
+{
+  const sm = new THREE.MeshBasicMaterial({color:0x8aff50});
+  for(let i=0;i<6;i++){
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.13,8,6), sm);
+    m.visible=false; scene.add(m);
+    spits.push({m, pos:new THREE.Vector3(), vel:new THREE.Vector3(), on:false, life:0});
+  }
+}
+function spit(z){
+  const p = spits.find(s=>!s.on); if(!p) return;
+  p.on=true; p.life=4;
+  p.pos.set(z.pos.x, z.pos.y+1.6*z.grp.scale.x, z.pos.z);
+  const tof = Math.max(0.7, Math.hypot(S.pos.x-p.pos.x, S.pos.z-p.pos.z)/26);
+  p.vel.set((S.pos.x-p.pos.x)/tof,
+            (S.pos.y-p.pos.y)/tof + 4.9*tof,
+            (S.pos.z-p.pos.z)/tof);
+  p.m.visible=true;
+  groanSound(4);
+}
+
+/* --- bidons rouges explosifs (réaction en chaîne) --- */
+const barrels = [];
+const chainQ = [];
+{
+  const redMat = new THREE.MeshStandardMaterial({map:texRust, normalMap:M.rust.normalMap,
+    color:0xb03028, roughness:.75, metalness:.3});
+  const spots = [[52,26],[54.5,27],[53,24.5],[86,36],[64,44],[118,70],[121,74],[168,-52],
+                 [-22,7],[-2,-11],[16,3],[-108,-66],[-116,-74],[36,-56]];
+  for(const [x,z] of spots){
+    const m = addCyl(0.4, 1.0, x, 0.5, z, redMat, {seg:12});
+    barrels.push({m, x, z, y:0.5, alive:true, pending:false});
+  }
+}
+function blowBarrel(bl){
+  if(!bl.alive) return;
+  bl.alive=false; bl.pending=false;
+  bl.m.scale.set(1, 0.25, 1); bl.m.position.y=0.15;
+  bl.m.material = M.darkSteel;
+  S.score += 25;
+  explode(new THREE.Vector3(bl.x, bl.y+0.4, bl.z), 1.15);
+}
+
+/* --- cuves destructibles (contrat n°1) --- */
+function damageCuve(cv){
+  cv.hp--;
+  if(cv.hp>0) return;
+  cv.alive=false;
+  cv.mesh.scale.set(1, 0.16, 1); cv.mesh.position.y = 0.9;
+  cv.mesh.material = M.darkSteel;
+  const ci = cylColliders.indexOf(cv.col);
+  if(ci>=0) cylColliders.splice(ci,1);
+  S.cuves++; S.score += 400;
+  explode(new THREE.Vector3(cv.x, 6, cv.z), 1.6);
+  setBanner(`CUVE DÉTRUITE ${S.cuves}/4  +400`);
+}
+
+/* --- caisses de ravitaillement (se poser dessus) --- */
+const crates = [];
+{
+  const cm = new THREE.MeshStandardMaterial({color:0x1f7a74, roughness:.6, metalness:.3,
+    emissive:0x0f5a54, emissiveIntensity:.5});
+  for(const [x,z,top] of [[2,0,14.4],[175,-55,14.18],[62,22,7.0]]){
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1.3,0.8,1.3), cm.clone());
+    m.position.set(x, top+0.4, z);
+    m.castShadow=true; scene.add(m);
+    const col = {min:new THREE.Vector3(x-0.65,top,z-0.65), max:new THREE.Vector3(x+0.65,top+0.8,z+0.65)};
+    boxColliders.push(col);
+    crates.push({m, col, x, z, top, taken:false, respT:0});
+  }
 }
 
 /* --- boucle de combat --- */
 let groanT = 3;
 function combat(dt, t){
-  // recharge
-  if(S.reloadT>0){ S.reloadT-=dt; if(S.reloadT<=0){ S.ammo=8; S.reloadT=0; } }
+  // recharge (arme courante)
+  if(S.reloadT>0){
+    S.reloadT-=dt;
+    if(S.reloadT<=0){
+      if(S.weapon===1){ const take=Math.min(8-S.ammo, S.explReserve); S.ammo+=take; S.explReserve-=take; }
+      else S.mgAmmo=40;
+      S.reloadT=0;
+    }
+  }
   S.recoil *= Math.max(0, 1-dt*9);
+
+  // combo qui expire
+  if(S.comboT>0){ S.comboT-=dt; if(S.comboT<=0) S.combo=0; }
+
+  // réactions en chaîne des bidons
+  for(let i=chainQ.length-1; i>=0; i--){
+    chainQ[i].t -= dt;
+    if(chainQ[i].t<=0){ blowBarrel(chainQ[i].barrel); chainQ.splice(i,1); }
+  }
+
+  // vagues
+  if(S.waveT>0){
+    S.waveT-=dt;
+    if(S.waveT<=0) spawnWave();
+  } else if(aliveCount()===0){
+    const bonus = 500*S.wave;
+    S.score += bonus; saveBest();
+    setBanner(`VAGUE ${S.wave} NETTOYÉE  +${bonus}`);
+    S.waveT = 8;
+  }
+
+  // contrats
+  if(!S.c1 && S.cuves>=4){ S.c1=true; S.score+=1500; setBanner('CONTRAT REMPLI : CUVES  +1500'); }
+  if(!S.c2 && S.zoomKills>=5){ S.c2=true; S.score+=1500; setBanner('CONTRAT REMPLI : SNIPER  +1500'); }
+  if(!S.c3 && S.combo>=3){ S.c3=true; S.score+=1500; setBanner('CONTRAT REMPLI : CHAÎNE x3  +1500'); }
+
+  // caisses de ravitaillement
+  for(const c of crates){
+    if(c.taken){
+      c.respT -= dt;
+      if(c.respT<=0){ c.taken=false; c.m.visible=true; boxColliders.push(c.col); }
+      continue;
+    }
+    c.m.material.emissiveIntensity = 0.35 + 0.3*Math.sin(t*5);
+    const d3 = Math.hypot(S.pos.x-c.x, S.pos.y-(c.top+0.9), S.pos.z-c.z);
+    if(d3 < 1.6 && S.vel.length() < 2.5){
+      c.taken=true; c.respT=60; c.m.visible=false;
+      const bi = boxColliders.indexOf(c.col); if(bi>=0) boxColliders.splice(bi,1);
+      S.explReserve = Math.min(40, S.explReserve+16);
+      S.mgAmmo = 40;
+      S.hp = Math.min(100, S.hp+50);
+      S.battery = 100;
+      setBanner('RAVITAILLEMENT — MUN +16  INTÉGRITÉ +50');
+      chimeSound();
+    }
+  }
+
+  // projectiles acides
+  for(const p of spits){
+    if(!p.on) continue;
+    p.life -= dt;
+    p.vel.y -= 9.8*dt;
+    p.pos.addScaledVector(p.vel, dt);
+    p.m.position.copy(p.pos);
+    if(p.pos.distanceTo(S.pos) < 1.3){
+      p.on=false; p.m.visible=false;
+      damage(15, 'PROJECTILE ACIDE');
+      S.splats.push({x:Math.random()*0.8+0.1, y:Math.random()*0.7+0.15, r:30+Math.random()*50, t:1});
+      continue;
+    }
+    if(p.pos.y < 0.05 || p.life<=0){ p.on=false; p.m.visible=false; }
+  }
+  for(let i=S.splats.length-1;i>=0;i--){ S.splats[i].t -= dt*0.25; if(S.splats[i].t<=0) S.splats.splice(i,1); }
 
   // balles (sous-pas anti-tunneling, chute balistique légère)
   for(const b of bullets){
@@ -1181,22 +1445,37 @@ function combat(dt, t){
     if(b.life<=0){ b.on=false; b.m.visible=false; continue; }
     const steps = Math.max(1, Math.ceil(b.vel.length()*dt/0.5));
     const h = dt/steps;
-    let boom = false;
+    let boom = false, hitZ = null;
     for(let s=0; s<steps && !boom; s++){
       b.vel.y -= 3.5*h;
       b.pos.addScaledVector(b.vel, h);
       if(pointHitsWorld(b.pos, 0.12)) boom = true;
       if(!boom) for(const z of zombies){
         if(!z.alive) continue;
-        if(Math.hypot(b.pos.x-z.pos.x, b.pos.z-z.pos.z) < 0.55
-           && b.pos.y > z.pos.y && b.pos.y < z.pos.y+1.95){ boom=true; break; }
+        const sc = z.grp.scale.x;
+        if(Math.hypot(b.pos.x-z.pos.x, b.pos.z-z.pos.z) < 0.55*sc
+           && b.pos.y > z.pos.y && b.pos.y < z.pos.y+1.95*sc){ boom=true; hitZ=z; break; }
       }
       if(!boom) for(const tg of targets){
         if(!tg.hit && b.pos.distanceTo(tg.grp.position) < 0.8){ hitTarget(tg); boom=true; break; }
       }
+      if(!boom) for(const bl of barrels){
+        if(bl.alive && Math.hypot(b.pos.x-bl.x, b.pos.z-bl.z) < 0.55 && b.pos.y < 1.2){
+          boom=true; blowBarrel(bl); break;
+        }
+      }
     }
     b.m.position.copy(b.pos);
-    if(boom){ b.on=false; b.m.visible=false; explode(b.pos); }
+    if(boom){
+      b.on=false; b.m.visible=false;
+      if(b.kind===1){                         // grenade explosive
+        if(hitZ) damageZombie(hitZ, 6, b.pos);
+        explode(b.pos, 1);
+      } else {                                // mitrailleuse : impact sec
+        if(hitZ) damageZombie(hitZ, 1, b.pos);
+        explode(b.pos, 0.15);
+      }
+    }
   }
 
   // explosions
@@ -1204,10 +1483,11 @@ function combat(dt, t){
     if(e.t<0) continue;
     e.t += dt;
     const k = e.t/0.55;
+    const pw = e.power||1;
     if(k>=1){ e.t=-1; e.ball.visible=false; e.sparks.visible=false; e.light.intensity=0; continue; }
-    e.ball.scale.setScalar(0.4 + k*10);
+    e.ball.scale.setScalar((0.4 + k*10)*pw);
     e.ball.material.opacity = 0.85*(1-k);
-    e.light.intensity = 520*(1-k);
+    e.light.intensity = 520*(1-k)*pw;
     for(let i=0;i<e.sv.length;i++){
       e.sv[i].y -= 9.8*dt;
       e.sp[i*3] += e.sv[i].x*dt; e.sp[i*3+1] += e.sv[i].y*dt; e.sp[i*3+2] += e.sv[i].z*dt;
@@ -1237,14 +1517,15 @@ function combat(dt, t){
     }
     const dx = S.pos.x-z.pos.x, dz = S.pos.z-z.pos.z;
     const d = Math.hypot(dx, dz);
-    const hunting = d<55 && S.pos.y<22;
+    if(z.stunT>0){ z.stunT-=dt; continue; }           // sonné par un tir
+    const hunting = d<z.chaseR && S.pos.y<22;
     let tgt = z.dir;
     if(hunting) tgt = Math.atan2(dz, dx);
     else if(Math.random()<0.004) z.dir += (Math.random()-.5)*1.6;
     let turn = tgt - z.dir;
     turn = Math.atan2(Math.sin(turn), Math.cos(turn));
     z.dir += clamp(turn, -1.4*dt, 1.4*dt);
-    const chase = hunting ? 1.9 : 1;
+    const chase = hunting ? (z.type==='runner'?1.4:1.9) : 1;
     z.pos.x += Math.cos(z.dir)*z.spd*chase*dt;
     z.pos.z += Math.sin(z.dir)*z.spd*chase*dt;
     if(Math.abs(z.pos.x)>320 || Math.abs(z.pos.z)>320) z.dir += Math.PI;
@@ -1255,13 +1536,21 @@ function combat(dt, t){
     z.grp.rotation.z = Math.sin(z.ph)*0.07;
     z.armL.rotation.x = -1.25 + Math.sin(z.ph*0.9)*0.25;
     z.armR.rotation.x = -1.25 + Math.cos(z.ph*0.8)*0.25;
+    // le cracheur tire de loin
+    if(z.type==='spitter' && hunting && S.pos.y < 32){
+      z.spitCd -= dt;
+      if(z.spitCd<=0 && d>4 && d<50){ z.spitCd = 3.2 + Math.random()*2.2; spit(z); }
+    }
     // coup de griffe si le drone traîne trop bas
     z.swatCd -= dt;
-    if(d<2.4 && S.pos.y<3.0 && z.swatCd<=0){
+    const reach = z.type==='brute' ? 3.2 : 2.4;
+    if(d<reach && S.pos.y<3.0*z.grp.scale.x && z.swatCd<=0){
       z.swatCd = 1.2;
       const a = Math.atan2(dz,dx) + (Math.random()-.5)*0.8;
-      S.vel.x += Math.cos(a)*7; S.vel.z += Math.sin(a)*7; S.vel.y += 2.5;
-      S.impactFlash = 1; shake += 0.05;
+      const kick = z.type==='brute' ? 11 : 7;
+      S.vel.x += Math.cos(a)*kick; S.vel.z += Math.sin(a)*kick; S.vel.y += 2.5;
+      damage(z.swatDmg, 'DÉCHIQUETÉ PAR LES HOSTILES');
+      shake += 0.05;
       groanSound(1);
     }
   }
@@ -1313,10 +1602,12 @@ let dust;
    AUDIO (procédural)
    ============================================================ */
 let AC=null, motorGain, motorOsc1, motorOsc2, motorFilter, windGain, windSrc, windFilter, muted=false;
+let masterGain=null, rainGain=null;
 function initAudio(){
   if(AC) return;
   AC = new (window.AudioContext||window.webkitAudioContext)();
-  const master = AC.createGain(); master.gain.value=.9; master.connect(AC.destination);
+  const master = AC.createGain(); master.gain.value=SETTINGS.vol; master.connect(AC.destination);
+  masterGain = master;
   motorFilter = AC.createBiquadFilter(); motorFilter.type='lowpass'; motorFilter.frequency.value=1400; motorFilter.Q.value=2;
   motorGain = AC.createGain(); motorGain.gain.value=0;
   motorOsc1 = AC.createOscillator(); motorOsc1.type='sawtooth';
@@ -1332,6 +1623,12 @@ function initAudio(){
   windGain=AC.createGain(); windGain.gain.value=0;
   windSrc.connect(windFilter); windFilter.connect(windGain); windGain.connect(master);
   windSrc.start();
+  // pluie (même buffer de bruit, filtre plus haut)
+  const rainSrc=AC.createBufferSource(); rainSrc.buffer=buf; rainSrc.loop=true;
+  const rf=AC.createBiquadFilter(); rf.type='bandpass'; rf.frequency.value=2600; rf.Q.value=.4;
+  rainGain=AC.createGain(); rainGain.gain.value=0;
+  rainSrc.connect(rf); rf.connect(rainGain); rainGain.connect(master);
+  rainSrc.start();
 }
 function audioTick(thr, speed){
   if(!AC) return;
@@ -1350,25 +1647,50 @@ function crashSound(){
   for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
   const s=AC.createBufferSource(); s.buffer=buf;
   const g=AC.createGain(); g.gain.value=.5;
-  s.connect(g); g.connect(AC.destination); s.start();
+  s.connect(g); g.connect(masterGain); s.start();
 }
-function gunSound(){
+function gunSound(mg){
   if(!AC||muted) return;
-  const len=AC.sampleRate*.09, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+  const dur = mg? .05 : .09, vol = mg? .22 : .4;
+  const len=AC.sampleRate*dur, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
   for(let i=0;i<len;i++){ const k=1-i/len; d[i]=(Math.random()*2-1)*k*k; }
   const s=AC.createBufferSource(); s.buffer=buf;
-  const f=AC.createBiquadFilter(); f.type='bandpass'; f.frequency.value=1600; f.Q.value=.8;
-  const g=AC.createGain(); g.gain.value=.4;
-  s.connect(f); f.connect(g); g.connect(AC.destination); s.start();
-  const o=AC.createOscillator(); o.type='square'; o.frequency.setValueAtTime(160,AC.currentTime);
-  o.frequency.exponentialRampToValueAtTime(55,AC.currentTime+.07);
-  const g2=AC.createGain(); g2.gain.setValueAtTime(.22,AC.currentTime);
-  g2.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.08);
-  o.connect(g2); g2.connect(AC.destination); o.start(); o.stop(AC.currentTime+.09);
+  const f=AC.createBiquadFilter(); f.type='bandpass'; f.frequency.value=mg?2400:1600; f.Q.value=.8;
+  const g=AC.createGain(); g.gain.value=vol;
+  s.connect(f); f.connect(g); g.connect(masterGain); s.start();
+  if(!mg){
+    const o=AC.createOscillator(); o.type='square'; o.frequency.setValueAtTime(160,AC.currentTime);
+    o.frequency.exponentialRampToValueAtTime(55,AC.currentTime+.07);
+    const g2=AC.createGain(); g2.gain.setValueAtTime(.22,AC.currentTime);
+    g2.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.08);
+    o.connect(g2); g2.connect(masterGain); o.start(); o.stop(AC.currentTime+.09);
+  }
 }
-function boomSound(dist){
+function thunderSound(){
   if(!AC||muted) return;
-  const att = clamp(1.4/(1+dist*0.045), .04, 1);
+  const len=AC.sampleRate*2.2, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++){ const k=1-i/len; d[i]=(Math.random()*2-1)*k*k*(0.4+0.6*Math.sin(i/len*9)); }
+  const s=AC.createBufferSource(); s.buffer=buf;
+  const f=AC.createBiquadFilter(); f.type='lowpass';
+  f.frequency.setValueAtTime(240,AC.currentTime);
+  f.frequency.exponentialRampToValueAtTime(60,AC.currentTime+1.8);
+  const g=AC.createGain(); g.gain.value=.5;
+  s.connect(f); f.connect(g); g.connect(masterGain); s.start();
+}
+function chimeSound(){
+  if(!AC||muted) return;
+  for(const [fq,dl] of [[880,0],[1320,0.09]]){
+    const o=AC.createOscillator(); o.type='sine'; o.frequency.value=fq;
+    const g=AC.createGain();
+    g.gain.setValueAtTime(0.0001,AC.currentTime+dl);
+    g.gain.exponentialRampToValueAtTime(.25,AC.currentTime+dl+.02);
+    g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+dl+.35);
+    o.connect(g); g.connect(masterGain); o.start(AC.currentTime+dl); o.stop(AC.currentTime+dl+.4);
+  }
+}
+function boomSound(dist, mul=1){
+  if(!AC||muted) return;
+  const att = clamp(1.4/(1+dist*0.045), .04, 1) * mul;
   const len=AC.sampleRate*.6, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
   for(let i=0;i<len;i++){ const k=1-i/len; d[i]=(Math.random()*2-1)*k*k*k; }
   const s=AC.createBufferSource(); s.buffer=buf;
@@ -1376,12 +1698,12 @@ function boomSound(dist){
   f.frequency.setValueAtTime(600,AC.currentTime);
   f.frequency.exponentialRampToValueAtTime(70,AC.currentTime+.5);
   const g=AC.createGain(); g.gain.value=.85*att;
-  s.connect(f); f.connect(g); g.connect(AC.destination); s.start();
+  s.connect(f); f.connect(g); g.connect(masterGain); s.start();
   const o=AC.createOscillator(); o.frequency.setValueAtTime(72,AC.currentTime);
   o.frequency.exponentialRampToValueAtTime(26,AC.currentTime+.45);
   const g2=AC.createGain(); g2.gain.setValueAtTime(.55*att,AC.currentTime);
   g2.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.5);
-  o.connect(g2); g2.connect(AC.destination); o.start(); o.stop(AC.currentTime+.55);
+  o.connect(g2); g2.connect(masterGain); o.start(); o.stop(AC.currentTime+.55);
 }
 function groanSound(dist){
   if(!AC||muted) return;
@@ -1397,7 +1719,7 @@ function groanSound(dist){
   g.gain.setValueAtTime(0.0001,AC.currentTime);
   g.gain.exponentialRampToValueAtTime(att,AC.currentTime+.15);
   g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.8);
-  o.connect(f); f.connect(g); g.connect(AC.destination);
+  o.connect(f); f.connect(g); g.connect(masterGain);
   o.start(); lfo.start(); o.stop(AC.currentTime+.85); lfo.stop(AC.currentTime+.85);
 }
 
@@ -1413,8 +1735,13 @@ addEventListener('keydown', e=>{
   if(k===' ') e.preventDefault();      // frein (lu via keys[' '])
   if(k==='r') respawn();
   if(k==='m') muted=!muted;
-  if(k==='n') S.mode=(S.mode+1)%3;
-  if(k==='f' && S.ammo<8 && S.reloadT<=0) S.reloadT=1.8;
+  if(k==='n') S.mode=(S.mode+1)%4;
+  if(e.code==='Digit1' && S.weapon!==0){ S.weapon=0; S.reloadT=0; }
+  if(e.code==='Digit2' && S.weapon!==1){ S.weapon=1; S.reloadT=0; }
+  if(k==='f' && S.reloadT<=0){
+    if(S.weapon===1 && S.ammo<8 && S.explReserve>0) S.reloadT=1.8;
+    if(S.weapon===0 && S.mgAmmo<40) S.reloadT=1.4;
+  }
 });
 addEventListener('mousedown', e=>{
   if(!document.pointerLockElement) return;
@@ -1446,7 +1773,27 @@ elStart.addEventListener('click', ()=>{
   initAudio(); AC.resume?.();
   S.started=true; elStart.style.display='none'; grab();
 });
-elPause.addEventListener('click', ()=>{
+/* --- menu pause : réglages --- */
+const elSens=document.getElementById('set-sens'), elSensV=document.getElementById('set-sens-v');
+const elVol=document.getElementById('set-vol'),   elVolV=document.getElementById('set-vol-v');
+const elQ=document.getElementById('set-q');
+function applySettings(){
+  elSensV.textContent = SETTINGS.sens.toFixed(1);
+  elVolV.textContent = Math.round(SETTINGS.vol*100);
+  if(masterGain) masterGain.gain.value = SETTINGS.vol;
+  const pr = [0.6, 0.85, Math.min(devicePixelRatio,2)][SETTINGS.q];
+  renderer.setPixelRatio(pr);
+  renderer.setSize(innerWidth, innerHeight);
+  sun.castShadow = SETTINGS.q >= 1;
+  localStorage.setItem('bs-settings', JSON.stringify(SETTINGS));
+}
+elSens.value = SETTINGS.sens*100; elVol.value = SETTINGS.vol*100; elQ.value = SETTINGS.q;
+elSens.addEventListener('input', ()=>{ SETTINGS.sens = elSens.value/100; applySettings(); });
+elVol.addEventListener('input',  ()=>{ SETTINGS.vol = elVol.value/100; applySettings(); });
+elQ.addEventListener('change',   ()=>{ SETTINGS.q = +elQ.value; applySettings(); });
+applySettings();
+document.getElementById('btn-resume').addEventListener('click', e=>{
+  e.stopPropagation();
   S.paused=false; elPause.style.display='none'; grab();
 });
 elCrash.addEventListener('click', ()=>{ respawn(); grab(); });
@@ -1457,14 +1804,23 @@ function respawn(){
   S.yaw=spawn.yaw; S.camPitch=0; S.pitch=0; S.roll=0;
   S.crashed=false; S.battery=Math.max(S.battery, 25); S.impactFlash=0;
   S.ammo=8; S.reloadT=0; S.recoil=0;
+  S.hp=100; S.mgAmmo=40; S.explReserve=Math.max(S.explReserve, 12);
+  S.combo=0; S.comboT=0; S.splats.length=0;
   elCrash.style.display='none';
 }
 function crash(reason){
   if(S.crashed) return;
-  S.crashed=true; crashSound();
+  S.crashed=true; S.hp=0; crashSound(); saveBest();
   document.getElementById('crash-sub').textContent =
     (reason||'IMPACT DÉTECTÉ') + ' — LIAISON INTERROMPUE';
   setTimeout(()=>{ elCrash.style.display='flex'; }, 450);
+}
+/* dégâts non létaux : le drone encaisse, crash seulement à 0 d'intégrité */
+function damage(n, reason){
+  if(S.crashed) return;
+  S.hp = Math.max(0, S.hp - n);
+  S.impactFlash = Math.min(1, 0.4 + n/60);
+  if(S.hp <= 0) crash(reason);
 }
 
 /* ============================================================
@@ -1473,7 +1829,7 @@ function crash(reason){
 const tmpV = new THREE.Vector3();
 function physics(dt){
   // — visée souris (comme un FPS) — sensibilité réduite quand on zoome
-  const sens = T.lookSens * lerp(1, 1.4/S.zoomX, S.zoomT);
+  const sens = T.lookSens * SETTINGS.sens * lerp(1, 1.4/S.zoomX, S.zoomT);
   S.yaw     -= mouseDX*sens;
   S.camPitch = clamp(S.camPitch - mouseDY*sens, -T.maxLook, T.maxLook);
   mouseDX=0; mouseDY=0;
@@ -1517,9 +1873,10 @@ function physics(dt){
   // — collisions —
   // sol
   if(S.pos.y < r){
-    impact = Math.max(impact, -S.vel.y);
+    const imp = Math.max(-S.vel.y, hv*0.7);
     S.pos.y = r;
-    if(-S.vel.y > T.crashSpeed || hv > T.crashSpeed*1.4){ crash('IMPACT SOL'); }
+    if(imp > 19) crash('IMPACT SOL CATASTROPHIQUE');
+    else if(imp > 4.5) damage((imp-4)*5.5, 'IMPACT SOL');
     S.vel.y = Math.max(0, S.vel.y*-T.bounce);
     S.vel.x*=0.85; S.vel.z*=0.85;
   }
@@ -1567,7 +1924,8 @@ function physics(dt){
     }
   }
   } // fin des sous-pas
-  if(impact > T.crashSpeed) crash('COLLISION STRUCTURE');
+  if(impact > 19) crash('COLLISION CATASTROPHIQUE');
+  else if(impact > 4.5) damage((impact-4)*5.5, 'COLLISION STRUCTURE');
   else if(impact > 2) S.impactFlash = 1;
 
   // batterie & G
@@ -1636,14 +1994,65 @@ function drawHUD(t){
   hctx.textAlign='left';
   hctx.fillText('UAV-07 // FPV CAM 01', 30, 34);
   hctx.fillText('5.8GHz CH-R7  AES-256', 30, 50);
-  hctx.fillText(`CIBLES ${String(S.targetsHit).padStart(2,'0')}/10  HOSTILES ${String(S.kills).padStart(2,'0')}/${zombies.length}`, 30, 66);
+  hctx.fillText(`VAGUE ${S.wave}  RESTANTS ${aliveCount()}  CIBLES ${S.targetsHit}/10`, 30, 66);
   if(S.mode===2){ hctx.fillStyle='#c8ffc8'; hctx.fillText('NVG ● AMPLI x4', 30, 84); hctx.fillStyle=GRN; }
   else if(S.mode===1){ hctx.fillStyle=AMB; hctx.fillText('MODE NUIT — NVG OFF (N)', 30, 84); hctx.fillStyle=GRN; }
+  else if(S.mode===3){ hctx.fillStyle='#ffffff'; hctx.fillText('THERM ● BLANC-CHAUD', 30, 84); hctx.fillStyle=GRN; }
+  // contrats
+  hctx.font='11px "Courier New",monospace';
+  const cts=[[S.c1,`CUVES ${S.cuves}/4`],[S.c2,`SNIPER (ZOOM) ${S.zoomKills}/5`],[S.c3,`CHAÎNE x3`]];
+  cts.forEach(([done,txt],i)=>{
+    hctx.fillStyle = done ? GRN3 : GRN2;
+    hctx.fillText((done?'■ ':'□ ')+txt, 30, 104+i*15);
+  });
+  hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
+  if(S.waveT>0){
+    hctx.fillStyle=AMB;
+    hctx.fillText(`VAGUE ${S.wave+1} DANS ${Math.ceil(S.waveT)}s`, 30, 158);
+    hctx.fillStyle=GRN;
+  }
   hctx.textAlign='right';
   if(Math.floor(t*1.6)%2===0){ hctx.fillStyle=RED; hctx.fillText('● REC', W-30, 34); }
   hctx.fillStyle=GRN;
   const mm=String(Math.floor(S.time/60)).padStart(2,'0'), ss=String(Math.floor(S.time%60)).padStart(2,'0');
   hctx.fillText(`T+${mm}:${ss}`, W-30, 50);
+  hctx.fillText(`SCORE ${S.score}`, W-30, 68);
+  hctx.fillText(`RECORD ${Math.max(S.best, S.score)}`, W-30, 84);
+  if(S.combo>1){ hctx.fillStyle=AMB; hctx.fillText(`COMBO x${Math.min(S.combo,5)}`, W-30, 100); hctx.fillStyle=GRN; }
+
+  /* --- radar --- */
+  {
+    const mx=W-92, my=196, mr=58;
+    hctx.save();
+    hctx.fillStyle='rgba(6,20,8,.45)';
+    hctx.beginPath(); hctx.arc(mx,my,mr,0,7); hctx.fill();
+    hctx.strokeStyle=GRN3;
+    hctx.beginPath(); hctx.arc(mx,my,mr,0,7); hctx.stroke();
+    hctx.beginPath(); hctx.arc(mx,my,mr/2,0,7); hctx.stroke();
+    hctx.beginPath();
+    hctx.moveTo(mx-mr,my); hctx.lineTo(mx+mr,my);
+    hctx.moveTo(mx,my-mr); hctx.lineTo(mx,my+mr);
+    hctx.stroke();
+    const sc2=mr/90, cA=-Math.cos(S.yaw), sA=-Math.sin(S.yaw);
+    const put=(wx,wz,col,sz)=>{
+      const dx=wx-S.pos.x, dz=wz-S.pos.z;
+      const px=cA*dx - sA*dz, py=-(sA*dx + cA*dz);
+      if(Math.hypot(px,py)>88) return;
+      hctx.fillStyle=col;
+      hctx.fillRect(mx+px*sc2-sz/2, my+py*sc2-sz/2, sz, sz);
+    };
+    for(const z of zombies) if(z.alive) put(z.pos.x, z.pos.z, '#ff5748', z.type==='brute'?5:3);
+    for(const tg of targets) if(!tg.hit) put(tg.grp.position.x, tg.grp.position.z, '#7dffa0', 3);
+    for(const c of crates) if(!c.taken) put(c.x, c.z, '#4ce0ff', 4);
+    hctx.fillStyle='#d9ffd9';
+    hctx.beginPath(); hctx.moveTo(mx,my-5); hctx.lineTo(mx-4,my+4); hctx.lineTo(mx+4,my+4);
+    hctx.closePath(); hctx.fill();
+    hctx.textAlign='center'; hctx.font='10px "Courier New",monospace';
+    hctx.fillStyle=GRN2;
+    hctx.fillText('N', mx+sA*(mr-9), my+cA*(mr-9)+3);
+    hctx.restore();
+    hctx.font='13px "Courier New",monospace'; hctx.textAlign='right'; hctx.fillStyle=GRN;
+  }
   hctx.fillText(`48°51'${(12+S.pos.x*0.01).toFixed(2)}"N  2°21'${(30+S.pos.z*0.01).toFixed(2)}"E`, W-30, H-30);
   hctx.textAlign='left';
   hctx.fillText('MODE COMBAT  GPS 11 SAT', 30, H-30);
@@ -1793,6 +2202,13 @@ function drawHUD(t){
   /* --- bas : batterie, gaz, signal, G --- */
   const by=H-64;
   hctx.textAlign='left';
+  // intégrité du drone
+  const lowHp = S.hp<40;
+  hctx.fillStyle = lowHp ? (Math.floor(t*3)%2? RED:'rgba(255,96,96,.3)') : GRN;
+  hctx.fillText(`INT ${S.hp|0}%`, 30, by-22);
+  hctx.strokeStyle=GRN2; hctx.strokeRect(95, by-33, 84, 13);
+  hctx.fillStyle = lowHp ? RED : GRN2;
+  hctx.fillRect(97, by-31, 80*S.hp/100, 9);
   const bat=S.battery;
   hctx.fillStyle = bat<20 ? (Math.floor(t*3)%2? RED:'rgba(255,96,96,.3)') : GRN;
   hctx.fillText(`BAT ${bat.toFixed(0)}%`, 30, by);
@@ -1812,10 +2228,16 @@ function drawHUD(t){
     hctx.strokeStyle=GRN2; hctx.strokeRect(W-114, by-18, 84, 7);
     hctx.fillStyle=GRN2; hctx.fillRect(W-112, by-16.5, 80*(1-S.reloadT/1.8), 4);
     hctx.fillStyle=GRN;
-  } else {
-    hctx.fillText(`EXPL ${S.ammo}/8`, W-30, by-24);
+  } else if(S.weapon===1){
+    hctx.fillText(`GRENADES ${S.ammo}/8  RÉS ${S.explReserve}`, W-30, by-24);
     for(let i=0;i<S.ammo;i++) hctx.fillRect(W-114+i*10, by-18, 6, 8);
+  } else {
+    hctx.fillText(`MITRAILLEUSE ${S.mgAmmo}/40`, W-30, by-24);
+    for(let i=0;i<Math.ceil(S.mgAmmo/5);i++) hctx.fillRect(W-114+i*10, by-18, 6, 8);
   }
+  hctx.fillStyle=GRN2; hctx.font='10px "Courier New",monospace';
+  hctx.fillText('[1] MIT   [2] GREN', W-30, by-42);
+  hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
   hctx.font='13px "Courier New",monospace';
   hctx.fillText(`G ${S.gForce.toFixed(1)}`, W-30, by);
   hctx.fillText('LINK', W-108, by+22);
@@ -1835,6 +2257,33 @@ function drawHUD(t){
     if(Math.floor(t*2.5)%2===0){ hctx.fillStyle=AMB; hctx.fillText('⚠ '+w, cx, H-100-i*20); }
   });
   hctx.shadowBlur=0;
+
+  /* bannière d'événement */
+  if(S.bannerT>0 && S.banner){
+    hctx.save();
+    hctx.globalAlpha = Math.min(1, S.bannerT);
+    hctx.textAlign='center'; hctx.font='700 21px "Courier New",monospace';
+    hctx.fillStyle='#d9ffd9';
+    hctx.shadowColor='rgba(120,255,140,.6)'; hctx.shadowBlur=10;
+    hctx.fillText(S.banner, cx, H*0.30);
+    hctx.restore();
+  }
+
+  /* éclaboussures d'acide */
+  for(const sp2 of S.splats){
+    hctx.fillStyle=`rgba(96,190,60,${0.45*sp2.t})`;
+    hctx.beginPath(); hctx.arc(sp2.x*W, sp2.y*H, sp2.r, 0, 7); hctx.fill();
+    hctx.beginPath(); hctx.arc(sp2.x*W+sp2.r*0.7, sp2.y*H+sp2.r*0.5, sp2.r*0.35, 0, 7); hctx.fill();
+  }
+
+  /* drone endommagé : image qui glitche */
+  if(S.hp<40 && !S.crashed){
+    const dg = 1 - S.hp/40;
+    canvas.style.transform = Math.random()<dg*0.3
+      ? `translate(${(Math.random()-.5)*10*dg}px,${(Math.random()-.5)*5*dg}px)` : '';
+    hctx.fillStyle=`rgba(150,255,150,.07)`;
+    for(let i=0;i<dg*150;i++) hctx.fillRect(Math.random()*W, Math.random()*H, 2, 2);
+  } else if(canvas.style.transform) canvas.style.transform='';
 
   /* grain d'amplification en vision nocturne */
   if(S.mode===2){
@@ -1865,7 +2314,8 @@ function drawHUD(t){
 let last=performance.now();
 function loop(now){
   requestAnimationFrame(loop);
-  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  let dt=Math.min(0.05,(now-last)/1000); last=now;
+  if(slowT>0){ slowT-=dt; dt*=0.35; }    // bullet-cam : ralenti bref
   const t=now/1000;
 
   if(S.started && !S.paused && !S.crashed) physics(dt);
@@ -1886,19 +2336,71 @@ function loop(now){
   sun.position.copy(S.pos).addScaledVector(SUN_DIR, 260);
   sun.target.position.copy(S.pos);
 
-  // transitions jour / nuit / vision nocturne
-  const nTgt = S.mode>=1 ? 1 : 0;
+  // météo dynamique
+  WX.t -= dt;
+  if(WX.t<=0){
+    const opts=[0,0,1,2,3].filter(s=>s!==WX.state);   // le temps clair revient plus souvent
+    WX.state = opts[(Math.random()*opts.length)|0];
+    WX.t = 70 + Math.random()*50;
+    setBanner(`MÉTÉO : ${WX_NAMES[WX.state]}`);
+  }
+  const wt = WX_TGT[WX.state];
+  WX.fogMul += clamp(wt[0]-WX.fogMul, -dt*0.25, dt*0.25);
+  WX.rain   += clamp(wt[1]-WX.rain,   -dt*0.40, dt*0.40);
+  WX.dark   += clamp(wt[2]-WX.dark,   -dt*0.20, dt*0.20);
+  skyUni.uWx.value = WX.dark;
+  skyUni.uFlash.value = Math.max(0, skyUni.uFlash.value - dt*2.5);
+  if(WX.state===3){                                    // éclairs d'orage
+    WX.flashT -= dt;
+    if(WX.flashT<=0){
+      WX.flashT = 3.5 + Math.random()*7;
+      skyUni.uFlash.value = 0.9;
+      setTimeout(thunderSound, 600+Math.random()*1800);
+    }
+  }
+  rain.visible = WX.rain > 0.03;
+  rain.material.opacity = WX.rain*0.55;
+  if(rain.visible){
+    const rp = rain.geometry.attributes.position.array, c=camera.position;
+    for(let i=0;i<rp.length/3;i++){
+      rp[i*3+1] -= dt*26;
+      rp[i*3]   += dt*4;
+      if(rp[i*3+1]<0) rp[i*3+1]+=70;
+      for(const k of [0,2]){
+        const cc = k===0?c.x:c.z;
+        if(rp[i*3+k]-cc> 120) rp[i*3+k]-=240;
+        if(rp[i*3+k]-cc<-120) rp[i*3+k]+=240;
+      }
+    }
+    rain.geometry.attributes.position.needsUpdate = true;
+  }
+  if(AC && rainGain) rainGain.gain.setTargetAtTime(muted?0:WX.rain*0.20, AC.currentTime, 0.5);
+
+  // transitions jour / nuit / vision nocturne / thermique
+  const nTgt = (S.mode===1 || S.mode===2) ? 1 : 0;
   S.nightT += clamp(nTgt-S.nightT, -dt*0.7, dt*0.7);
   skyUni.uNight.value = S.nightT;
-  sun.intensity  = lerp(2.9, 0.10, S.nightT);
+  const fl = skyUni.uFlash.value;
+  sun.intensity  = lerp(2.9, 0.10, S.nightT) * (1 - WX.dark*0.72) + fl*3;
   sun.color.lerpColors(C_SUN_DAY, C_SUN_NIGHT, S.nightT);
-  hemi.intensity = lerp(1.0, 0.13, S.nightT);
+  hemi.intensity = lerp(1.0, 0.13, S.nightT) * (1 - WX.dark*0.45) + fl*1.5;
   scene.fog.color.lerpColors(C_FOG_DAY, C_FOG_NIGHT, S.nightT);
-  scene.fog.density = lerp(0.0016, 0.0022, S.nightT);
+  scene.fog.density = lerp(0.0016, 0.0022, S.nightT) * WX.fogMul;
   fillIn.intensity = lerp(55, 14, S.nightT);
   const nvOn = S.mode===2;
   nvAmb.intensity += clamp((nvOn?3.0:0)-nvAmb.intensity, -dt*9, dt*9);
   if(canvas.classList.contains('nv') !== nvOn) canvas.classList.toggle('nv', nvOn);
+  const thOn = S.mode===3;                             // caméra thermique blanc-chaud
+  if(canvas.classList.contains('thermal') !== thOn){
+    canvas.classList.toggle('thermal', thOn);
+    for(const m of [zSkin,zSkinR,zSkinB,zSkinS,zCloth,zCloth2]){
+      m.emissive.setHex(thOn?0xffffff:0x000000);
+      m.emissiveIntensity = thOn?1:0;
+    }
+  }
+
+  // bannière
+  if(S.bannerT>0) S.bannerT -= dt;
 
   if(S.started && !S.paused && !S.crashed) combat(dt, t);
 
@@ -1951,10 +2453,12 @@ addEventListener('resize', ()=>{
 
 /* hooks de test */
 window.__drone = {
-  state:S, keys, T, respawn, crash, fire, explode, zombies, targets,
+  state:S, keys, T, respawn, crash, fire, explode, damage, zombies, targets,
+  barrels, cuves, crates, spits, WX, spawnWave, chainQ,
   setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
-  setMode(m){ S.mode=m%3; },
+  setMode(m){ S.mode=m%4; },
   setZoom(held,x){ zoomHeld=!!held; if(x) S.zoomX=x; },
+  setWeather(s){ WX.state=s; WX.t=999; },
   start(){ if(!S.started){ S.started=true; elStart.style.display='none'; } },
   cam:camera, scene, THREE,
 };
