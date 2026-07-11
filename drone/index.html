@@ -15,6 +15,18 @@
   .panel input[type=range]{flex:1;accent-color:#6fe06f;}
   .panel select{background:#0a140b;color:#9df59d;border:1px solid #3f7a4a;font-family:inherit;padding:4px 8px;}
   .panel span{min-width:36px;text-align:right;color:#d9ffd9;}
+  .ctl-mini{display:grid;grid-template-columns:auto auto auto auto;gap:4px 14px;font-size:11.5px;
+    text-align:left;margin-bottom:24px;color:#7fc78a;letter-spacing:.08em;}
+  .ctl-mini b{color:#d9ffd9;text-align:right;}
+  .shop-grid{display:grid;grid-template-columns:repeat(3,minmax(180px,220px));gap:12px;margin-bottom:24px;
+    max-height:46vh;overflow-y:auto;padding:4px;}
+  .shop-item{border:1px solid #3f7a4a;padding:12px 14px;text-align:left;font-size:12px;}
+  .shop-item h3{margin:0 0 6px;font-size:13px;letter-spacing:.12em;color:#d9ffd9;}
+  .shop-item p{margin:0 0 10px;color:#7fc78a;min-height:28px;}
+  .shop-item .buy{display:inline-block;border:1px solid #6fe06f;padding:5px 12px;cursor:pointer;
+    letter-spacing:.15em;color:#9df59d;}
+  .shop-item .buy.off{border-color:#2d4a34;color:#4d7f57;cursor:default;}
+  .shop-item .buy.own{border-color:#ffd257;color:#ffd257;}
   #hud{position:fixed;inset:0;pointer-events:none;}
   /* --- effets écran caméra militaire --- */
   #fx-scan{position:fixed;inset:0;pointer-events:none;z-index:5;
@@ -69,6 +81,7 @@
     <b>M</b><span>son on/off</span>
   </div>
   <div class="go">CLIQUER POUR DÉCOLLER</div>
+  <div class="go2" id="btn-shop-start">🛒 BOUTIQUE</div>
   <small>FLUX VIDÉO 5.8 GHz — CANAL R7 — CRYPTAGE AES</small>
 </div>
 
@@ -83,6 +96,15 @@
 <div id="screen-pause" class="screen" style="cursor:default;">
   <h1>PAUSE</h1>
   <h2>LIAISON EN VEILLE</h2>
+  <div class="ctl-mini">
+    <b>Z/S</b><span>avancer · reculer</span>       <b>CLIC</b><span>tirer</span>
+    <b>Q/D</b><span>gauche · droite</span>          <b>CLIC DROIT</b><span>zoom (molette x2/x4/x6)</span>
+    <b>A/E</b><span>monter · descendre</span>       <b>1 / 2</b><span>mitrailleuse · grenades</span>
+    <b>MAJ</b><span>boost</span>                    <b>F</b><span>recharger</span>
+    <b>ESPACE</b><span>frein</span>                 <b>N</b><span>jour · nuit · NVG · thermique</span>
+    <b>L</b><span>projecteur</span>                 <b>G</b><span>×2 entre les vagues (pub)</span>
+    <b>R</b><span>retour base</span>                <b>M</b><span>son</span>
+  </div>
   <div class="panel">
     <label>SENSIBILITÉ SOURIS <input id="set-sens" type="range" min="40" max="220" value="100"><span id="set-sens-v">1.0</span></label>
     <label>VOLUME <input id="set-vol" type="range" min="0" max="100" value="90"><span id="set-vol-v">90</span></label>
@@ -91,7 +113,16 @@
     </select></label>
   </div>
   <div class="go" id="btn-resume" style="cursor:pointer;">REPRENDRE</div>
+  <div class="go2" id="btn-shop">🛒 BOUTIQUE</div>
   <div class="go2" id="btn-ammo">📺 +24 GRENADES — PUB</div>
+</div>
+
+<div id="screen-shop" class="screen" style="display:none;cursor:default;">
+  <h1>BOUTIQUE</h1>
+  <h2 id="shop-credits">CRÉDITS : 0</h2>
+  <div id="shop-items" class="shop-grid"></div>
+  <div class="go2" id="btn-shop-ad">📺 +500 CRÉDITS — PUB</div>
+  <div class="go" id="btn-shop-back" style="cursor:pointer;">RETOUR</div>
 </div>
 
 <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
@@ -233,6 +264,54 @@ const MISSIONS = [
   {txt:'FAIS UNE CHAÎNE x3',            chk:()=>S.comboMax>=3},
   {txt:'ATTEINS LA VAGUE 5',            chk:()=>S.wave>=5},
 ];
+
+/* ============================================================
+   BOUTIQUE — crédits gagnés en jeu, améliorations persistées
+   ============================================================ */
+let GRN, GRN2, GRN3, HUDGLOW;
+const AMB='#ffd257', RED='#ff6060';
+const THEMES = { vert:[141,250,154], ambre:[255,205,110], cyan:[122,225,255], rouge:[255,142,130] };
+function applyTheme(name){
+  const c = THEMES[name] || THEMES.vert;
+  GRN  = `rgb(${c[0]},${c[1]},${c[2]})`;
+  GRN2 = `rgba(${c[0]},${c[1]},${c[2]},.75)`;
+  GRN3 = `rgba(${c[0]},${c[1]},${c[2]},.35)`;
+  HUDGLOW = `rgba(${c[0]},${c[1]},${c[2]},.5)`;
+}
+const shopState = Object.assign({owned:['th-vert'], theme:'vert'},
+  JSON.parse(localStorage.getItem('bs-shop')||'{}'));
+if(!shopState.owned.includes('th-vert')) shopState.owned.push('th-vert');
+S.credits = +(localStorage.getItem('bs-credits')||0);
+const own = id => shopState.owned.includes(id);
+function saveShop(){
+  localStorage.setItem('bs-shop', JSON.stringify(shopState));
+  localStorage.setItem('bs-credits', String(Math.round(S.credits)));
+}
+const SHOP = [
+  {id:'mag',     n:'CHARGEURS ÉTENDUS',     d:'Grenades 8→12 · mitrailleuse 40→60', p:800},
+  {id:'armor',   n:'BLINDAGE COMPOSITE',    d:'Intégrité max 100→130', p:1000},
+  {id:'battery', n:'BATTERIE HAUTE DENSITÉ',d:'Autonomie +50%', p:600},
+  {id:'speed',   n:'MOTEURS SURVOLTÉS',     d:'Vitesse +15%', p:1200},
+  {id:'reload',  n:'AUTO-CHARGEUR',         d:'Recharge 30% plus rapide', p:700},
+  {id:'tracer',  n:'TRAÇANTES DORÉES',      d:'Du style à chaque rafale', p:400},
+  {id:'th-vert',  n:'HUD VERT',  d:'Thème d\'origine', p:0, theme:'vert'},
+  {id:'th-ambre', n:'HUD AMBRE', d:'Thème rétro',      p:300, theme:'ambre'},
+  {id:'th-cyan',  n:'HUD CYAN',  d:'Thème arctique',   p:300, theme:'cyan'},
+  {id:'th-rouge', n:'HUD ROUGE', d:'Thème assaut',     p:300, theme:'rouge'},
+];
+function setUpgrades(){
+  T.magE  = own('mag') ? 12 : 8;
+  T.magMG = own('mag') ? 60 : 40;
+  S.hpMax = own('armor') ? 130 : 100;
+  T.batteryMin = own('battery') ? 18 : 12;
+  T.maxFwd = 24 * (own('speed') ? 1.15 : 1);
+  T.maxStr = 13 * (own('speed') ? 1.15 : 1);
+  T.relE  = 1.8 * (own('reload') ? 0.7 : 1);
+  T.relMG = 1.4 * (own('reload') ? 0.7 : 1);
+  applyTheme(shopState.theme);
+}
+setUpgrades();
+S.hp = S.hpMax; S.ammo = T.magE; S.mgAmmo = T.magMG;
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
 
@@ -1136,6 +1215,8 @@ for(let i=0;i<12;i++){
   m.visible=false; scene.add(m);
   bullets.push({m, pos:new THREE.Vector3(), vel:new THREE.Vector3(), life:0, on:false});
 }
+function applyTracer(){ if(own('tracer')) bulletMat.color.setHex(0xffd700); }
+applyTracer();
 
 /* --- explosions (pool) --- */
 const explosions = [];
@@ -1215,8 +1296,8 @@ function fire(){
   if(now-lastShot < (mg? 95 : 240)) return;
   if(mg ? S.mgAmmo<=0 : S.ammo<=0) return;
   lastShot = now;
-  if(mg){ S.mgAmmo--; if(S.mgAmmo<=0) S.reloadT=1.4; }
-  else  { S.ammo--;   if(S.ammo<=0 && S.explReserve>0) S.reloadT=1.8; }
+  if(mg){ S.mgAmmo--; if(S.mgAmmo<=0) S.reloadT=T.relMG; }
+  else  { S.ammo--;   if(S.ammo<=0 && S.explReserve>0) S.reloadT=T.relE; }
   const b = bullets.find(b=>!b.on) || bullets[0];
   camera.getWorldDirection(bDir);
   b.pos.copy(camera.position).addScaledVector(bDir, 0.9);
@@ -1403,6 +1484,7 @@ function killZombie(z, from){
   S.comboMax = Math.max(S.comboMax, S.combo);
   const mult = Math.min(5, S.combo) * (S.x2Wave===S.wave ? 2 : 1);
   S.score += z.pts * mult;
+  S.credits += Math.round(z.pts/10);
   if(z.headHit) S.score += 75;
   if(S.zoomT > 0.5) S.zoomKills++;
   if(d > 55){                                  // bullet-cam : kill longue distance
@@ -1516,8 +1598,8 @@ function combat(dt, t){
   if(S.reloadT>0){
     S.reloadT-=dt;
     if(S.reloadT<=0){
-      if(S.weapon===1){ const take=Math.min(8-S.ammo, S.explReserve); S.ammo+=take; S.explReserve-=take; }
-      else S.mgAmmo=40;
+      if(S.weapon===1){ const take=Math.min(T.magE-S.ammo, S.explReserve); S.ammo+=take; S.explReserve-=take; }
+      else S.mgAmmo=T.magMG;
       S.reloadT=0;
     }
   }
@@ -1538,18 +1620,19 @@ function combat(dt, t){
     if(S.waveT<=0) spawnWave();
   } else if(aliveCount()===0){
     const bonus = 500*S.wave;
-    S.score += bonus; saveBest();
-    setBanner(`VAGUE ${S.wave} NETTOYÉE  +${bonus}`);
+    S.score += bonus; S.credits += 25*S.wave;
+    saveBest(); saveShop();
+    setBanner(`VAGUE ${S.wave} NETTOYÉE  +${bonus}  +${25*S.wave} ¢`);
     S.waveT = 8;
   }
 
   // missions
   if(S.mission < MISSIONS.length && MISSIONS[S.mission].chk()){
     S.mission++;
-    S.score += 1000;
+    S.score += 1000; S.credits += 100;
     S.explReserve = Math.min(64, S.explReserve+6);
-    setBanner(`MISSION ${S.mission}/${MISSIONS.length} ACCOMPLIE  +1000  +6 GRENADES`);
-    chimeSound(); cgHappy(); saveBest();
+    setBanner(`MISSION ${S.mission}/${MISSIONS.length} ACCOMPLIE  +1000  +100 ¢  +6 GRENADES`);
+    chimeSound(); cgHappy(); saveBest(); saveShop();
   }
 
   // caisses de ravitaillement
@@ -1565,8 +1648,8 @@ function combat(dt, t){
       c.taken=true; c.respT=60; c.m.visible=false;
       const bi = boxColliders.indexOf(c.col); if(bi>=0) boxColliders.splice(bi,1);
       S.explReserve = Math.min(40, S.explReserve+16);
-      S.mgAmmo = 40;
-      S.hp = Math.min(100, S.hp+50);
+      S.mgAmmo = T.magMG;
+      S.hp = Math.min(S.hpMax, S.hp+50);
       S.battery = 100;
       setBanner('RAVITAILLEMENT — MUN +16  INTÉGRITÉ +50');
       chimeSound();
@@ -1959,8 +2042,8 @@ addEventListener('keydown', e=>{
   if(e.code==='Digit1' && S.weapon!==0){ S.weapon=0; S.reloadT=0; }
   if(e.code==='Digit2' && S.weapon!==1){ S.weapon=1; S.reloadT=0; }
   if(k==='f' && S.reloadT<=0){
-    if(S.weapon===1 && S.ammo<8 && S.explReserve>0) S.reloadT=1.8;
-    if(S.weapon===0 && S.mgAmmo<40) S.reloadT=1.4;
+    if(S.weapon===1 && S.ammo<T.magE && S.explReserve>0) S.reloadT=T.relE;
+    if(S.weapon===0 && S.mgAmmo<T.magMG) S.reloadT=T.relMG;
   }
   // pendant la pause entre vagues : pub récompensée = score ×2 sur la vague suivante
   if(k==='g' && S.waveT>0 && S.x2Wave !== S.wave+1 && !adPaused){
@@ -1972,7 +2055,12 @@ addEventListener('keydown', e=>{
   }
 });
 addEventListener('mousedown', e=>{
-  if(!document.pointerLockElement) return;
+  if(!document.pointerLockElement){
+    // filet de sécurité : en jeu sans capture (retour de pub, refus après Échap…),
+    // le premier clic re-capture la souris au lieu de tirer
+    if(S.started && !S.paused && !S.crashed && !adPaused) grab();
+    return;
+  }
   if(e.button===0) fire();
   if(e.button===2) zoomHeld = true;
 });
@@ -2032,12 +2120,64 @@ document.getElementById('btn-resume').addEventListener('click', e=>{
   S.paused=false; elPause.style.display='none'; grab();
   cgGameplay(true);
 });
+
+/* --- boutique --- */
+const elShop = document.getElementById('screen-shop');
+let shopFrom = 'pause';
+function renderShop(){
+  document.getElementById('shop-credits').textContent = `CRÉDITS : ${Math.round(S.credits)} ¢`;
+  const box = document.getElementById('shop-items');
+  box.innerHTML = '';
+  for(const it of SHOP){
+    const div = document.createElement('div');
+    div.className = 'shop-item';
+    const owned = own(it.id);
+    const equipped = it.theme && shopState.theme === it.theme;
+    let cls='buy', txt;
+    if(equipped){ cls='buy own'; txt='◈ ÉQUIPÉ'; }
+    else if(owned && it.theme){ txt='ÉQUIPER'; }
+    else if(owned){ cls='buy own'; txt='◈ ACQUIS'; }
+    else if(S.credits >= it.p){ txt=`ACHETER — ${it.p} ¢`; }
+    else { cls='buy off'; txt=`${it.p} ¢`; }
+    div.innerHTML = `<h3>${it.n}</h3><p>${it.d}</p><span class="${cls}">${txt}</span>`;
+    div.querySelector('span').addEventListener('click', ()=>{
+      if(it.theme && own(it.id)){
+        shopState.theme = it.theme;
+        setUpgrades(); saveShop(); renderShop(); return;
+      }
+      if(own(it.id) || S.credits < it.p) return;
+      S.credits -= it.p;
+      shopState.owned.push(it.id);
+      if(it.theme) shopState.theme = it.theme;
+      setUpgrades(); applyTracer(); saveShop(); renderShop();
+      if(AC) chimeSound();
+    });
+    box.appendChild(div);
+  }
+}
+function openShop(from){
+  shopFrom = from;
+  (from==='pause' ? elPause : elStart).style.display='none';
+  elShop.style.display='flex';
+  renderShop();
+}
+document.getElementById('btn-shop').addEventListener('click', e=>{ e.stopPropagation(); openShop('pause'); });
+document.getElementById('btn-shop-start').addEventListener('click', e=>{ e.stopPropagation(); openShop('start'); });
+document.getElementById('btn-shop-back').addEventListener('click', e=>{
+  e.stopPropagation();
+  elShop.style.display='none';
+  (shopFrom==='pause' ? elPause : elStart).style.display='flex';
+});
+document.getElementById('btn-shop-ad').addEventListener('click', e=>{
+  e.stopPropagation();
+  cgRewarded(()=>{ S.credits += 500; saveShop(); renderShop(); if(AC) chimeSound(); });
+});
 document.getElementById('btn-revive').addEventListener('click', e=>{
   e.stopPropagation();
   cgRewarded(()=>{                       // pub vue → on repart sur place, score intact
-    S.crashed=false; S.hp=100; S.impactFlash=0;
+    S.crashed=false; S.hp=S.hpMax; S.impactFlash=0;
     S.pos.y = Math.max(S.pos.y, 4); S.vel.set(0,0,0);
-    S.ammo=8; S.mgAmmo=40;
+    S.ammo=T.magE; S.mgAmmo=T.magMG;
     elCrash.style.display='none';
     setBanner('LIAISON RÉTABLIE — REPRISE SUR PLACE');
     cgGameplay(true); grab();
@@ -2062,15 +2202,16 @@ function respawn(){
   S.vel.set(0,0,0);
   S.yaw=spawn.yaw; S.camPitch=0; S.pitch=0; S.roll=0;
   S.crashed=false; S.battery=Math.max(S.battery, 25); S.impactFlash=0;
-  S.ammo=8; S.reloadT=0; S.recoil=0;
-  S.hp=100; S.mgAmmo=40; S.explReserve=Math.max(S.explReserve, 12);
+  S.ammo=T.magE; S.reloadT=0; S.recoil=0;
+  S.hp=S.hpMax; S.mgAmmo=T.magMG; S.explReserve=Math.max(S.explReserve, 12);
   S.combo=0; S.comboT=0; S.splats.length=0;
   elCrash.style.display='none';
 }
 function crash(reason){
   if(S.crashed) return;
-  S.crashed=true; S.hp=0; crashSound(); saveBest();
+  S.crashed=true; S.hp=0; crashSound(); saveBest(); saveShop();
   cgGameplay(false);
+  document.exitPointerLock?.();   // curseur libéré tout de suite → le re-lock au clic marchera
   document.getElementById('crash-sub').textContent =
     (reason||'IMPACT DÉTECTÉ') + ' — LIAISON INTERROMPUE';
   const mm=String(Math.floor(S.time/60)).padStart(2,'0'), ss=String(Math.floor(S.time%60)).padStart(2,'0');
@@ -2233,7 +2374,7 @@ function updateCamera(dt, t){
   const bob = Math.sin(t*6)*0.0016*Math.min(S.vel.length()/10, 1);
   let dipY=0, dipR=0;
   if(S.reloadT>0){
-    const pr = 1 - S.reloadT/(S.weapon===1?1.8:1.4);
+    const pr = 1 - S.reloadT/(S.weapon===1?T.relE:T.relMG);
     const dip = Math.sin(clamp(pr,0,1)*Math.PI);
     dipY = -0.055*dip; dipR = -0.5*dip;
   }
@@ -2252,7 +2393,7 @@ function sizeHud(){
 }
 sizeHud();
 
-const GRN='#8dfa9a', GRN2='rgba(141,250,154,.75)', GRN3='rgba(141,250,154,.35)', AMB='#ffd257', RED='#ff6060';
+/* couleurs du HUD : GRN/GRN2/GRN3/AMB/RED définies par la boutique (applyTheme) */
 function drawHUD(t){
   const dpr=devicePixelRatio, W=hud.width/dpr, H=hud.height/dpr;
   hctx.setTransform(dpr,0,0,dpr,0,0);
@@ -2262,7 +2403,7 @@ function drawHUD(t){
   const cx=W/2, cyH=H/2;
   hctx.lineWidth=1.4; hctx.strokeStyle=GRN2; hctx.fillStyle=GRN;
   hctx.font='13px "Courier New",monospace';
-  hctx.shadowColor='rgba(120,255,140,.5)'; hctx.shadowBlur=4;
+  hctx.shadowColor=HUDGLOW; hctx.shadowBlur=4;
 
   const speedK = S.vel.length()*3.6;
   const hSpeed = Math.hypot(S.vel.x,S.vel.z)*3.6;
@@ -2314,12 +2455,13 @@ function drawHUD(t){
   hctx.fillText(`T+${mm}:${ss}`, W-30, 50);
   hctx.fillText(`SCORE ${S.score}`, W-30, 68);
   hctx.fillText(`RECORD ${Math.max(S.best, S.score)}`, W-30, 84);
-  if(S.combo>1){ hctx.fillStyle=AMB; hctx.fillText(`COMBO x${Math.min(S.combo,5)}`, W-30, 100); hctx.fillStyle=GRN; }
-  if(S.x2Wave===S.wave){ hctx.fillStyle='#ffe9a0'; hctx.fillText('SCORE ×2 📺', W-30, 116); hctx.fillStyle=GRN; }
+  hctx.fillText(`${Math.round(S.credits)} ¢`, W-30, 100);
+  if(S.combo>1){ hctx.fillStyle=AMB; hctx.fillText(`COMBO x${Math.min(S.combo,5)}`, W-30, 116); hctx.fillStyle=GRN; }
+  if(S.x2Wave===S.wave){ hctx.fillStyle='#ffe9a0'; hctx.fillText('SCORE ×2 📺', W-30, 132); hctx.fillStyle=GRN; }
 
   /* --- radar --- */
   {
-    const mx=W-92, my=196, mr=58;
+    const mx=W-92, my=212, mr=58;
     hctx.save();
     hctx.fillStyle='rgba(6,20,8,.45)';
     hctx.beginPath(); hctx.arc(mx,my,mr,0,7); hctx.fill();
@@ -2519,12 +2661,12 @@ function drawHUD(t){
   const by=H-64;
   hctx.textAlign='left';
   // intégrité du drone
-  const lowHp = S.hp<40;
+  const lowHp = S.hp < S.hpMax*0.4;
   hctx.fillStyle = lowHp ? (Math.floor(t*3)%2? RED:'rgba(255,96,96,.3)') : GRN;
-  hctx.fillText(`INT ${S.hp|0}%`, 30, by-22);
+  hctx.fillText(`INT ${S.hp|0}`, 30, by-22);
   hctx.strokeStyle=GRN2; hctx.strokeRect(95, by-33, 84, 13);
   hctx.fillStyle = lowHp ? RED : GRN2;
-  hctx.fillRect(97, by-31, 80*S.hp/100, 9);
+  hctx.fillRect(97, by-31, 80*S.hp/S.hpMax, 9);
   const bat=S.battery;
   hctx.fillStyle = bat<20 ? (Math.floor(t*3)%2? RED:'rgba(255,96,96,.3)') : GRN;
   hctx.fillText(`BAT ${bat.toFixed(0)}%`, 30, by);
@@ -2545,11 +2687,11 @@ function drawHUD(t){
     hctx.fillStyle=GRN2; hctx.fillRect(W-112, by-16.5, 80*(1-S.reloadT/1.8), 4);
     hctx.fillStyle=GRN;
   } else if(S.weapon===1){
-    hctx.fillText(`GRENADES ${S.ammo}/8  RÉS ${S.explReserve}`, W-30, by-24);
-    for(let i=0;i<S.ammo;i++) hctx.fillRect(W-114+i*10, by-18, 6, 8);
+    hctx.fillText(`GRENADES ${S.ammo}/${T.magE}  RÉS ${S.explReserve}`, W-30, by-24);
+    for(let i=0;i<S.ammo;i++) hctx.fillRect(W-114+i*Math.floor(96/T.magE), by-18, 6, 8);
   } else {
-    hctx.fillText(`MITRAILLEUSE ${S.mgAmmo}/40`, W-30, by-24);
-    for(let i=0;i<Math.ceil(S.mgAmmo/5);i++) hctx.fillRect(W-114+i*10, by-18, 6, 8);
+    hctx.fillText(`MITRAILLEUSE ${S.mgAmmo}/${T.magMG}`, W-30, by-24);
+    for(let i=0;i<Math.ceil(S.mgAmmo/(T.magMG/8));i++) hctx.fillRect(W-114+i*10, by-18, 6, 8);
   }
   hctx.fillStyle=GRN2; hctx.font='10px "Courier New",monospace';
   hctx.fillText('[1] MIT   [2] GREN', W-30, by-42);
@@ -2576,7 +2718,7 @@ function drawHUD(t){
   }
   if(S.torch){
     hctx.textAlign='right'; hctx.fillStyle='#fff3c8'; hctx.font='12px "Courier New",monospace';
-    hctx.fillText('PROJECTEUR ●', W-30, 132+(S.x2Wave===S.wave?16:0));
+    hctx.fillText('PROJECTEUR ●', W-30, 148);
     hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
   }
 
@@ -2611,8 +2753,8 @@ function drawHUD(t){
   }
 
   /* drone endommagé : image qui glitche */
-  if(S.hp<40 && !S.crashed){
-    const dg = 1 - S.hp/40;
+  if(S.hp < S.hpMax*0.4 && !S.crashed){
+    const dg = 1 - S.hp/(S.hpMax*0.4);
     canvas.style.transform = Math.random()<dg*0.3
       ? `translate(${(Math.random()-.5)*10*dg}px,${(Math.random()-.5)*5*dg}px)` : '';
     hctx.fillStyle=`rgba(150,255,150,.07)`;
