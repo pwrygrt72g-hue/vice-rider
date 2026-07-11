@@ -32,6 +32,9 @@
   .screen .go{font-size:clamp(14px,2vw,20px);letter-spacing:.3em;padding:12px 34px;border:1px solid #6fe06f;
     animation:blink 1.2s steps(2) infinite;}
   .screen small{margin-top:26px;color:#4d7f57;letter-spacing:.15em;}
+  .go2{font-size:clamp(12px,1.5vw,15px);letter-spacing:.2em;padding:9px 26px;border:1px solid #3f7a4a;
+    color:#7fc78a;margin-top:14px;cursor:pointer;}
+  .go2:hover{border-color:#6fe06f;color:#d9ffd9;}
   @keyframes blink{50%{opacity:.35}}
   #screen-crash{display:none;background:rgba(8,2,2,.6);}
   #screen-crash h1{color:#ff5b5b;text-shadow:0 0 18px rgba(255,80,80,.6);}
@@ -68,10 +71,11 @@
   <small>FLUX VIDÉO 5.8 GHz — CANAL R7 — CRYPTAGE AES</small>
 </div>
 
-<div id="screen-crash" class="screen">
+<div id="screen-crash" class="screen" style="cursor:default;">
   <h1>SIGNAL PERDU</h1>
   <h2 id="crash-sub">IMPACT DÉTECTÉ — LIAISON INTERROMPUE</h2>
-  <div class="go">CLIQUER POUR RELANCER LE DRONE</div>
+  <div class="go" id="btn-revive" style="cursor:pointer;">📺 REDÉCOLLER SUR PLACE — PUB</div>
+  <div class="go2" id="btn-base">REPRENDRE À LA BASE (score conservé)</div>
 </div>
 
 <div id="screen-pause" class="screen" style="cursor:default;">
@@ -85,8 +89,10 @@
     </select></label>
   </div>
   <div class="go" id="btn-resume" style="cursor:pointer;">REPRENDRE</div>
+  <div class="go2" id="btn-ammo">📺 +24 GRENADES — PUB</div>
 </div>
 
+<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
 <script type="importmap">
 { "imports": { "three": "../vendor/three.module.js" } }
 </script>
@@ -142,7 +148,8 @@ const S = {
   mgAmmo: 40, explReserve: 24,
   score: 0, best: +(localStorage.getItem('bs-best')||0),
   wave: 1, waveT: 0, combo: 0, comboT: 0,
-  cuves: 0, zoomKills: 0, c1: false, c2: false, c3: false,   // contrats
+  cuves: 0, zoomKills: 0, barrelsBlown: 0, comboMax: 0,
+  mission: 0, x2Wave: 0,         // pub récompensée : score ×2 sur la vague n
   banner: '', bannerT: 0, splats: [],
 };
 let zoomHeld = false;
@@ -153,6 +160,75 @@ function saveBest(){
   if(S.score > S.best){ S.best = S.score; localStorage.setItem('bs-best', S.best); }
 }
 function setBanner(txt){ S.banner = txt; S.bannerT = 2.6; }
+
+/* ============================================================
+   CRAZYGAMES SDK (v3) — pubs récompensées + interstitiel
+   env 'crazygames' = prod, 'local' = pubs simulées (dev),
+   'disabled' (ex. GitHub Pages) = récompenses directes sans pub
+   ============================================================ */
+const CG = { sdk:null, env:'disabled', ready:false, lastMid:-999 };
+let adPaused = false;
+(async ()=>{
+  try{
+    if(window.CrazyGames?.SDK){
+      await window.CrazyGames.SDK.init();
+      CG.sdk = window.CrazyGames.SDK;
+      CG.env = CG.sdk.environment;
+      CG.ready = CG.env !== 'disabled';
+      if(CG.ready){
+        try{ CG.sdk.game.loadingStart(); }catch(e){}
+        requestAnimationFrame(()=>{ try{ CG.sdk.game.loadingStop(); }catch(e){} });
+      }
+    }
+  }catch(e){ CG.ready = false; }
+})();
+function cgGameplay(on){
+  if(!CG.ready) return;
+  try{ on ? CG.sdk.game.gameplayStart() : CG.sdk.game.gameplayStop(); }catch(e){}
+}
+function cgHappy(){ if(CG.ready){ try{ CG.sdk.game.happytime(); }catch(e){} } }
+function adUX(on){                       // pendant une pub : jeu figé + muet + souris libérée
+  adPaused = on;
+  if(masterGain) masterGain.gain.value = on ? 0 : SETTINGS.vol;
+  if(on) document.exitPointerLock?.();
+}
+function cgRewarded(onReward){
+  if(!CG.ready){ onReward(); return; }   // hors CrazyGames : récompense directe
+  try{
+    cgGameplay(false); adUX(true);
+    CG.sdk.ad.requestAd('rewarded', {
+      adStarted:  ()=>{},
+      adFinished: ()=>{ adUX(false); cgGameplay(true); onReward(); },
+      adError:    ()=>{ adUX(false); cgGameplay(true); },   // pas vue = pas de récompense
+    });
+  }catch(e){ adUX(false); onReward(); }
+}
+function cgMidgame(){
+  if(!CG.ready) return;
+  const now = performance.now()/1000;
+  if(now - CG.lastMid < 120) return;     // cooldown 2 min
+  CG.lastMid = now;
+  try{
+    cgGameplay(false); adUX(true);
+    CG.sdk.ad.requestAd('midgame', {
+      adStarted:  ()=>{},
+      adFinished: ()=>{ adUX(false); cgGameplay(true); },
+      adError:    ()=>{ adUX(false); cgGameplay(true); },
+    });
+  }catch(e){ adUX(false); }
+}
+
+/* ---------- missions (progression + rétention) ---------- */
+const MISSIONS = [
+  {txt:'ÉLIMINE 5 HOSTILES',            chk:()=>S.kills>=5},
+  {txt:'TOUCHE 5 CIBLES',               chk:()=>S.targetsHit>=5},
+  {txt:'FAIS SAUTER 3 BIDONS ROUGES',   chk:()=>S.barrelsBlown>=3},
+  {txt:'ATTEINS LA VAGUE 3',            chk:()=>S.wave>=3},
+  {txt:'5 ÉLIMINATIONS AU ZOOM (clic droit)', chk:()=>S.zoomKills>=5},
+  {txt:'DÉTRUIS LES 4 CUVES DU DÉPÔT',  chk:()=>S.cuves>=4},
+  {txt:'FAIS UNE CHAÎNE x3',            chk:()=>S.comboMax>=3},
+  {txt:'ATTEINS LA VAGUE 5',            chk:()=>S.wave>=5},
+];
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
 
@@ -1255,9 +1331,10 @@ function killZombie(z, from){
   S.kills++;
   const away = Math.atan2(z.pos.z-from.z, z.pos.x-from.x);
   z.flingX = Math.cos(away)*3.5; z.flingZ = Math.sin(away)*3.5;
-  // score + combo
+  // score + combo (×2 si la pub récompensée a été vue pour cette vague)
   S.comboT = 3.5; S.combo++;
-  const mult = Math.min(5, S.combo);
+  S.comboMax = Math.max(S.comboMax, S.combo);
+  const mult = Math.min(5, S.combo) * (S.x2Wave===S.wave ? 2 : 1);
   S.score += z.pts * mult;
   if(S.zoomT > 0.5) S.zoomKills++;
   const d = Math.hypot(S.pos.x-z.pos.x, S.pos.z-z.pos.z);
@@ -1328,7 +1405,7 @@ function blowBarrel(bl){
   bl.alive=false; bl.pending=false;
   bl.m.scale.set(1, 0.25, 1); bl.m.position.y=0.15;
   bl.m.material = M.darkSteel;
-  S.score += 25;
+  S.score += 25; S.barrelsBlown++;
   explode(new THREE.Vector3(bl.x, bl.y+0.4, bl.z), 1.15);
 }
 
@@ -1395,10 +1472,14 @@ function combat(dt, t){
     S.waveT = 8;
   }
 
-  // contrats
-  if(!S.c1 && S.cuves>=4){ S.c1=true; S.score+=1500; setBanner('CONTRAT REMPLI : CUVES  +1500'); }
-  if(!S.c2 && S.zoomKills>=5){ S.c2=true; S.score+=1500; setBanner('CONTRAT REMPLI : SNIPER  +1500'); }
-  if(!S.c3 && S.combo>=3){ S.c3=true; S.score+=1500; setBanner('CONTRAT REMPLI : CHAÎNE x3  +1500'); }
+  // missions
+  if(S.mission < MISSIONS.length && MISSIONS[S.mission].chk()){
+    S.mission++;
+    S.score += 1000;
+    S.explReserve = Math.min(64, S.explReserve+6);
+    setBanner(`MISSION ${S.mission}/${MISSIONS.length} ACCOMPLIE  +1000  +6 GRENADES`);
+    chimeSound(); cgHappy(); saveBest();
+  }
 
   // caisses de ravitaillement
   for(const c of crates){
@@ -1632,7 +1713,7 @@ function initAudio(){
 }
 function audioTick(thr, speed){
   if(!AC) return;
-  const on = !muted && S.started && !S.paused && !S.crashed;
+  const on = !muted && S.started && !S.paused && !S.crashed && !adPaused;
   const f = 150 + thr*300 + speed*2.2;
   motorOsc1.frequency.setTargetAtTime(f, AC.currentTime, .05);
   motorOsc2.frequency.setTargetAtTime(f*.502, AC.currentTime, .05);
@@ -1742,6 +1823,14 @@ addEventListener('keydown', e=>{
     if(S.weapon===1 && S.ammo<8 && S.explReserve>0) S.reloadT=1.8;
     if(S.weapon===0 && S.mgAmmo<40) S.reloadT=1.4;
   }
+  // pendant la pause entre vagues : pub récompensée = score ×2 sur la vague suivante
+  if(k==='g' && S.waveT>0 && S.x2Wave !== S.wave+1 && !adPaused){
+    cgRewarded(()=>{
+      S.x2Wave = S.wave+1;
+      setBanner(`SCORE ×2 PENDANT LA VAGUE ${S.wave+1} !`);
+      chimeSound();
+    });
+  }
 });
 addEventListener('mousedown', e=>{
   if(!document.pointerLockElement) return;
@@ -1763,15 +1852,22 @@ addEventListener('mousemove', e=>{
   if(document.pointerLockElement){ mouseDX+=e.movementX; mouseDY+=e.movementY; }
 });
 document.addEventListener('pointerlockchange', ()=>{
-  if(!document.pointerLockElement && S.started && !S.crashed){
+  if(!document.pointerLockElement && S.started && !S.crashed && !adPaused){
     S.paused=true; elPause.style.display='flex';
+    cgGameplay(false);
   }
 });
 
-function grab(){ canvas.requestPointerLock?.(); }
+function grab(){
+  try{
+    const p = canvas.requestPointerLock?.();
+    p?.catch?.(()=>{});      // refus (iframe/headless) : l'écran pause prendra le relais
+  }catch(e){}
+}
 elStart.addEventListener('click', ()=>{
   initAudio(); AC.resume?.();
   S.started=true; elStart.style.display='none'; grab();
+  cgGameplay(true);
 });
 /* --- menu pause : réglages --- */
 const elSens=document.getElementById('set-sens'), elSensV=document.getElementById('set-sens-v');
@@ -1795,8 +1891,32 @@ applySettings();
 document.getElementById('btn-resume').addEventListener('click', e=>{
   e.stopPropagation();
   S.paused=false; elPause.style.display='none'; grab();
+  cgGameplay(true);
 });
-elCrash.addEventListener('click', ()=>{ respawn(); grab(); });
+document.getElementById('btn-revive').addEventListener('click', e=>{
+  e.stopPropagation();
+  cgRewarded(()=>{                       // pub vue → on repart sur place, score intact
+    S.crashed=false; S.hp=100; S.impactFlash=0;
+    S.pos.y = Math.max(S.pos.y, 4); S.vel.set(0,0,0);
+    S.ammo=8; S.mgAmmo=40;
+    elCrash.style.display='none';
+    setBanner('LIAISON RÉTABLIE — REPRISE SUR PLACE');
+    cgGameplay(true); grab();
+  });
+});
+document.getElementById('btn-base').addEventListener('click', e=>{
+  e.stopPropagation();
+  cgMidgame();                           // interstitiel (cooldown 2 min) sur le retour base
+  respawn(); cgGameplay(true); grab();
+});
+document.getElementById('btn-ammo').addEventListener('click', e=>{
+  e.stopPropagation();
+  cgRewarded(()=>{
+    S.explReserve = Math.min(64, S.explReserve+24);
+    setBanner('RAVITAILLEMENT AÉRIEN — +24 GRENADES');
+    chimeSound();
+  });
+});
 
 function respawn(){
   S.pos.set(spawn.x, spawn.y, spawn.z);
@@ -1811,6 +1931,7 @@ function respawn(){
 function crash(reason){
   if(S.crashed) return;
   S.crashed=true; S.hp=0; crashSound(); saveBest();
+  cgGameplay(false);
   document.getElementById('crash-sub').textContent =
     (reason||'IMPACT DÉTECTÉ') + ' — LIAISON INTERROMPUE';
   setTimeout(()=>{ elCrash.style.display='flex'; }, 450);
@@ -1998,18 +2119,29 @@ function drawHUD(t){
   if(S.mode===2){ hctx.fillStyle='#c8ffc8'; hctx.fillText('NVG ● AMPLI x4', 30, 84); hctx.fillStyle=GRN; }
   else if(S.mode===1){ hctx.fillStyle=AMB; hctx.fillText('MODE NUIT — NVG OFF (N)', 30, 84); hctx.fillStyle=GRN; }
   else if(S.mode===3){ hctx.fillStyle='#ffffff'; hctx.fillText('THERM ● BLANC-CHAUD', 30, 84); hctx.fillStyle=GRN; }
-  // contrats
-  hctx.font='11px "Courier New",monospace';
-  const cts=[[S.c1,`CUVES ${S.cuves}/4`],[S.c2,`SNIPER (ZOOM) ${S.zoomKills}/5`],[S.c3,`CHAÎNE x3`]];
-  cts.forEach(([done,txt],i)=>{
-    hctx.fillStyle = done ? GRN3 : GRN2;
-    hctx.fillText((done?'■ ':'□ ')+txt, 30, 104+i*15);
-  });
+  // mission en cours
+  hctx.font='12px "Courier New",monospace';
+  if(S.mission < MISSIONS.length){
+    hctx.fillStyle='#ffe9a0';
+    hctx.fillText(`◈ MISSION ${S.mission+1}/${MISSIONS.length} : ${MISSIONS[S.mission].txt}`, 30, 106);
+  } else {
+    hctx.fillStyle=GRN2;
+    hctx.fillText('◈ TOUTES MISSIONS ACCOMPLIES — SURVIS !', 30, 106);
+  }
   hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
   if(S.waveT>0){
     hctx.fillStyle=AMB;
-    hctx.fillText(`VAGUE ${S.wave+1} DANS ${Math.ceil(S.waveT)}s`, 30, 158);
+    hctx.fillText(`VAGUE ${S.wave+1} DANS ${Math.ceil(S.waveT)}s`, 30, 126);
     hctx.fillStyle=GRN;
+    // offre pub récompensée pendant la pause entre vagues
+    if(S.x2Wave !== S.wave+1){
+      hctx.textAlign='center'; hctx.font='15px "Courier New",monospace';
+      if(Math.floor(t*2)%2===0){
+        hctx.fillStyle='#ffe9a0';
+        hctx.fillText('📺 [G] SCORE ×2 PENDANT LA PROCHAINE VAGUE', cx, H*0.40);
+      }
+      hctx.textAlign='left'; hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
+    }
   }
   hctx.textAlign='right';
   if(Math.floor(t*1.6)%2===0){ hctx.fillStyle=RED; hctx.fillText('● REC', W-30, 34); }
@@ -2019,6 +2151,7 @@ function drawHUD(t){
   hctx.fillText(`SCORE ${S.score}`, W-30, 68);
   hctx.fillText(`RECORD ${Math.max(S.best, S.score)}`, W-30, 84);
   if(S.combo>1){ hctx.fillStyle=AMB; hctx.fillText(`COMBO x${Math.min(S.combo,5)}`, W-30, 100); hctx.fillStyle=GRN; }
+  if(S.x2Wave===S.wave){ hctx.fillStyle='#ffe9a0'; hctx.fillText('SCORE ×2 📺', W-30, 116); hctx.fillStyle=GRN; }
 
   /* --- radar --- */
   {
@@ -2318,7 +2451,7 @@ function loop(now){
   if(slowT>0){ slowT-=dt; dt*=0.35; }    // bullet-cam : ralenti bref
   const t=now/1000;
 
-  if(S.started && !S.paused && !S.crashed) physics(dt);
+  if(S.started && !S.paused && !S.crashed && !adPaused) physics(dt);
   updateCamera(dt, t);
 
   // poussière qui flotte
@@ -2402,7 +2535,7 @@ function loop(now){
   // bannière
   if(S.bannerT>0) S.bannerT -= dt;
 
-  if(S.started && !S.paused && !S.crashed) combat(dt, t);
+  if(S.started && !S.paused && !S.crashed && !adPaused) combat(dt, t);
 
   // colonnes de fumée
   for(const s of smokes){
@@ -2454,7 +2587,7 @@ addEventListener('resize', ()=>{
 /* hooks de test */
 window.__drone = {
   state:S, keys, T, respawn, crash, fire, explode, damage, zombies, targets,
-  barrels, cuves, crates, spits, WX, spawnWave, chainQ,
+  barrels, cuves, crates, spits, WX, spawnWave, chainQ, CG, MISSIONS,
   setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
   setMode(m){ S.mode=m%4; },
   setZoom(held,x){ zoomHeld=!!held; if(x) S.zoomX=x; },
