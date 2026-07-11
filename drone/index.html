@@ -64,6 +64,7 @@
     <b>ESPACE</b><span>frein</span>
     <b>F</b><span>recharger</span>
     <b>N</b><span>jour → nuit → NVG → thermique</span>
+    <b>L</b><span>projecteur de bord</span>
     <b>R</b><span>reprendre au point de départ</span>
     <b>M</b><span>son on/off</span>
   </div>
@@ -74,6 +75,7 @@
 <div id="screen-crash" class="screen" style="cursor:default;">
   <h1>SIGNAL PERDU</h1>
   <h2 id="crash-sub">IMPACT DÉTECTÉ — LIAISON INTERROMPUE</h2>
+  <div id="crash-stats" style="font-size:15px;letter-spacing:.2em;color:#9df59d;margin:-14px 0 30px;"></div>
   <div class="go" id="btn-revive" style="cursor:pointer;">📺 REDÉCOLLER SUR PLACE — PUB</div>
   <div class="go2" id="btn-base">REPRENDRE À LA BASE (score conservé)</div>
 </div>
@@ -150,6 +152,8 @@ const S = {
   wave: 1, waveT: 0, combo: 0, comboT: 0,
   cuves: 0, zoomKills: 0, barrelsBlown: 0, comboMax: 0,
   mission: 0, x2Wave: 0,         // pub récompensée : score ×2 sur la vague n
+  hitT: 0, hitKind: 0,           // hitmarker : 0 touche, 1 kill, 2 headshot
+  torch: false,                  // projecteur de bord (L)
   banner: '', bannerT: 0, splats: [],
 };
 let zoomHeld = false;
@@ -1116,6 +1120,13 @@ const gun = new THREE.Group();
   camera.add(gun);
 }
 
+/* --- projecteur de bord (L) --- */
+const torch = new THREE.SpotLight(0xfff2d8, 0, 70, 0.46, 0.45, 1.1);
+torch.position.set(0, -0.05, 0);
+camera.add(torch);
+camera.add(torch.target);
+torch.target.position.set(0, -0.06, -10);
+
 /* --- balles explosives (pool) --- */
 const bullets = [];
 const bulletGeo = new THREE.SphereGeometry(0.05, 8, 6);
@@ -1167,6 +1178,14 @@ function explode(p, power=1){
   for(const tg of targets){
     if(!tg.hit && tg.grp.position.distanceTo(p) < 4) hitTarget(tg);
   }
+  // trace brûlée au sol
+  if(p.y < 3){
+    const sc = scorches[scorchIdx++ % scorches.length];
+    sc.position.set(p.x, 0.035 + (scorchIdx%9)*0.003, p.z);
+    sc.scale.setScalar(0.7 + power*0.5);
+    sc.rotation.z = Math.random()*6.28;
+    sc.visible = true;
+  }
   // bidons et cuves : réaction en chaîne
   for(const bl of barrels){
     if(bl.alive && !bl.pending && Math.hypot(bl.x-p.x, bl.z-p.z) < 3.6 && Math.abs(bl.y-p.y) < 3.5){
@@ -1207,6 +1226,8 @@ function fire(){
   b.life = 3; b.on = true; b.m.visible = true; b.m.position.copy(b.pos);
   b.m.scale.setScalar(mg? 0.55 : 1);
   S.recoil = (mg? 0.006 : 0.022)*(1 - 0.4*S.zoomT);
+  hintsDone.shoot = true;
+  if(S.zoomT>0.5) hintsDone.zoom = true;
   gun.userData.flash.visible = true;
   gun.userData.flash.rotation.z = Math.random()*6.28;
   setTimeout(()=>{ gun.userData.flash.visible=false; }, 55);
@@ -1303,6 +1324,7 @@ function addZombie(x,z,type='normal'){
   scene.add(grp);
   zombies.push({grp, pos:grp.position, armL, armR, alive:true, deadT:-1, type,
     hp:st.hp, chaseR:st.chase, swatDmg:st.dmg, pts:st.pts, stunT:0, spitCd:2+rnd()*3,
+    riseT:0, headHit:false,
     dir:rnd()*6.28, spd:st.spd[0]+rnd()*(st.spd[1]-st.spd[0]), ph:rnd()*6.28, swatCd:0});
 }
 /* points d'apparition : usine, carrefour, immeubles, parc à conteneurs */
@@ -1318,29 +1340,76 @@ const zSpots = [
 for(const [x,z] of zSpots) addZombie(x,z);
 addZombie(48, 20, 'runner'); addZombie(-60, -20, 'spitter');   // avant-goût dès la vague 1
 
+/* --- gerbes d'impact (pool) --- */
+const puffs=[];
+{
+  for(let i=0;i<8;i++){
+    const N=14, sp=new Float32Array(N*3), sv=[];
+    for(let k=0;k<N;k++) sv.push(new THREE.Vector3());
+    const p=new THREE.Points(new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({color:0x5a2018, size:0.15, transparent:true, opacity:.9, depthWrite:false}));
+    p.geometry.setAttribute('position', new THREE.BufferAttribute(sp,3));
+    p.visible=false; p.frustumCulled=false; scene.add(p);
+    puffs.push({p, sp, sv, t:-1});
+  }
+}
+let puffIdx=0;
+function puff(x,y,z,big){
+  const u=puffs[puffIdx++%puffs.length];
+  u.t=0;
+  for(let k=0;k<u.sv.length;k++){
+    u.sv[k].set(Math.random()-.5, Math.random()*.8, Math.random()-.5).multiplyScalar(big?5:2.5);
+    u.sp[k*3]=x; u.sp[k*3+1]=y; u.sp[k*3+2]=z;
+  }
+  u.p.geometry.attributes.position.needsUpdate=true;
+  u.p.visible=true; u.p.material.opacity=.9;
+}
+
+/* --- impacts brûlés au sol --- */
+const scorches=[];
+{
+  for(let i=0;i<14;i++){
+    const m=new THREE.Mesh(new THREE.CircleGeometry(1.8, 12),
+      new THREE.MeshBasicMaterial({color:0x141210, transparent:true, opacity:.5,
+        depthWrite:false, polygonOffset:true, polygonOffsetFactor:-3, polygonOffsetUnits:-3}));
+    m.rotation.x=-Math.PI/2; m.visible=false; scene.add(m);
+    scorches.push(m);
+  }
+}
+let scorchIdx=0;
+
 function damageZombie(z, n, from){
   if(!z.alive) return;
   z.hp -= n;
   z.stunT = 0.25;
   const away = Math.atan2(z.pos.z-from.z, z.pos.x-from.x);
   z.pos.x += Math.cos(away)*0.25; z.pos.z += Math.sin(away)*0.25;
-  if(z.hp <= 0) killZombie(z, from);
+  puff(z.pos.x, z.pos.y+1.15*z.grp.scale.x, z.pos.z, false);
+  if(z.hp <= 0){ killZombie(z, from); }
+  else { S.hitT=0.22; S.hitKind=0; hitSound(0); }
+  z.headHit = false;
 }
 function killZombie(z, from){
   z.alive = false; z.deadT = 0;
   S.kills++;
+  const d = Math.hypot(S.pos.x-z.pos.x, S.pos.z-z.pos.z);
   const away = Math.atan2(z.pos.z-from.z, z.pos.x-from.x);
   z.flingX = Math.cos(away)*3.5; z.flingZ = Math.sin(away)*3.5;
+  puff(z.pos.x, z.pos.y+1.2*z.grp.scale.x, z.pos.z, true);
+  squelchSound(d);
+  S.hitT=0.3; S.hitKind = z.headHit ? 2 : 1; hitSound(S.hitKind);
   // score + combo (×2 si la pub récompensée a été vue pour cette vague)
   S.comboT = 3.5; S.combo++;
   S.comboMax = Math.max(S.comboMax, S.combo);
   const mult = Math.min(5, S.combo) * (S.x2Wave===S.wave ? 2 : 1);
   S.score += z.pts * mult;
+  if(z.headHit) S.score += 75;
   if(S.zoomT > 0.5) S.zoomKills++;
-  const d = Math.hypot(S.pos.x-z.pos.x, S.pos.z-z.pos.z);
   if(d > 55){                                  // bullet-cam : kill longue distance
     slowT = 0.9; S.score += 150;
     setBanner(`KILL CONFIRMÉ — ${d|0} m  +150`);
+  } else if(z.headHit){
+    setBanner(`HEADSHOT  +${z.pts*mult+75}`);
   } else if(mult>1){
     setBanner(`COMBO x${mult}  +${z.pts*mult}`);
   }
@@ -1361,8 +1430,10 @@ function spawnWave(){
     else if(S.wave>=3 && rr<0.34) type='brute';
     else if(S.wave>=3 && rr<0.46) type='spitter';
     addZombie(sp[0]+(Math.random()-.5)*16, sp[1]+(Math.random()-.5)*16, type);
+    zombies[zombies.length-1].riseT = 1.2 + Math.random()*1.2;   // ils sortent du sol
   }
   setBanner(`VAGUE ${S.wave} — ${n} HOSTILES`);
+  stingerSound();
 }
 
 /* --- projectiles acides des cracheurs --- */
@@ -1532,10 +1603,14 @@ function combat(dt, t){
       b.pos.addScaledVector(b.vel, h);
       if(pointHitsWorld(b.pos, 0.12)) boom = true;
       if(!boom) for(const z of zombies){
-        if(!z.alive) continue;
+        if(!z.alive || z.riseT>0) continue;
         const sc = z.grp.scale.x;
         if(Math.hypot(b.pos.x-z.pos.x, b.pos.z-z.pos.z) < 0.55*sc
-           && b.pos.y > z.pos.y && b.pos.y < z.pos.y+1.95*sc){ boom=true; hitZ=z; break; }
+           && b.pos.y > z.pos.y && b.pos.y < z.pos.y+1.95*sc){
+          boom=true; hitZ=z;
+          z.headHit = b.pos.y > z.pos.y + 1.52*sc;   // headshot !
+          break;
+        }
       }
       if(!boom) for(const tg of targets){
         if(!tg.hit && b.pos.distanceTo(tg.grp.position) < 0.8){ hitTarget(tg); boom=true; break; }
@@ -1547,16 +1622,35 @@ function combat(dt, t){
       }
     }
     b.m.position.copy(b.pos);
+    if(b.kind===0){                           // traçante allongée
+      tmpV.copy(b.pos).add(b.vel);
+      b.m.lookAt(tmpV);
+      b.m.scale.set(0.42, 0.42, 2.6);
+    }
     if(boom){
       b.on=false; b.m.visible=false;
       if(b.kind===1){                         // grenade explosive
         if(hitZ) damageZombie(hitZ, 6, b.pos);
         explode(b.pos, 1);
-      } else {                                // mitrailleuse : impact sec
-        if(hitZ) damageZombie(hitZ, 1, b.pos);
+      } else {                                // mitrailleuse : impact sec (x2 en pleine tête)
+        if(hitZ) damageZombie(hitZ, hitZ.headHit?2:1, b.pos);
         explode(b.pos, 0.15);
       }
     }
+  }
+
+  // gerbes d'impact
+  for(const u of puffs){
+    if(u.t<0) continue;
+    u.t += dt;
+    const k = u.t/0.5;
+    if(k>=1){ u.t=-1; u.p.visible=false; continue; }
+    for(let i=0;i<u.sv.length;i++){
+      u.sv[i].y -= 7*dt;
+      u.sp[i*3] += u.sv[i].x*dt; u.sp[i*3+1] += u.sv[i].y*dt; u.sp[i*3+2] += u.sv[i].z*dt;
+    }
+    u.p.material.opacity = 0.9*(1-k);
+    u.p.geometry.attributes.position.needsUpdate = true;
   }
 
   // explosions
@@ -1588,12 +1682,20 @@ function combat(dt, t){
   // zombies
   for(const z of zombies){
     if(!z.alive){
-      if(z.deadT>=0 && z.deadT<1){
-        z.deadT += dt*2;
-        const k = Math.min(1, z.deadT);
+      z.deadT += dt;
+      if(z.deadT < 0.5){                    // il bascule
+        const k = Math.min(1, z.deadT*2);
         z.grp.rotation.x = k*Math.PI/2*0.96;
         z.pos.x += (z.flingX||0)*dt; z.pos.z += (z.flingZ||0)*dt;
+      } else if(z.deadT > 4 && z.grp.visible){   // puis le corps s'enfonce
+        z.grp.position.y -= dt*0.5;
+        if(z.grp.position.y < -1.6) z.grp.visible = false;
       }
+      continue;
+    }
+    if(z.riseT > 0){                        // il sort du sol (spawn de vague)
+      z.riseT -= dt;
+      z.grp.position.y = -1.75 * Math.max(0, z.riseT) / 1.4;
       continue;
     }
     const dx = S.pos.x-z.pos.x, dz = S.pos.z-z.pos.z;
@@ -1758,6 +1860,42 @@ function thunderSound(){
   const g=AC.createGain(); g.gain.value=.5;
   s.connect(f); f.connect(g); g.connect(masterGain); s.start();
 }
+function hitSound(kind){
+  if(!AC||muted) return;
+  const o=AC.createOscillator(); o.type='square';
+  const f0 = kind===2 ? 1900 : kind===1 ? 700 : 1300;
+  o.frequency.setValueAtTime(f0, AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(f0*0.6, AC.currentTime+.05);
+  const g=AC.createGain();
+  g.gain.setValueAtTime(kind===1?.22:.14, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001, AC.currentTime+.06);
+  o.connect(g); g.connect(masterGain); o.start(); o.stop(AC.currentTime+.07);
+}
+function squelchSound(dist){
+  if(!AC||muted) return;
+  const att = clamp(.6/(1+dist*0.06), .03, .5);
+  const len=AC.sampleRate*.14, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++){ const k=1-i/len; d[i]=(Math.random()*2-1)*k*k; }
+  const s=AC.createBufferSource(); s.buffer=buf; s.playbackRate.value=.6;
+  const f=AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=380;
+  const g=AC.createGain(); g.gain.value=att;
+  s.connect(f); f.connect(g); g.connect(masterGain); s.start();
+}
+function stingerSound(){
+  if(!AC||muted) return;
+  for(const dt2 of [0, 0.18]){
+    const o=AC.createOscillator(); o.type='sawtooth';
+    o.frequency.setValueAtTime(116, AC.currentTime+dt2);
+    o.frequency.exponentialRampToValueAtTime(58, AC.currentTime+dt2+.7);
+    const f=AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=500;
+    const g=AC.createGain();
+    g.gain.setValueAtTime(.0001, AC.currentTime+dt2);
+    g.gain.exponentialRampToValueAtTime(.3, AC.currentTime+dt2+.05);
+    g.gain.exponentialRampToValueAtTime(.001, AC.currentTime+dt2+.8);
+    o.connect(f); f.connect(g); g.connect(masterGain);
+    o.start(AC.currentTime+dt2); o.stop(AC.currentTime+dt2+.85);
+  }
+}
 function chimeSound(){
   if(!AC||muted) return;
   for(const [fq,dl] of [[880,0],[1320,0.09]]){
@@ -1817,6 +1955,7 @@ addEventListener('keydown', e=>{
   if(k==='r') respawn();
   if(k==='m') muted=!muted;
   if(k==='n') S.mode=(S.mode+1)%4;
+  if(k==='l') S.torch=!S.torch;
   if(e.code==='Digit1' && S.weapon!==0){ S.weapon=0; S.reloadT=0; }
   if(e.code==='Digit2' && S.weapon!==1){ S.weapon=1; S.reloadT=0; }
   if(k==='f' && S.reloadT<=0){
@@ -1934,6 +2073,9 @@ function crash(reason){
   cgGameplay(false);
   document.getElementById('crash-sub').textContent =
     (reason||'IMPACT DÉTECTÉ') + ' — LIAISON INTERROMPUE';
+  const mm=String(Math.floor(S.time/60)).padStart(2,'0'), ss=String(Math.floor(S.time%60)).padStart(2,'0');
+  document.getElementById('crash-stats').textContent =
+    `SCORE ${S.score} · RECORD ${S.best} · VAGUE ${S.wave} · ${S.kills} KILLS · T+${mm}:${ss}`;
   setTimeout(()=>{ elCrash.style.display='flex'; }, 450);
 }
 /* dégâts non létaux : le drone encaisse, crash seulement à 0 d'intégrité */
@@ -1948,6 +2090,7 @@ function damage(n, reason){
    PHYSIQUE
    ============================================================ */
 const tmpV = new THREE.Vector3();
+const hintsDone = {move:false, up:false, shoot:false, zoom:false};
 function physics(dt){
   // — visée souris (comme un FPS) — sensibilité réduite quand on zoome
   const sens = T.lookSens * SETTINGS.sens * lerp(1, 1.4/S.zoomX, S.zoomT);
@@ -2049,16 +2192,23 @@ function physics(dt){
   else if(impact > 4.5) damage((impact-4)*5.5, 'COLLISION STRUCTURE');
   else if(impact > 2) S.impactFlash = 1;
 
-  // batterie & G
+  // batterie & G — à plat, l'électronique lâche
   S.battery = Math.max(0, S.battery - dt/(T.batteryMin*60)*100);
+  if(S.battery<=0){
+    S.hp = Math.max(0, S.hp - dt*2.5);
+    if(S.hp<=0) crash('BATTERIE ÉPUISÉE');
+  }
   S.gForce = 1 + Math.min(2.5, Math.hypot(S.pitch, S.roll)*2.2);
   S.time += dt;
+  // hints d'onboarding
+  if(fIn||sIn) hintsDone.move=true;
+  if(uIn) hintsDone.up=true;
 }
 
 /* ============================================================
    CAMÉRA FPV
    ============================================================ */
-let shake=0;
+let shake=0, prevYaw=0, prevCamPitch=0, swayX=0, swayY=0;
 function updateCamera(dt, t){
   camera.position.copy(S.pos);
   // caméra stabilisée : ne tremble qu'aux impacts et explosions
@@ -2075,6 +2225,20 @@ function updateCamera(dt, t){
   camera.fov = lerp(baseFov, T.fovBase/S.zoomX, S.zoomT);
   camera.updateProjectionMatrix();
   gun.visible = S.zoomT < 0.35;        // le pod sort du champ en visée optique
+  // le canon vit : traîne derrière la visée, bob de vol, plongeon de recharge
+  const dYaw = S.yaw-prevYaw, dPit = S.camPitch-prevCamPitch;
+  prevYaw = S.yaw; prevCamPitch = S.camPitch;
+  swayX = lerp(swayX, clamp(dYaw*5, -0.09, 0.09), Math.min(1, dt*9));
+  swayY = lerp(swayY, clamp(dPit*5, -0.07, 0.07), Math.min(1, dt*9));
+  const bob = Math.sin(t*6)*0.0016*Math.min(S.vel.length()/10, 1);
+  let dipY=0, dipR=0;
+  if(S.reloadT>0){
+    const pr = 1 - S.reloadT/(S.weapon===1?1.8:1.4);
+    const dip = Math.sin(clamp(pr,0,1)*Math.PI);
+    dipY = -0.055*dip; dipR = -0.5*dip;
+  }
+  gun.rotation.set(dipR - swayY, swayX, 0);
+  gun.position.set(0.02 + swayX*0.12, -0.065 + bob + dipY, 0);
 }
 
 /* ============================================================
@@ -2244,6 +2408,25 @@ function drawHUD(t){
   hctx.moveTo(cx,cyH-5);  hctx.lineTo(cx,cyH-12);
   hctx.stroke();
   hctx.beginPath(); hctx.arc(cx,cyH,2,0,7); hctx.fill();
+  /* hitmarker */
+  if(S.hitT>0){
+    const a = S.hitT/0.3;
+    const col = S.hitKind===2 ? '#ffd257' : S.hitKind===1 ? '#ff6a5a' : '#e8ffe8';
+    hctx.save();
+    hctx.strokeStyle=col; hctx.globalAlpha=Math.min(1, a*1.5); hctx.lineWidth=2.2;
+    const o1=7+(1-a)*4, o2=15+(1-a)*4;
+    hctx.beginPath();
+    for(const [sx2,sy2] of [[1,1],[-1,1],[1,-1],[-1,-1]]){
+      hctx.moveTo(cx+sx2*o1, cyH+sy2*o1); hctx.lineTo(cx+sx2*o2, cyH+sy2*o2);
+    }
+    hctx.stroke();
+    if(S.hitKind===2){
+      hctx.textAlign='center'; hctx.font='12px "Courier New",monospace'; hctx.fillStyle=col;
+      hctx.fillText('HEADSHOT', cx, cyH-28);
+    }
+    hctx.restore();
+    hctx.lineWidth=1.4;
+  }
   { // flight-path marker
     const fwdX=-Math.sin(S.yaw), fwdZ=-Math.cos(S.yaw);
     const rgtX=Math.cos(S.yaw),  rgtZ=-Math.sin(S.yaw);
@@ -2379,13 +2562,31 @@ function drawHUD(t){
     hctx.fillRect(W-100+i*10, by+22-4-i*2.5, 6, 4+i*2.5);
   }
 
+  /* --- hints d'onboarding (60 premières secondes) --- */
+  if(S.time < 60 && !S.crashed){
+    const HINTTXT=[['move','Z Q S D — SE DÉPLACER'],['up','A / E — MONTER · DESCENDRE'],
+                   ['shoot','CLIC — TIRER'],['zoom','CLIC DROIT — ZOOM']];
+    let hy=H-170;
+    hctx.textAlign='center'; hctx.font='13px "Courier New",monospace';
+    for(const [k2,txt] of HINTTXT){
+      if(hintsDone[k2]) continue;
+      hctx.fillStyle='rgba(141,250,154,.75)';
+      hctx.fillText(txt, cx, hy); hy-=19;
+    }
+  }
+  if(S.torch){
+    hctx.textAlign='right'; hctx.fillStyle='#fff3c8'; hctx.font='12px "Courier New",monospace';
+    hctx.fillText('PROJECTEUR ●', W-30, 132+(S.x2Wave===S.wave?16:0));
+    hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
+  }
+
   /* --- alertes centre-bas --- */
   hctx.textAlign='center'; hctx.font='15px "Courier New",monospace';
   const warns=[];
   if(alt<1.6 && S.vel.y<-2.5) warns.push('PROXIMITÉ SOL');
   if(speedK>110) warns.push('SURVITESSE');
-  if(bat<20) warns.push('BATTERIE FAIBLE');
-  if(bat<=0) warns.push('RETOUR IMMÉDIAT');
+  if(bat<20 && bat>0) warns.push('BATTERIE FAIBLE');
+  if(bat<=0) warns.push('BATTERIE À PLAT — INTÉGRITÉ EN CHUTE');
   warns.forEach((w,i)=>{
     if(Math.floor(t*2.5)%2===0){ hctx.fillStyle=AMB; hctx.fillText('⚠ '+w, cx, H-100-i*20); }
   });
@@ -2532,8 +2733,12 @@ function loop(now){
     }
   }
 
-  // bannière
+  // projecteur de bord
+  torch.intensity += clamp((S.torch?420:0)-torch.intensity, -dt*2200, dt*2200);
+
+  // bannière + hitmarker
   if(S.bannerT>0) S.bannerT -= dt;
+  if(S.hitT>0) S.hitT = Math.max(0, S.hitT - dt);
 
   if(S.started && !S.paused && !S.crashed && !adPaused) combat(dt, t);
 
