@@ -82,6 +82,7 @@
   </div>
   <div class="go">CLIQUER POUR DÉCOLLER</div>
   <div class="go2" id="btn-shop-start">🛒 BOUTIQUE</div>
+  <div id="daily-box" class="ctl-mini" style="grid-template-columns:auto auto;margin-top:20px;"></div>
   <small>FLUX VIDÉO 5.8 GHz — CANAL R7 — CRYPTAGE AES</small>
 </div>
 
@@ -90,6 +91,7 @@
   <h2 id="crash-sub">IMPACT DÉTECTÉ — LIAISON INTERROMPUE</h2>
   <div id="crash-stats" style="font-size:15px;letter-spacing:.2em;color:#9df59d;margin:-14px 0 30px;"></div>
   <div class="go" id="btn-revive" style="cursor:pointer;">📺 REDÉCOLLER SUR PLACE — PUB</div>
+  <div class="go2" id="btn-x2c">📺 ×2 CRÉDITS DE LA PARTIE</div>
   <div class="go2" id="btn-base">REPRENDRE À LA BASE (score conservé)</div>
 </div>
 
@@ -103,7 +105,9 @@
     <b>MAJ</b><span>boost</span>                    <b>F</b><span>recharger</span>
     <b>ESPACE</b><span>frein</span>                 <b>N</b><span>jour · nuit · NVG · thermique</span>
     <b>L</b><span>projecteur</span>                 <b>G</b><span>×2 entre les vagues (pub)</span>
-    <b>R</b><span>retour base</span>                <b>M</b><span>son</span>
+    <b>H</b><span>offre du moment (pub)</span>       <b>X</b><span>kit de réparation</span>
+    <b>B</b><span>charge nuke</span>                 <b>M</b><span>son</span>
+    <b>R</b><span>retour base</span>                 <b></b><span></span>
   </div>
   <div class="panel">
     <label>SENSIBILITÉ SOURIS <input id="set-sens" type="range" min="40" max="220" value="100"><span id="set-sens-v">1.0</span></label>
@@ -185,6 +189,12 @@ const S = {
   mission: 0, x2Wave: 0,         // pub récompensée : score ×2 sur la vague n
   hitT: 0, hitKind: 0,           // hitmarker : 0 touche, 1 kill, 2 headshot
   torch: false,                  // projecteur de bord (L)
+  runCredits: 0,                 // crédits gagnés cette partie (doublables par pub)
+  reviveT: 0,                    // fenêtre du bouton revive (compte à rebours)
+  shield: 0, boostT: 0,          // bouclier pub + booster ¢×2
+  hordeOfferT: 0,                // fenêtre bouclier avant l'assaut
+  lootT: 0, lootDoubleT: 0, lootVal: 0, lootX: 0, lootZ: 0,   // butin de boss
+  trialEndWave: -1,              // essai TEMPEST (pub) : actif tant que wave <= …
   banner: '', bannerT: 0, splats: [],
 };
 let zoomHeld = false;
@@ -278,9 +288,10 @@ function applyTheme(name){
   GRN3 = `rgba(${c[0]},${c[1]},${c[2]},.35)`;
   HUDGLOW = `rgba(${c[0]},${c[1]},${c[2]},.5)`;
 }
-const shopState = Object.assign({owned:['th-vert'], theme:'vert'},
+const shopState = Object.assign({owned:['th-vert'], theme:'vert', items:{}, prestige:0},
   JSON.parse(localStorage.getItem('bs-shop')||'{}'));
 if(!shopState.owned.includes('th-vert')) shopState.owned.push('th-vert');
+if(!shopState.items) shopState.items = {};
 S.credits = +(localStorage.getItem('bs-credits')||0);
 const own = id => shopState.owned.includes(id);
 function saveShop(){
@@ -300,7 +311,17 @@ const DRONES = [
   {id:'d3', n:'UAV REAPER',  hp:120, spd:1.10, tier:3, p:6000,  d:'Débloque le FUSIL RAFALE (3 coups) · 120 PV · +20% vitesse', req:'d2'},
   {id:'d4', n:'UAV TEMPEST', hp:140, spd:1.20, tier:4, p:15000, d:'Débloque le MINIGUN · 140 PV · +30% vitesse', req:'d3'},
 ];
-function droneTier(){ return own('d4')?4 : own('d3')?3 : own('d2')?2 : 1; }
+function droneTier(){
+  if(S.trialEndWave >= S.wave) return 4;          // essai TEMPEST en cours (pub)
+  return own('d4')?4 : own('d3')?3 : own('d2')?2 : 1;
+}
+/* --- multiplicateur de crédits : booster + prestige --- */
+function creditMul(){ return (S.boostT>0?2:1) * Math.pow(1.5, shopState.prestige||0); }
+function addCredits(n){
+  const v = Math.round(n*creditMul());
+  S.credits += v; S.runCredits += v;
+  return v;
+}
 /* migration des anciennes sauvegardes (upgrades à 1 niveau) */
 if(!shopState.lvl){
   shopState.lvl = {};
@@ -316,6 +337,11 @@ const SHOP = [
   {fam:'mag',     n:'CHARGEURS',        d:'+50% puis +100% de munitions',   prices:[800,2000]},
   {fam:'battery', n:'BATTERIE',         d:'+30% puis +60% d\'autonomie',    prices:[500,1500]},
   {fam:'reload',  n:'AUTO-CHARGEUR',    d:'Recharge -20% puis -35%',        prices:[600,1600]},
+  {cons:'repair', n:'KIT DE RÉPARATION', d:'Touche X en vol : +60 intégrité (max 5)', p:150},
+  {cons:'nuke',   n:'CHARGE NUKE',       d:'Touche B : déflagration massive (max 3)', p:500},
+  {cons:'boost',  n:'BOOSTER ¢×2',       d:'Crédits doublés pendant 10 min (immédiat)', p:300},
+  {id:'trial',   special:'trial', n:'📺 ESSAI TEMPEST', d:'Arsenal complet pendant 1 vague — contre une pub', p:0},
+  {id:'prestige',special:'prestige', n:'⭐ PRESTIGE', d:'Réinitialise châssis et niveaux · crédits ×1,5 permanent (cumulable)', p:0},
   {id:'tracer',  n:'TRAÇANTES DORÉES',  d:'Du style à chaque rafale', p:400},
   {id:'th-vert',  n:'HUD VERT',  d:'Thème d\'origine', p:0, theme:'vert'},
   {id:'th-ambre', n:'HUD AMBRE', d:'Thème rétro',      p:300, theme:'ambre'},
@@ -1402,6 +1428,7 @@ addTarget( -29, 2.6, -70, 0);
 function hitTarget(tg){
   if(tg.hit) return;
   tg.hit = true; tg.ht = 0; S.targetsHit++;
+  dailyEvent('target');
 }
 
 /* --- zombies (4 types) --- */
@@ -1419,6 +1446,7 @@ const Z_STATS = {
   runner: {hp:2, spd:[2.1,2.7],  scale:0.94, chase:72, dmg:12, pts:150},
   brute:  {hp:8, spd:[0.4,0.55], scale:1.5,  chase:55, dmg:24, pts:250},
   spitter:{hp:3, spd:[0.6,0.9],  scale:1.05, chase:60, dmg:12, pts:200},
+  boss:   {hp:60, spd:[0.45,0.55], scale:2.7, chase:240, dmg:45, pts:1500},
 };
 function addZombie(x,z,type='normal'){
   const st = Z_STATS[type];
@@ -1526,8 +1554,20 @@ function killZombie(z, from){
   S.comboMax = Math.max(S.comboMax, S.combo);
   const mult = Math.min(5, S.combo) * (S.x2Wave===S.wave ? 2 : 1);
   S.score += z.pts * mult;
-  S.credits += Math.round(z.pts/10);
+  addCredits(z.pts/10);
   if(z.headHit) S.score += 75;
+  // missions du jour
+  dailyEvent('kill');
+  if(z.headHit) dailyEvent('head');
+  if(z.type==='brute' || z.type==='boss') dailyEvent('brute');
+  if(S.zoomT>0.5) dailyEvent('zoomKill');
+  // le colosse alpha lâche son butin
+  if(z.type==='boss'){
+    S.lootT = 18;
+    S.lootX = z.pos.x; S.lootZ = z.pos.z;
+    S.lootVal = 400 + 100*S.wave;
+    setBanner(`⭐ COLOSSE ALPHA ABATTU — BUTIN AU SOL : ${S.lootVal} ¢`);
+  }
   if(S.zoomT > 0.5) S.zoomKills++;
   if(d > 55){                                  // bullet-cam : kill longue distance
     slowT = 0.9; S.score += 150;
@@ -1559,7 +1599,17 @@ function spawnWave(){
     zombies[zombies.length-1].riseT = 1.2 + Math.random()*1.2;   // ils sortent du sol
   }
   hordeT = 30 + Math.random()*15;
-  setBanner(`VAGUE ${S.wave} — ${n} HOSTILES`);
+  S.trialEndWave = Math.min(S.trialEndWave, S.wave-1);  // fin d'essai TEMPEST
+  setUpgrades();
+  dailyEvent('waveMax', S.wave);
+  setBanner(`VAGUE ${S.wave} — ${aliveCount()} HOSTILES`);
+  // toutes les 5 vagues : un COLOSSE ALPHA
+  if(S.wave % 5 === 0){
+    const sp = zSpots[(Math.random()*zSpots.length)|0];
+    addZombie(sp[0], sp[1], 'boss');
+    zombies[zombies.length-1].riseT = 2.6;
+    setBanner(`⚠ VAGUE ${S.wave} — COLOSSE ALPHA DÉTECTÉ`);
+  }
   stingerSound();
 }
 /* --- événement HORDE : une meute surgit du sol près du drone et fonce --- */
@@ -1576,6 +1626,7 @@ function spawnHorde(){
     z.chaseR = 140;                               // la meute te sent de loin
     z.spd *= 1.25;
   }
+  if(S.shield<=0) S.hordeOfferT = 8;   // fenêtre bouclier (pub) avant l'assaut
   setBanner(`⚠ HORDE DÉTECTÉE — ${n} HOSTILES EN APPROCHE`);
   stingerSound();
 }
@@ -1621,6 +1672,7 @@ function blowBarrel(bl){
   bl.m.scale.set(1, 0.25, 1); bl.m.position.y=0.15;
   bl.m.material = M.darkSteel;
   S.score += 25; S.barrelsBlown++;
+  dailyEvent('barrel');
   explode(new THREE.Vector3(bl.x, bl.y+0.4, bl.z), 1.15);
 }
 
@@ -1651,6 +1703,54 @@ const crates = [];
     boxColliders.push(col);
     crates.push({m, col, x, z, top, taken:false, respT:0});
   }
+}
+
+/* --- largage aérien + butin de boss (objets 3D) --- */
+const airdrop = { t: 150+Math.random()*90, active:false, called:false, ttl:0, x:0, z:0 };
+const adMesh = new THREE.Mesh(new THREE.BoxGeometry(1.4,0.9,1.4),
+  new THREE.MeshStandardMaterial({color:0x1f7a74, emissive:0x17e0d0, emissiveIntensity:.6, roughness:.5}));
+adMesh.visible=false; adMesh.castShadow=true; scene.add(adMesh);
+const adBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,70,10,1,true),
+  new THREE.MeshBasicMaterial({color:0x4ce0ff, transparent:true, opacity:.14,
+    blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide}));
+adBeam.visible=false; scene.add(adBeam);
+function placeAirdrop(x,z){
+  airdrop.x=x; airdrop.z=z;
+  adMesh.position.set(x,0.45,z); adBeam.position.set(x,35,z);
+  adMesh.visible = adBeam.visible = true;
+}
+function clearAirdrop(){
+  airdrop.active=false; airdrop.called=false;
+  airdrop.t = 170 + Math.random()*110;
+  adMesh.visible = adBeam.visible = false;
+}
+const lootMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55,0),
+  new THREE.MeshStandardMaterial({color:0xffd257, emissive:0xcc9a20, emissiveIntensity:.8,
+    metalness:.7, roughness:.3}));
+lootMesh.visible=false; lootMesh.castShadow=true; scene.add(lootMesh);
+
+/* --- charge nuke (touche B) --- */
+function nukeBlast(){
+  const items = shopState.items;
+  if(!(items.nuke>0) || S.crashed) return;
+  items.nuke--; saveShop();
+  skyUni.uFlash.value = 1.3;
+  shake += 0.09;
+  boomSound(0, 1.6);
+  for(const z of zombies){
+    if(!z.alive) continue;
+    if(Math.hypot(z.pos.x-S.pos.x, z.pos.z-S.pos.z) < 32) damageZombie(z, 14, S.pos);
+  }
+  for(const bl of barrels){
+    if(bl.alive && !bl.pending && Math.hypot(bl.x-S.pos.x, bl.z-S.pos.z) < 26){
+      bl.pending=true; chainQ.push({barrel:bl, t:0.1+Math.random()*0.3});
+    }
+  }
+  for(let k=0;k<4;k++){
+    const a=Math.random()*6.28, r=6+Math.random()*14;
+    explode(new THREE.Vector3(S.pos.x+Math.cos(a)*r, 1.5, S.pos.z+Math.sin(a)*r), 1.4);
+  }
+  setBanner('☢ CHARGE NUKE');
 }
 
 /* --- boucle de combat --- */
@@ -1704,16 +1804,17 @@ function combat(dt, t){
   }
   if(S.waveT<=0 && aliveCount()===0){
     const bonus = 500*S.wave;
-    S.score += bonus; S.credits += 25*S.wave;
+    S.score += bonus;
+    const cc = addCredits(25*S.wave);
     saveBest(); saveShop();
-    setBanner(`VAGUE ${S.wave} NETTOYÉE  +${bonus}  +${25*S.wave} ¢`);
+    setBanner(`VAGUE ${S.wave} NETTOYÉE  +${bonus}  +${cc} ¢`);
     S.waveT = 8;
   }
 
   // missions
   if(S.mission < MISSIONS.length && MISSIONS[S.mission].chk()){
     S.mission++;
-    S.score += 1000; S.credits += 100;
+    S.score += 1000; addCredits(100);
     S.explReserve = Math.min(64, S.explReserve+6);
     setBanner(`MISSION ${S.mission}/${MISSIONS.length} ACCOMPLIE  +1000  +100 ¢  +6 GRENADES`);
     chimeSound(); cgHappy(); saveBest(); saveShop();
@@ -1738,6 +1839,54 @@ function combat(dt, t){
       setBanner('RAVITAILLEMENT — MUN +16  INTÉGRITÉ +50');
       chimeSound();
     }
+  }
+
+  // minuteries de monétisation
+  if(S.boostT>0) S.boostT-=dt;
+  if(S.hordeOfferT>0) S.hordeOfferT-=dt;
+  if(S.lootDoubleT>0) S.lootDoubleT-=dt;
+
+  // butin de boss au sol (18 s pour le ramasser)
+  if(S.lootT>0){
+    S.lootT-=dt;
+    lootMesh.visible=true;
+    lootMesh.position.set(S.lootX, 0.8+Math.sin(t*3)*0.15, S.lootZ);
+    lootMesh.rotation.y = t*1.5;
+    if(Math.hypot(S.pos.x-S.lootX, S.pos.z-S.lootZ)<3 && S.pos.y<5){
+      S.lootT=0; lootMesh.visible=false;
+      const v=addCredits(S.lootVal);
+      S.lootDoubleT=10;
+      setBanner(`BUTIN RÉCUPÉRÉ +${v} ¢ — 📺 [H] POUR DOUBLER`);
+      if(AC) chimeSound();
+      saveShop();
+    }
+    if(S.lootT<=0) lootMesh.visible=false;
+  }
+
+  // largage aérien : gratuit si tu vas le chercher, pub = sur ta position
+  if(!airdrop.active){
+    airdrop.t-=dt;
+    if(airdrop.t<=0){
+      airdrop.active=true; airdrop.ttl=90; airdrop.called=false;
+      const a=Math.random()*6.28, r=150+Math.random()*80;
+      placeAirdrop(clamp(S.pos.x+Math.cos(a)*r,-280,280), clamp(S.pos.z+Math.sin(a)*r,-280,280));
+      const dd0=Math.hypot(S.pos.x-airdrop.x, S.pos.z-airdrop.z)|0;
+      setBanner(`📦 RAVITAILLEMENT REPÉRÉ — ${dd0} m`);
+    }
+  } else {
+    airdrop.ttl-=dt;
+    adBeam.material.opacity = 0.10+0.06*Math.sin(t*4);
+    const dA=Math.hypot(S.pos.x-airdrop.x, S.pos.z-airdrop.z);
+    if(dA<3 && S.pos.y<4.5){
+      clearAirdrop();
+      S.explReserve=Math.min(64,S.explReserve+16);
+      S.mag=T.mags.slice();
+      S.hp=Math.min(S.hpMax,S.hp+50);
+      const v=addCredits(150);
+      dailyEvent('crate');
+      setBanner(`📦 RAVITAILLEMENT SÉCURISÉ — MUN · INT+50 · +${v} ¢`);
+      if(AC) chimeSound();
+    } else if(airdrop.ttl<=0) clearAirdrop();
   }
 
   // projectiles acides
@@ -2123,6 +2272,31 @@ addEventListener('keydown', e=>{
   if(k==='m') muted=!muted;
   if(k==='n') S.mode=(S.mode+1)%4;
   if(k==='l') S.torch=!S.torch;
+  // H = l'offre du moment (bouclier > butin > largage)
+  if(k==='h' && S.started && !S.crashed && !adPaused){
+    if(S.hordeOfferT>0 && S.shield<=0){
+      S.hordeOfferT=0;
+      cgRewarded(()=>{ S.shield=50; setBanner('🛡 BOUCLIER 50 — TIENS LA POSITION'); if(AC) chimeSound(); });
+    } else if(S.lootDoubleT>0){
+      const v=S.lootVal; S.lootDoubleT=0;
+      cgRewarded(()=>{ const g=addCredits(v); setBanner(`BUTIN DOUBLÉ  +${g} ¢`); if(AC) chimeSound(); saveShop(); });
+    } else if(airdrop.active && !airdrop.called){
+      airdrop.called=true;
+      cgRewarded(()=>{
+        placeAirdrop(clamp(S.pos.x-Math.sin(S.yaw)*10,-280,280),
+                     clamp(S.pos.z-Math.cos(S.yaw)*10,-280,280));
+        airdrop.ttl=Math.max(airdrop.ttl,45);
+        setBanner('📦 LARGAGE SUR TA POSITION !');
+      });
+    }
+  }
+  if(k==='x' && (shopState.items.repair||0)>0 && S.hp<S.hpMax && !S.crashed){
+    shopState.items.repair--; saveShop();
+    S.hp=Math.min(S.hpMax, S.hp+60);
+    setBanner(`🔧 RÉPARATION +60 — INTÉGRITÉ ${S.hp|0}`);
+    if(AC) chimeSound();
+  }
+  if(k==='b' && S.started && !S.paused && !S.crashed) nukeBlast();
   const wIdx = ['Digit1','Digit2','Digit3','Digit4'].indexOf(e.code);
   if(wIdx>=0 && wIdx!==S.weapon){
     if(WEAPONS[wIdx].tier <= droneTier()){ S.weapon=wIdx; S.reloadT=0; burstLeft=0; }
@@ -2215,6 +2389,7 @@ document.getElementById('btn-resume').addEventListener('click', e=>{
 /* --- boutique --- */
 const elShop = document.getElementById('screen-shop');
 let shopFrom = 'pause';
+let prestigeConfirm = false;
 function renderShop(){
   document.getElementById('shop-credits').textContent = `CRÉDITS : ${Math.round(S.credits)} ¢`;
   const box = document.getElementById('shop-items');
@@ -2248,6 +2423,43 @@ function renderShop(){
         action=()=>{ S.credits-=it.p; shopState.owned.push(it.id); shopState.theme=it.theme; }; }
       else { cls='buy off'; txt=`${it.p} ¢`; }
     }
+    else if(it.cons){                              // consommable
+      const cnt = shopState.items[it.cons]||0;
+      const cap = it.cons==='repair'?5 : it.cons==='nuke'?3 : 99;
+      title = `${it.n}${it.cons!=='boost'?`  ×${cnt}`:''}`;
+      if(it.cons==='boost' && S.boostT>0){ cls='buy own'; txt=`ACTIF ${Math.ceil(S.boostT/60)} min`; }
+      else if(cnt>=cap){ cls='buy own'; txt='◈ PLEIN'; }
+      else if(S.credits >= it.p){ txt=`ACHETER — ${it.p} ¢`;
+        action=()=>{ S.credits-=it.p;
+          if(it.cons==='boost'){ S.boostT=600; setBanner('BOOSTER ACTIF — CRÉDITS ×2 PENDANT 10 MIN'); }
+          else shopState.items[it.cons]=cnt+1; }; }
+      else { cls='buy off'; txt=`${it.p} ¢`; }
+    }
+    else if(it.special==='trial'){                 // essai TEMPEST contre pub
+      if(droneTier()>=4){ div.remove?.(); continue; }
+      txt='📺 REGARDER LA PUB';
+      action=()=>{ cgRewarded(()=>{
+        S.trialEndWave = S.wave;
+        setUpgrades(); S.mag = T.mags.slice();
+        setBanner('ESSAI TEMPEST — ARSENAL COMPLET POUR CETTE VAGUE !');
+        renderShop();
+      }); };
+    }
+    else if(it.special==='prestige'){              // prestige
+      if(!own('d4')){ cls='buy off'; txt='REQUIERT UAV TEMPEST'; }
+      else if(prestigeConfirm){ txt='⚠ CONFIRMER LA RÉINITIALISATION';
+        action=()=>{
+          shopState.prestige=(shopState.prestige||0)+1;
+          shopState.owned = shopState.owned.filter(id=>id.startsWith('th-')||id==='tracer');
+          shopState.lvl = {};
+          prestigeConfirm=false;
+          S.weapon=0; S.trialEndWave=-1;
+          setBanner(`⭐ PRESTIGE ${shopState.prestige} — CRÉDITS ×${creditMul().toFixed(1)} PERMANENT`);
+        }; }
+      else { txt=`ACTIVER (×${Math.pow(1.5,(shopState.prestige||0)+1).toFixed(1)} ¢)`;
+        action=()=>{ prestigeConfirm=true; }; }
+      if(shopState.prestige>0) title=`⭐ PRESTIGE ${shopState.prestige}`;
+    }
     else {                                         // objet simple
       if(own(it.id)){ cls='buy own'; txt='◈ ACQUIS'; }
       else if(S.credits >= it.p){ txt=`ACHETER — ${it.p} ¢`;
@@ -2268,6 +2480,7 @@ function renderShop(){
 }
 function openShop(from){
   shopFrom = from;
+  prestigeConfirm = false;
   (from==='pause' ? elPause : elStart).style.display='none';
   elShop.style.display='flex';
   renderShop();
@@ -2294,6 +2507,17 @@ document.getElementById('btn-revive').addEventListener('click', e=>{
     cgGameplay(true); grab();
   });
 });
+document.getElementById('btn-x2c').addEventListener('click', e=>{
+  e.stopPropagation();
+  const v = S.runCredits;
+  if(v<=0) return;
+  cgRewarded(()=>{
+    S.credits += v; S.runCredits = 0; saveShop();
+    document.getElementById('btn-x2c').style.display='none';
+    document.getElementById('crash-stats').textContent += `  ·  DOUBLÉ +${v} ¢ ✓`;
+    if(AC) chimeSound();
+  });
+});
 document.getElementById('btn-base').addEventListener('click', e=>{
   e.stopPropagation();
   cgMidgame();                           // interstitiel (cooldown 2 min) sur le retour base
@@ -2315,6 +2539,7 @@ function respawn(){
   S.crashed=false; S.battery=Math.max(S.battery, 25); S.impactFlash=0;
   S.mag=T.mags.slice(); S.reloadT=0; S.recoil=0; burstLeft=0;
   S.hp=S.hpMax; S.explReserve=Math.max(S.explReserve, 12);
+  S.runCredits=0; S.shield=0;
   S.combo=0; S.comboT=0; S.splats.length=0;
   elCrash.style.display='none';
 }
@@ -2327,16 +2552,95 @@ function crash(reason){
     (reason||'IMPACT DÉTECTÉ') + ' — LIAISON INTERROMPUE';
   const mm=String(Math.floor(S.time/60)).padStart(2,'0'), ss=String(Math.floor(S.time%60)).padStart(2,'0');
   document.getElementById('crash-stats').textContent =
-    `SCORE ${S.score} · RECORD ${S.best} · VAGUE ${S.wave} · ${S.kills} KILLS · T+${mm}:${ss}`;
+    `SCORE ${S.score} · RECORD ${S.best} · VAGUE ${S.wave} · ${S.kills} KILLS · ${S.runCredits} ¢ GAGNÉS · T+${mm}:${ss}`;
+  // revive à durée limitée + offre ×2 crédits
+  S.reviveT = 10;
+  document.getElementById('btn-revive').style.display='';
+  const bx2 = document.getElementById('btn-x2c');
+  if(S.runCredits>0){
+    bx2.style.display='';
+    bx2.textContent = `📺 ×2 CRÉDITS DE LA PARTIE (+${S.runCredits} ¢)`;
+  } else bx2.style.display='none';
   setTimeout(()=>{ elCrash.style.display='flex'; }, 450);
 }
-/* dégâts non létaux : le drone encaisse, crash seulement à 0 d'intégrité */
+/* dégâts non létaux : le bouclier absorbe, puis l'intégrité, crash à 0 */
 function damage(n, reason){
   if(S.crashed) return;
+  if(S.shield > 0){
+    const abs = Math.min(S.shield, n);
+    S.shield -= abs; n -= abs;
+    S.impactFlash = Math.max(S.impactFlash, 0.3);
+    if(n <= 0) return;
+  }
   S.hp = Math.max(0, S.hp - n);
   S.impactFlash = Math.min(1, 0.4 + n/60);
   if(S.hp <= 0) crash(reason);
 }
+
+/* ============================================================
+   MISSIONS DU JOUR + STREAK (persistées, tournent chaque jour)
+   ============================================================ */
+const DAILY_POOL = [
+  {ev:'kill',    goal:30, txt:'Élimine 30 hostiles'},
+  {ev:'head',    goal:10, txt:'Réussis 10 headshots'},
+  {ev:'waveMax', goal:4,  txt:'Atteins la vague 4'},
+  {ev:'barrel',  goal:8,  txt:'Fais sauter 8 bidons'},
+  {ev:'target',  goal:6,  txt:'Touche 6 cibles'},
+  {ev:'zoomKill',goal:5,  txt:'5 éliminations au zoom'},
+  {ev:'crate',   goal:2,  txt:'Ramasse 2 ravitaillements'},
+  {ev:'brute',   goal:3,  txt:'Abats 3 colosses'},
+];
+const daily = Object.assign({date:'', idx:[0,1,2], prog:[0,0,0], claimed:[false,false,false],
+  streak:0, lastDone:''}, JSON.parse(localStorage.getItem('bs-daily')||'{}'));
+{
+  const today = new Date().toISOString().slice(0,10);
+  if(daily.date !== today){
+    const yest = new Date(Date.now()-864e5).toISOString().slice(0,10);
+    if(daily.lastDone !== yest && daily.lastDone !== today) daily.streak = 0;
+    let seed = +today.replaceAll('-','');
+    const pick = ()=>{ seed = (seed*16807)%2147483647; return seed % DAILY_POOL.length; };
+    const set = new Set();
+    while(set.size<3) set.add(pick());
+    daily.idx = [...set];
+    daily.prog = [0,0,0]; daily.claimed = [false,false,false];
+    daily.date = today;
+    localStorage.setItem('bs-daily', JSON.stringify(daily));
+  }
+}
+function saveDaily(){ localStorage.setItem('bs-daily', JSON.stringify(daily)); }
+function dailyEvent(ev, val){
+  let changed = false;
+  daily.idx.forEach((pi,k)=>{
+    if(daily.claimed[k]) return;
+    const m = DAILY_POOL[pi];
+    if(m.ev !== ev) return;
+    daily.prog[k] = m.ev==='waveMax' ? Math.max(daily.prog[k], val||0) : daily.prog[k]+1;
+    changed = true;
+    if(daily.prog[k] >= m.goal){
+      daily.claimed[k] = true;
+      addCredits(200);
+      setBanner(`MISSION DU JOUR : ${m.txt.toUpperCase()}  +200 ¢`);
+      if(AC) chimeSound();
+      if(daily.claimed.every(c=>c)){
+        daily.streak++; daily.lastDone = daily.date;
+        const bonus = Math.min(500, 100*daily.streak);
+        addCredits(bonus);
+        setBanner(`🔥 SÉRIE J${daily.streak} — TOUTES LES MISSIONS DU JOUR  +${bonus} ¢`);
+      }
+    }
+  });
+  if(changed) saveDaily();
+}
+function renderDaily(){
+  const box = document.getElementById('daily-box');
+  if(!box) return;
+  box.innerHTML = `<b style="grid-column:1/3;text-align:center;color:#ffe9a0;">MISSIONS DU JOUR ${daily.streak>0?`— SÉRIE 🔥 J${daily.streak}`:''}</b>` +
+    daily.idx.map((pi,k)=>{
+      const m = DAILY_POOL[pi];
+      return `<b>${daily.claimed[k]?'■':'□'}</b><span>${m.txt} — ${Math.min(daily.prog[k],m.goal)}/${m.goal} ${daily.claimed[k]?'✓':''}</span>`;
+    }).join('');
+}
+renderDaily();
 
 /* ============================================================
    PHYSIQUE
@@ -2566,7 +2870,7 @@ function drawHUD(t){
   hctx.fillText(`T+${mm}:${ss}`, W-30, 50);
   hctx.fillText(`SCORE ${S.score}`, W-30, 68);
   hctx.fillText(`RECORD ${Math.max(S.best, S.score)}`, W-30, 84);
-  hctx.fillText(`${Math.round(S.credits)} ¢`, W-30, 100);
+  hctx.fillText(`${Math.round(S.credits)} ¢${creditMul()>1?` ×${creditMul().toFixed(1)}${S.boostT>0?` ${Math.ceil(S.boostT/60)}min`:''}`:''}`, W-30, 100);
   if(S.combo>1){ hctx.fillStyle=AMB; hctx.fillText(`COMBO x${Math.min(S.combo,5)}`, W-30, 116); hctx.fillStyle=GRN; }
   if(S.x2Wave===S.wave){ hctx.fillStyle='#ffe9a0'; hctx.fillText('SCORE ×2 📺', W-30, 132); hctx.fillStyle=GRN; }
 
@@ -2591,9 +2895,11 @@ function drawHUD(t){
       hctx.fillStyle=col;
       hctx.fillRect(mx+px*sc2-sz/2, my+py*sc2-sz/2, sz, sz);
     };
-    for(const z of zombies) if(z.alive) put(z.pos.x, z.pos.z, '#ff5748', z.type==='brute'?5:3);
+    for(const z of zombies) if(z.alive) put(z.pos.x, z.pos.z, z.type==='boss'?'#ffd257':'#ff5748', z.type==='boss'?7:z.type==='brute'?5:3);
     for(const tg of targets) if(!tg.hit) put(tg.grp.position.x, tg.grp.position.z, '#7dffa0', 3);
     for(const c of crates) if(!c.taken) put(c.x, c.z, '#4ce0ff', 4);
+    if(airdrop.active) put(airdrop.x, airdrop.z, '#4ce0ff', 6);
+    if(S.lootT>0) put(S.lootX, S.lootZ, '#ffd257', 6);
     hctx.fillStyle='#d9ffd9';
     hctx.beginPath(); hctx.moveTo(mx,my-5); hctx.lineTo(mx-4,my+4); hctx.lineTo(mx+4,my+4);
     hctx.closePath(); hctx.fill();
@@ -2772,6 +3078,10 @@ function drawHUD(t){
   const by=H-64;
   hctx.textAlign='left';
   // intégrité du drone
+  if(S.shield>0){
+    hctx.fillStyle='#4ce0ff';
+    hctx.fillText(`🛡 BOUCLIER ${S.shield|0}`, 30, by-44);
+  }
   const lowHp = S.hp < S.hpMax*0.4;
   hctx.fillStyle = lowHp ? (Math.floor(t*3)%2? RED:'rgba(255,96,96,.3)') : GRN;
   hctx.fillText(`INT ${S.hp|0}`, 30, by-22);
@@ -2811,6 +3121,12 @@ function drawHUD(t){
     hctx.fillStyle = i===S.weapon ? GRN : (w.tier<=tier ? GRN2 : 'rgba(120,140,120,.35)');
     hctx.fillText(`[${i+1}]${w.short}${w.tier>tier?'🔒':''}`, W-30-(3-i)*66, by-42);
   });
+  // consommables
+  const its = shopState.items;
+  if((its.repair||0)>0 || (its.nuke||0)>0){
+    hctx.fillStyle=GRN2;
+    hctx.fillText(`[X]🔧${its.repair||0}   [B]☢${its.nuke||0}`, W-30, by-56);
+  }
   hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
   hctx.font='13px "Courier New",monospace';
   hctx.fillText(`G ${S.gForce.toFixed(1)}`, W-30, by);
@@ -2848,6 +3164,18 @@ function drawHUD(t){
   warns.forEach((w,i)=>{
     if(Math.floor(t*2.5)%2===0){ hctx.fillStyle=AMB; hctx.fillText('⚠ '+w, cx, H-100-i*20); }
   });
+  // l'offre du moment (touche H)
+  if(S.started && !S.crashed){
+    const dAir = airdrop.active ? Math.hypot(S.pos.x-airdrop.x, S.pos.z-airdrop.z) : 0;
+    const offer =
+      (S.hordeOfferT>0 && S.shield<=0) ? '📺 [H] BOUCLIER 50 PV — ASSAUT IMMINENT' :
+      (S.lootDoubleT>0) ? `📺 [H] DOUBLER LE BUTIN (+${S.lootVal} ¢)` :
+      (airdrop.active && !airdrop.called && dAir>30) ? `📦 ${dAir|0} m — 📺 [H] LARGAGE SUR POSITION` : '';
+    if(offer && Math.floor(t*2)%2===0){
+      hctx.fillStyle='#ffe9a0';
+      hctx.fillText(offer, cx, H*0.44);
+    }
+  }
   hctx.shadowBlur=0;
 
   /* bannière d'événement */
@@ -2997,6 +3325,13 @@ function loop(now){
   // bannière + hitmarker
   if(S.bannerT>0) S.bannerT -= dt;
   if(S.hitT>0) S.hitT = Math.max(0, S.hitT - dt);
+  // compte à rebours du revive
+  if(S.crashed && S.reviveT>0){
+    S.reviveT -= dt;
+    const br = document.getElementById('btn-revive');
+    if(S.reviveT<=0) br.style.display='none';
+    else br.textContent = `📺 REDÉCOLLER SUR PLACE — PUB (${Math.ceil(S.reviveT)} s)`;
+  }
 
   if(S.started && !S.paused && !S.crashed && !adPaused) combat(dt, t);
 
@@ -3051,6 +3386,7 @@ addEventListener('resize', ()=>{
 window.__drone = {
   state:S, keys, T, respawn, crash, fire, explode, damage, zombies, targets,
   barrels, cuves, crates, spits, WX, spawnWave, spawnHorde, chainQ, CG, MISSIONS, WEAPONS, DRONES,
+  airdrop, daily, dailyEvent, addCredits, nukeBlast, shopState, setUpgrades,
   setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
   setMode(m){ S.mode=m%4; },
   setZoom(held,x){ zoomHeld=!!held; if(x) S.zoomX=x; },
