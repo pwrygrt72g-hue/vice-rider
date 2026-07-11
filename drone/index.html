@@ -69,8 +69,8 @@
     <b>Q / D</b><span>gauche / droite</span>
     <b>A / E</b><span>monter / descendre</span>
     <b>SOURIS</b><span>viser — le drone tire là où tu regardes</span>
-    <b>CLIC</b><span>tir</span>
-    <b>1 / 2</b><span>mitrailleuse / lance-grenades explosif</span>
+    <b>CLIC</b><span>tir (maintenir = rafale continue)</span>
+    <b>1 — 4</b><span>armes — débloquées par les châssis de la boutique</span>
     <b>CLIC DROIT</b><span>zoom (maintenir) — molette : x2 / x4 / x6</span>
     <b>MAJ</b><span>boost</span>
     <b>ESPACE</b><span>frein</span>
@@ -99,7 +99,7 @@
   <div class="ctl-mini">
     <b>Z/S</b><span>avancer · reculer</span>       <b>CLIC</b><span>tirer</span>
     <b>Q/D</b><span>gauche · droite</span>          <b>CLIC DROIT</b><span>zoom (molette x2/x4/x6)</span>
-    <b>A/E</b><span>monter · descendre</span>       <b>1 / 2</b><span>mitrailleuse · grenades</span>
+    <b>A/E</b><span>monter · descendre</span>       <b>1 — 4</b><span>armes (selon châssis)</span>
     <b>MAJ</b><span>boost</span>                    <b>F</b><span>recharger</span>
     <b>ESPACE</b><span>frein</span>                 <b>N</b><span>jour · nuit · NVG · thermique</span>
     <b>L</b><span>projecteur</span>                 <b>G</b><span>×2 entre les vagues (pub)</span>
@@ -177,8 +177,8 @@ const S = {
   zoomT: 0, zoomX: 4,            // zoom d'arme (clic droit), grossissement molette
   kills: 0, targetsHit: 0,
   hp: 100,                       // intégrité du drone
-  weapon: 1,                     // 0 = mitrailleuse, 1 = lance-grenades
-  mgAmmo: 40, explReserve: 24,
+  weapon: 0,                     // index dans WEAPONS (selon châssis débloqué)
+  explReserve: 24,
   score: 0, best: +(localStorage.getItem('bs-best')||0),
   wave: 1, waveT: 0, combo: 0, comboT: 0,
   cuves: 0, zoomKills: 0, barrelsBlown: 0, comboMax: 0,
@@ -287,31 +287,58 @@ function saveShop(){
   localStorage.setItem('bs-shop', JSON.stringify(shopState));
   localStorage.setItem('bs-credits', String(Math.round(S.credits)));
 }
+/* --- arsenal : chaque châssis de drone débloque une arme --- */
+const WEAPONS = [
+  {id:'mg',    n:'MITRAILLEUSE',   short:'MIT',  rate:95,  dmg:1, spd:140, mag:40,  rel:1.4, tier:1},
+  {id:'gren',  n:'LANCE-GRENADES', short:'GREN', rate:240, dmg:6, spd:85,  mag:8,   rel:1.8, tier:2, expl:true},
+  {id:'burst', n:'FUSIL RAFALE',   short:'RAF',  rate:440, dmg:2, spd:170, mag:24,  rel:1.5, tier:3, burst:3},
+  {id:'mini',  n:'MINIGUN',        short:'MINI', rate:45,  dmg:1, spd:150, mag:120, rel:2.2, tier:4, spread:0.022},
+];
+const DRONES = [
+  {id:'d1', n:'UAV SCOUT',   hp:80,  spd:0.90, tier:1, p:0,     d:'Châssis de départ · mitrailleuse'},
+  {id:'d2', n:'UAV VIPER',   hp:100, spd:1.00, tier:2, p:2500,  d:'Débloque le LANCE-GRENADES · 100 PV · +10% vitesse', req:null},
+  {id:'d3', n:'UAV REAPER',  hp:120, spd:1.10, tier:3, p:6000,  d:'Débloque le FUSIL RAFALE (3 coups) · 120 PV · +20% vitesse', req:'d2'},
+  {id:'d4', n:'UAV TEMPEST', hp:140, spd:1.20, tier:4, p:15000, d:'Débloque le MINIGUN · 140 PV · +30% vitesse', req:'d3'},
+];
+function droneTier(){ return own('d4')?4 : own('d3')?3 : own('d2')?2 : 1; }
+/* migration des anciennes sauvegardes (upgrades à 1 niveau) */
+if(!shopState.lvl){
+  shopState.lvl = {};
+  for(const k of ['mag','armor','battery','speed','reload'])
+    if(shopState.owned.includes(k)) shopState.lvl[k]=1;
+  if(shopState.owned.includes('mag')) shopState.owned.push('d2');  // ancien joueur : garde ses grenades
+}
 const SHOP = [
-  {id:'mag',     n:'CHARGEURS ÉTENDUS',     d:'Grenades 8→12 · mitrailleuse 40→60', p:800},
-  {id:'armor',   n:'BLINDAGE COMPOSITE',    d:'Intégrité max 100→130', p:1000},
-  {id:'battery', n:'BATTERIE HAUTE DENSITÉ',d:'Autonomie +50%', p:600},
-  {id:'speed',   n:'MOTEURS SURVOLTÉS',     d:'Vitesse +15%', p:1200},
-  {id:'reload',  n:'AUTO-CHARGEUR',         d:'Recharge 30% plus rapide', p:700},
-  {id:'tracer',  n:'TRAÇANTES DORÉES',      d:'Du style à chaque rafale', p:400},
+  ...DRONES.slice(1).map(dr=>({id:dr.id, n:'🚁 '+dr.n, d:dr.d, p:dr.p, drone:true, req:dr.req})),
+  {fam:'power',   n:'PUISSANCE DE FEU', d:'+15% de dégâts par niveau',      prices:[800,1600,3200]},
+  {fam:'speed',   n:'MOTEURS',          d:'+8% de vitesse par niveau',      prices:[600,1200,2400]},
+  {fam:'armor',   n:'BLINDAGE',         d:'+15 intégrité max par niveau',   prices:[700,1400,2800]},
+  {fam:'mag',     n:'CHARGEURS',        d:'+50% puis +100% de munitions',   prices:[800,2000]},
+  {fam:'battery', n:'BATTERIE',         d:'+30% puis +60% d\'autonomie',    prices:[500,1500]},
+  {fam:'reload',  n:'AUTO-CHARGEUR',    d:'Recharge -20% puis -35%',        prices:[600,1600]},
+  {id:'tracer',  n:'TRAÇANTES DORÉES',  d:'Du style à chaque rafale', p:400},
   {id:'th-vert',  n:'HUD VERT',  d:'Thème d\'origine', p:0, theme:'vert'},
   {id:'th-ambre', n:'HUD AMBRE', d:'Thème rétro',      p:300, theme:'ambre'},
   {id:'th-cyan',  n:'HUD CYAN',  d:'Thème arctique',   p:300, theme:'cyan'},
   {id:'th-rouge', n:'HUD ROUGE', d:'Thème assaut',     p:300, theme:'rouge'},
 ];
 function setUpgrades(){
-  T.magE  = own('mag') ? 12 : 8;
-  T.magMG = own('mag') ? 60 : 40;
-  S.hpMax = own('armor') ? 130 : 100;
-  T.batteryMin = own('battery') ? 18 : 12;
-  T.maxFwd = 24 * (own('speed') ? 1.15 : 1);
-  T.maxStr = 13 * (own('speed') ? 1.15 : 1);
-  T.relE  = 1.8 * (own('reload') ? 0.7 : 1);
-  T.relMG = 1.4 * (own('reload') ? 0.7 : 1);
+  const lvl = shopState.lvl;
+  const dr = DRONES[droneTier()-1];
+  T.dmgMul = 1 + 0.15*(lvl.power||0);
+  const magMul = [1, 1.5, 2][lvl.mag||0];
+  T.mags = WEAPONS.map(w=>Math.round(w.mag*magMul));
+  T.relMul = [1, 0.8, 0.65][lvl.reload||0];
+  S.hpMax = dr.hp + 15*(lvl.armor||0);
+  T.batteryMin = Math.round(12*(1 + [0, 0.3, 0.6][lvl.battery||0]));
+  const spd = dr.spd*(1 + 0.08*(lvl.speed||0));
+  T.maxFwd = 24*spd; T.maxStr = 13*spd;
+  if(WEAPONS[S.weapon].tier > droneTier()) S.weapon = 0;
   applyTheme(shopState.theme);
 }
 setUpgrades();
-S.hp = S.hpMax; S.ammo = T.magE; S.mgAmmo = T.magMG;
+S.hp = S.hpMax;
+S.mag = T.mags.slice();
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
 
@@ -1254,7 +1281,7 @@ function explode(p, power=1){
   for(const z of zombies){
     if(!z.alive) continue;
     const d = Math.hypot(z.pos.x-p.x, z.pos.z-p.z);
-    if(d < 6*power && Math.abs(p.y - (z.pos.y+1.2)) < 5*power) damageZombie(z, 5, p);
+    if(d < 6*power && Math.abs(p.y - (z.pos.y+1.2)) < 5*power) damageZombie(z, 5*(T.dmgMul||1), p);
   }
   for(const tg of targets){
     if(!tg.hit && tg.grp.position.distanceTo(p) < 4) hitTarget(tg);
@@ -1289,30 +1316,45 @@ function explode(p, power=1){
 /* --- tir --- */
 let lastShot = 0;
 const bDir = new THREE.Vector3(), bUp = new THREE.Vector3();
-function fire(){
-  if(!S.started || S.paused || S.crashed || S.reloadT>0) return;
-  const now = performance.now();
-  const mg = S.weapon===0;
-  if(now-lastShot < (mg? 95 : 240)) return;
-  if(mg ? S.mgAmmo<=0 : S.ammo<=0) return;
-  lastShot = now;
-  if(mg){ S.mgAmmo--; if(S.mgAmmo<=0) S.reloadT=T.relMG; }
-  else  { S.ammo--;   if(S.ammo<=0 && S.explReserve>0) S.reloadT=T.relE; }
+let burstLeft = 0, burstTimer = 0, firingHeld = false;
+function shoot(w){
   const b = bullets.find(b=>!b.on) || bullets[0];
   camera.getWorldDirection(bDir);
+  if(w.spread){
+    bDir.x += (Math.random()-.5)*w.spread*2;
+    bDir.y += (Math.random()-.5)*w.spread*2;
+    bDir.z += (Math.random()-.5)*w.spread*2;
+    bDir.normalize();
+  }
   b.pos.copy(camera.position).addScaledVector(bDir, 0.9);
   b.pos.y -= 0.12;
-  b.vel.copy(bDir).multiplyScalar(mg? 140 : 85).add(S.vel);
-  b.kind = S.weapon;
+  b.vel.copy(bDir).multiplyScalar(w.spd).add(S.vel);
+  b.kind = w.expl ? 1 : 0;
+  b.dmg = w.dmg * T.dmgMul;
   b.life = 3; b.on = true; b.m.visible = true; b.m.position.copy(b.pos);
-  b.m.scale.setScalar(mg? 0.55 : 1);
-  S.recoil = (mg? 0.006 : 0.022)*(1 - 0.4*S.zoomT);
-  hintsDone.shoot = true;
-  if(S.zoomT>0.5) hintsDone.zoom = true;
+  b.m.scale.setScalar(w.expl ? 1 : 0.55);
+  S.recoil = (w.expl? 0.022 : w.id==='mini'? 0.004 : 0.006)*(1 - 0.4*S.zoomT);
   gun.userData.flash.visible = true;
   gun.userData.flash.rotation.z = Math.random()*6.28;
-  setTimeout(()=>{ gun.userData.flash.visible=false; }, 55);
-  gunSound(mg);
+  setTimeout(()=>{ gun.userData.flash.visible=false; }, 45);
+  gunSound(!w.expl);
+}
+function fire(){
+  if(!S.started || S.paused || S.crashed || S.reloadT>0 || adPaused) return;
+  const now = performance.now();
+  const w = WEAPONS[S.weapon];
+  if(now-lastShot < w.rate) return;
+  if(S.mag[S.weapon] <= 0) return;
+  lastShot = now;
+  S.mag[S.weapon]--;
+  shoot(w);
+  if(w.burst > 1){                      // rafale : les coups suivants partent seuls
+    burstLeft = Math.min(w.burst-1, S.mag[S.weapon]);
+    burstTimer = 0.07;
+  }
+  if(S.mag[S.weapon] <= 0 && (!w.expl || S.explReserve>0)) S.reloadT = w.rel*T.relMul;
+  hintsDone.shoot = true;
+  if(S.zoomT>0.5) hintsDone.zoom = true;
 }
 function pointHitsWorld(p, r){
   if(p.y < r) return true;
@@ -1499,22 +1541,42 @@ function killZombie(z, from){
 
 /* --- vagues (mode horde) --- */
 function aliveCount(){ let n=0; for(const z of zombies) if(z.alive) n++; return n; }
+function pickType(){
+  const rr = Math.random();
+  if(S.wave>=2 && rr<0.22+S.wave*0.01) return 'runner';
+  if(S.wave>=3 && rr<0.36) return 'brute';
+  if(S.wave>=3 && rr<0.50) return 'spitter';
+  return 'normal';
+}
 function spawnWave(){
   S.wave++;
   for(const z of zombies) scene.remove(z.grp);   // nettoie les cadavres
   zombies.length = 0;
-  const n = Math.min(40, 16 + S.wave*6);
+  const n = Math.min(55, 18 + S.wave*8);
   for(let i=0;i<n;i++){
     const sp = zSpots[(Math.random()*zSpots.length)|0];
-    const rr = Math.random();
-    let type = 'normal';
-    if(S.wave>=2 && rr<0.20) type='runner';
-    else if(S.wave>=3 && rr<0.34) type='brute';
-    else if(S.wave>=3 && rr<0.46) type='spitter';
-    addZombie(sp[0]+(Math.random()-.5)*16, sp[1]+(Math.random()-.5)*16, type);
+    addZombie(sp[0]+(Math.random()-.5)*16, sp[1]+(Math.random()-.5)*16, pickType());
     zombies[zombies.length-1].riseT = 1.2 + Math.random()*1.2;   // ils sortent du sol
   }
+  hordeT = 30 + Math.random()*15;
   setBanner(`VAGUE ${S.wave} — ${n} HOSTILES`);
+  stingerSound();
+}
+/* --- événement HORDE : une meute surgit du sol près du drone et fonce --- */
+let hordeT = 45;
+function spawnHorde(){
+  const n = 6 + Math.min(12, S.wave*2);
+  const a = Math.random()*Math.PI*2;
+  const hx = clamp(S.pos.x + Math.cos(a)*65, -280, 280);
+  const hz = clamp(S.pos.z + Math.sin(a)*65, -280, 280);
+  for(let i=0;i<n;i++){
+    addZombie(hx+(Math.random()-.5)*22, hz+(Math.random()-.5)*22, pickType());
+    const z = zombies[zombies.length-1];
+    z.riseT = 0.8 + Math.random()*1.4;
+    z.chaseR = 140;                               // la meute te sent de loin
+    z.spd *= 1.25;
+  }
+  setBanner(`⚠ HORDE DÉTECTÉE — ${n} HOSTILES EN APPROCHE`);
   stingerSound();
 }
 
@@ -1598,12 +1660,27 @@ function combat(dt, t){
   if(S.reloadT>0){
     S.reloadT-=dt;
     if(S.reloadT<=0){
-      if(S.weapon===1){ const take=Math.min(T.magE-S.ammo, S.explReserve); S.ammo+=take; S.explReserve-=take; }
-      else S.mgAmmo=T.magMG;
+      const w = WEAPONS[S.weapon];
+      if(w.expl){
+        const take = Math.min(T.mags[S.weapon]-S.mag[S.weapon], S.explReserve);
+        S.mag[S.weapon] += take; S.explReserve -= take;
+      } else S.mag[S.weapon] = T.mags[S.weapon];
       S.reloadT=0;
     }
   }
   S.recoil *= Math.max(0, 1-dt*9);
+
+  // tir maintenu + rafales
+  if(firingHeld && document.pointerLockElement) fire();
+  if(burstLeft>0){
+    burstTimer -= dt;
+    if(burstTimer<=0 && S.mag[S.weapon]>0){
+      S.mag[S.weapon]--;
+      shoot(WEAPONS[S.weapon]);
+      burstLeft--; burstTimer = 0.07;
+      if(S.mag[S.weapon]<=0){ burstLeft=0; S.reloadT = WEAPONS[S.weapon].rel*T.relMul; }
+    } else if(burstTimer<=0) burstLeft=0;
+  }
 
   // combo qui expire
   if(S.comboT>0){ S.comboT-=dt; if(S.comboT<=0) S.combo=0; }
@@ -1614,11 +1691,18 @@ function combat(dt, t){
     if(chainQ[i].t<=0){ blowBarrel(chainQ[i].barrel); chainQ.splice(i,1); }
   }
 
-  // vagues
+  // vagues + hordes surprises en cours de vague
   if(S.waveT>0){
     S.waveT-=dt;
     if(S.waveT<=0) spawnWave();
-  } else if(aliveCount()===0){
+  } else if(aliveCount()>0){
+    hordeT -= dt;
+    if(hordeT<=0){
+      hordeT = 32 + Math.random()*22;
+      if(aliveCount() < 70) spawnHorde();
+    }
+  }
+  if(S.waveT<=0 && aliveCount()===0){
     const bonus = 500*S.wave;
     S.score += bonus; S.credits += 25*S.wave;
     saveBest(); saveShop();
@@ -1648,7 +1732,7 @@ function combat(dt, t){
       c.taken=true; c.respT=60; c.m.visible=false;
       const bi = boxColliders.indexOf(c.col); if(bi>=0) boxColliders.splice(bi,1);
       S.explReserve = Math.min(40, S.explReserve+16);
-      S.mgAmmo = T.magMG;
+      S.mag = T.mags.slice();
       S.hp = Math.min(S.hpMax, S.hp+50);
       S.battery = 100;
       setBanner('RAVITAILLEMENT — MUN +16  INTÉGRITÉ +50');
@@ -1713,10 +1797,10 @@ function combat(dt, t){
     if(boom){
       b.on=false; b.m.visible=false;
       if(b.kind===1){                         // grenade explosive
-        if(hitZ) damageZombie(hitZ, 6, b.pos);
+        if(hitZ) damageZombie(hitZ, b.dmg, b.pos);
         explode(b.pos, 1);
-      } else {                                // mitrailleuse : impact sec (x2 en pleine tête)
-        if(hitZ) damageZombie(hitZ, hitZ.headHit?2:1, b.pos);
+      } else {                                // balle : impact sec (x2 en pleine tête)
+        if(hitZ) damageZombie(hitZ, hitZ.headHit? b.dmg*2 : b.dmg, b.pos);
         explode(b.pos, 0.15);
       }
     }
@@ -2039,11 +2123,15 @@ addEventListener('keydown', e=>{
   if(k==='m') muted=!muted;
   if(k==='n') S.mode=(S.mode+1)%4;
   if(k==='l') S.torch=!S.torch;
-  if(e.code==='Digit1' && S.weapon!==0){ S.weapon=0; S.reloadT=0; }
-  if(e.code==='Digit2' && S.weapon!==1){ S.weapon=1; S.reloadT=0; }
+  const wIdx = ['Digit1','Digit2','Digit3','Digit4'].indexOf(e.code);
+  if(wIdx>=0 && wIdx!==S.weapon){
+    if(WEAPONS[wIdx].tier <= droneTier()){ S.weapon=wIdx; S.reloadT=0; burstLeft=0; }
+    else setBanner(`ARME VERROUILLÉE — ACHÈTE L'${DRONES[WEAPONS[wIdx].tier-1].n} EN BOUTIQUE`);
+  }
   if(k==='f' && S.reloadT<=0){
-    if(S.weapon===1 && S.ammo<T.magE && S.explReserve>0) S.reloadT=T.relE;
-    if(S.weapon===0 && S.mgAmmo<T.magMG) S.reloadT=T.relMG;
+    const w = WEAPONS[S.weapon];
+    if(S.mag[S.weapon] < T.mags[S.weapon] && (!w.expl || S.explReserve>0))
+      S.reloadT = w.rel*T.relMul;
   }
   // pendant la pause entre vagues : pub récompensée = score ×2 sur la vague suivante
   if(k==='g' && S.waveT>0 && S.x2Wave !== S.wave+1 && !adPaused){
@@ -2061,10 +2149,13 @@ addEventListener('mousedown', e=>{
     if(S.started && !S.paused && !S.crashed && !adPaused) grab();
     return;
   }
-  if(e.button===0) fire();
+  if(e.button===0){ firingHeld = true; fire(); }
   if(e.button===2) zoomHeld = true;
 });
-addEventListener('mouseup', e=>{ if(e.button===2) zoomHeld = false; });
+addEventListener('mouseup', e=>{
+  if(e.button===0) firingHeld = false;
+  if(e.button===2) zoomHeld = false;
+});
 addEventListener('contextmenu', e=>{ if(S.started) e.preventDefault(); });
 addEventListener('wheel', e=>{
   if(!document.pointerLockElement) return;
@@ -2131,25 +2222,45 @@ function renderShop(){
   for(const it of SHOP){
     const div = document.createElement('div');
     div.className = 'shop-item';
-    const owned = own(it.id);
-    const equipped = it.theme && shopState.theme === it.theme;
-    let cls='buy', txt;
-    if(equipped){ cls='buy own'; txt='◈ ÉQUIPÉ'; }
-    else if(owned && it.theme){ txt='ÉQUIPER'; }
-    else if(owned){ cls='buy own'; txt='◈ ACQUIS'; }
-    else if(S.credits >= it.p){ txt=`ACHETER — ${it.p} ¢`; }
-    else { cls='buy off'; txt=`${it.p} ¢`; }
-    div.innerHTML = `<h3>${it.n}</h3><p>${it.d}</p><span class="${cls}">${txt}</span>`;
-    div.querySelector('span').addEventListener('click', ()=>{
-      if(it.theme && own(it.id)){
-        shopState.theme = it.theme;
-        setUpgrades(); saveShop(); renderShop(); return;
-      }
-      if(own(it.id) || S.credits < it.p) return;
-      S.credits -= it.p;
-      shopState.owned.push(it.id);
-      if(it.theme) shopState.theme = it.theme;
-      setUpgrades(); applyTracer(); saveShop(); renderShop();
+    let cls='buy', txt, title=it.n, action=null;
+
+    if(it.fam){                                    // amélioration à niveaux
+      const lvl = shopState.lvl[it.fam]||0, max = it.prices.length;
+      title = `${it.n}  ${'◆'.repeat(lvl)}${'◇'.repeat(max-lvl)}`;
+      if(lvl>=max){ cls='buy own'; txt='◈ NIVEAU MAX'; }
+      else if(S.credits >= it.prices[lvl]){ txt=`NIV ${lvl+1} — ${it.prices[lvl]} ¢`;
+        action=()=>{ S.credits-=it.prices[lvl]; shopState.lvl[it.fam]=lvl+1; }; }
+      else { cls='buy off'; txt=`NIV ${lvl+1} — ${it.prices[lvl]} ¢`; }
+    }
+    else if(it.drone){                             // châssis de drone
+      const locked = it.req && !own(it.req);
+      if(own(it.id)){ cls='buy own'; txt='◈ EN SERVICE'; }
+      else if(locked){ cls='buy off'; txt=`REQUIERT ${DRONES.find(d=>d.id===it.req).n}`; }
+      else if(S.credits >= it.p){ txt=`ACHETER — ${it.p} ¢`;
+        action=()=>{ S.credits-=it.p; shopState.owned.push(it.id);
+          setBanner(`NOUVEAU CHÂSSIS : ${it.n.replace('🚁 ','')} — ARME ${droneTier()===2?'2':droneTier()===3?'3':'4'} DÉBLOQUÉE`); }; }
+      else { cls='buy off'; txt=`${it.p} ¢`; }
+    }
+    else if(it.theme){                             // thème HUD
+      if(shopState.theme===it.theme){ cls='buy own'; txt='◈ ÉQUIPÉ'; }
+      else if(own(it.id)){ txt='ÉQUIPER'; action=()=>{ shopState.theme=it.theme; }; }
+      else if(S.credits >= it.p){ txt=`ACHETER — ${it.p} ¢`;
+        action=()=>{ S.credits-=it.p; shopState.owned.push(it.id); shopState.theme=it.theme; }; }
+      else { cls='buy off'; txt=`${it.p} ¢`; }
+    }
+    else {                                         // objet simple
+      if(own(it.id)){ cls='buy own'; txt='◈ ACQUIS'; }
+      else if(S.credits >= it.p){ txt=`ACHETER — ${it.p} ¢`;
+        action=()=>{ S.credits-=it.p; shopState.owned.push(it.id); }; }
+      else { cls='buy off'; txt=`${it.p} ¢`; }
+    }
+
+    div.innerHTML = `<h3>${title}</h3><p>${it.d}</p><span class="${cls}">${txt}</span>`;
+    if(action) div.querySelector('span').addEventListener('click', ()=>{
+      action();
+      setUpgrades(); applyTracer();
+      S.mag = S.mag.map((m,i)=>Math.min(Math.max(m, 0), T.mags[i]));
+      saveShop(); renderShop();
       if(AC) chimeSound();
     });
     box.appendChild(div);
@@ -2177,7 +2288,7 @@ document.getElementById('btn-revive').addEventListener('click', e=>{
   cgRewarded(()=>{                       // pub vue → on repart sur place, score intact
     S.crashed=false; S.hp=S.hpMax; S.impactFlash=0;
     S.pos.y = Math.max(S.pos.y, 4); S.vel.set(0,0,0);
-    S.ammo=T.magE; S.mgAmmo=T.magMG;
+    S.mag = T.mags.slice();
     elCrash.style.display='none';
     setBanner('LIAISON RÉTABLIE — REPRISE SUR PLACE');
     cgGameplay(true); grab();
@@ -2202,8 +2313,8 @@ function respawn(){
   S.vel.set(0,0,0);
   S.yaw=spawn.yaw; S.camPitch=0; S.pitch=0; S.roll=0;
   S.crashed=false; S.battery=Math.max(S.battery, 25); S.impactFlash=0;
-  S.ammo=T.magE; S.reloadT=0; S.recoil=0;
-  S.hp=S.hpMax; S.mgAmmo=T.magMG; S.explReserve=Math.max(S.explReserve, 12);
+  S.mag=T.mags.slice(); S.reloadT=0; S.recoil=0; burstLeft=0;
+  S.hp=S.hpMax; S.explReserve=Math.max(S.explReserve, 12);
   S.combo=0; S.comboT=0; S.splats.length=0;
   elCrash.style.display='none';
 }
@@ -2374,7 +2485,7 @@ function updateCamera(dt, t){
   const bob = Math.sin(t*6)*0.0016*Math.min(S.vel.length()/10, 1);
   let dipY=0, dipR=0;
   if(S.reloadT>0){
-    const pr = 1 - S.reloadT/(S.weapon===1?T.relE:T.relMG);
+    const pr = 1 - S.reloadT/(WEAPONS[S.weapon].rel*T.relMul);
     const dip = Math.sin(clamp(pr,0,1)*Math.PI);
     dipY = -0.055*dip; dipR = -0.5*dip;
   }
@@ -2684,17 +2795,22 @@ function drawHUD(t){
   if(S.reloadT>0){
     if(Math.floor(t*3)%2===0){ hctx.fillStyle=AMB; hctx.fillText('RECHARGEMENT', W-30, by-24); }
     hctx.strokeStyle=GRN2; hctx.strokeRect(W-114, by-18, 84, 7);
-    hctx.fillStyle=GRN2; hctx.fillRect(W-112, by-16.5, 80*(1-S.reloadT/1.8), 4);
+    hctx.fillStyle=GRN2; hctx.fillRect(W-112, by-16.5, 80*(1-S.reloadT/(WEAPONS[S.weapon].rel*T.relMul)), 4);
     hctx.fillStyle=GRN;
-  } else if(S.weapon===1){
-    hctx.fillText(`GRENADES ${S.ammo}/${T.magE}  RÉS ${S.explReserve}`, W-30, by-24);
-    for(let i=0;i<S.ammo;i++) hctx.fillRect(W-114+i*Math.floor(96/T.magE), by-18, 6, 8);
   } else {
-    hctx.fillText(`MITRAILLEUSE ${S.mgAmmo}/${T.magMG}`, W-30, by-24);
-    for(let i=0;i<Math.ceil(S.mgAmmo/(T.magMG/8));i++) hctx.fillRect(W-114+i*10, by-18, 6, 8);
+    const w = WEAPONS[S.weapon];
+    hctx.fillText(`${w.n} ${S.mag[S.weapon]}/${T.mags[S.weapon]}${w.expl?`  RÉS ${S.explReserve}`:''}`, W-30, by-24);
+    const pipN = Math.min(10, T.mags[S.weapon]);
+    const filled = Math.ceil(S.mag[S.weapon]/T.mags[S.weapon]*pipN);
+    for(let i=0;i<filled;i++) hctx.fillRect(W-30-pipN*10+i*10, by-18, 6, 8);
   }
-  hctx.fillStyle=GRN2; hctx.font='10px "Courier New",monospace';
-  hctx.fillText('[1] MIT   [2] GREN', W-30, by-42);
+  // barre d'armes 1-4 : équipée / dispo / verrouillée
+  hctx.font='10px "Courier New",monospace';
+  const tier = droneTier();
+  WEAPONS.forEach((w,i)=>{
+    hctx.fillStyle = i===S.weapon ? GRN : (w.tier<=tier ? GRN2 : 'rgba(120,140,120,.35)');
+    hctx.fillText(`[${i+1}]${w.short}${w.tier>tier?'🔒':''}`, W-30-(3-i)*66, by-42);
+  });
   hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
   hctx.font='13px "Courier New",monospace';
   hctx.fillText(`G ${S.gForce.toFixed(1)}`, W-30, by);
@@ -2934,7 +3050,7 @@ addEventListener('resize', ()=>{
 /* hooks de test */
 window.__drone = {
   state:S, keys, T, respawn, crash, fire, explode, damage, zombies, targets,
-  barrels, cuves, crates, spits, WX, spawnWave, chainQ, CG, MISSIONS,
+  barrels, cuves, crates, spits, WX, spawnWave, spawnHorde, chainQ, CG, MISSIONS, WEAPONS, DRONES,
   setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
   setMode(m){ S.mode=m%4; },
   setZoom(held,x){ zoomHeld=!!held; if(x) S.zoomX=x; },
