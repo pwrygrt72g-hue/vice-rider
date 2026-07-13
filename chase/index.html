@@ -154,7 +154,7 @@ const DEFS = [
   { type:'infil', title:'LA SALLE DES SERVEURS', ty:'INFILTRATION', tod:'night',
     brief:"Leur salle des serveurs est au fond du hangar du Marché Saint-Honoré, sous double projecteur rapide. L'alarme monte deux fois plus vite et le chrono est court.",
     obj:"Photographie les serveurs. Deux projecteurs, deux intercepteurs. Zéro erreur.",
-    map:{seed:71}, time:110, lights:2, hunt:2, hard:true, zr:230 },
+    map:{seed:71}, time:110, lights:2, hunt:2, hard:true, zr:230, rain:true },
   { type:'chase', title:'SANS LIMITE', ty:'FILATURE ∞', tod:'dusk',
     brief:"Plus aucune retenue : chaque cible identifiée en appelle une plus rapide, dans tout le quartier Opéra-Vendôme. Jusqu'où peux-tu suivre ?",
     obj:"Identifie autant de véhicules que possible. Les renforts arrivent vite.",
@@ -288,6 +288,10 @@ function updateAudio(dt){
       setTimeout(()=>tone(50, 0.1, 'sine', 0.3), 120);
     }
   }
+  /* pluie */
+  if(AU.wGain && raining && S.flying){
+    AU.wGain.gain.value = Math.max(AU.wGain.gain.value, 0.07);
+  }
   /* batterie faible */
   if(S.flying && S.batt < 20 && S.batt > 0){
     AU.battT = (AU.battT||0) - dt;
@@ -342,21 +346,46 @@ let tod = 'night';
 const skyU = {
   uTop:{value:new THREE.Vector3()}, uMid:{value:new THREE.Vector3()},
   uLow:{value:new THREE.Vector3()}, uStars:{value:1},
+  uTime:{value:0}, uSunDir:{value:new THREE.Vector3(0,1,0)},
+  uSunCol:{value:new THREE.Vector3(1,1,1)}, uCloud:{value:0.5},
+  uCloudCol:{value:new THREE.Vector3(1,1,1)},
 };
 {
-  const geo = new THREE.SphereGeometry(1100, 24, 16);
+  const geo = new THREE.SphereGeometry(1100, 32, 20);
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyU,
     vertexShader: `varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
     fragmentShader: `varying vec3 vP;
-      uniform vec3 uTop,uMid,uLow; uniform float uStars;
+      uniform vec3 uTop,uMid,uLow,uSunDir,uSunCol,uCloudCol;
+      uniform float uStars,uTime,uCloud;
+      float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+      float vnoise(vec2 p){
+        vec2 i = floor(p), f = fract(p);
+        f = f*f*(3.-2.*f);
+        return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+                   mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+      }
+      float fbm(vec2 p){
+        return vnoise(p)*0.5 + vnoise(p*2.1)*0.28 + vnoise(p*4.3)*0.16;
+      }
       void main(){
         vec3 n = normalize(vP);
         float h = n.y;
         vec3 c = h > 0.2 ? mix(uMid, uTop, (h-0.2)/0.8) : mix(uLow, uMid, clamp(h,0.,0.2)/0.2);
+        /* étoiles */
         vec3 f = floor(n*300.);
         float hsh = fract(sin(dot(f, vec3(12.9898,78.233,37.719)))*43758.5453);
         if(h > 0.08 && hsh > 0.996) c += vec3(0.9,0.95,1.0)*(hsh-0.996)/0.004*0.85*uStars;
+        /* nuages fbm dérivant */
+        if(h > 0.03){
+          vec2 uv = n.xz/(n.y+0.18)*0.55 + vec2(uTime*0.006, uTime*0.0022);
+          float cl = smoothstep(0.52, 0.74, fbm(uv)) * uCloud;
+          float band = smoothstep(0.03, 0.14, h) * (1.0 - smoothstep(0.55, 0.9, h));
+          c = mix(c, uCloudCol, cl*band*0.85);
+        }
+        /* soleil (ou lune la nuit) + halo */
+        float sd = max(dot(n, uSunDir), 0.);
+        c += uSunCol * (pow(sd, 750.)*1.3 + pow(sd, 10.)*0.22);
         gl_FragColor = vec4(c,1.);
       }`
   });
@@ -372,6 +401,13 @@ function applyTod(name){
   renderer.toneMappingExposure = p.expo;
   skyU.uTop.value.set(...p.top); skyU.uMid.value.set(...p.mid); skyU.uLow.value.set(...p.low);
   skyU.uStars.value = p.stars;
+  skyU.uSunDir.value.set(...p.sunPos).normalize();
+  if(name === 'day'){ skyU.uSunCol.value.set(1.0,0.96,0.85); skyU.uCloud.value = 0.5;
+    skyU.uCloudCol.value.set(0.98,0.99,1.0); }
+  else if(name === 'dusk'){ skyU.uSunCol.value.set(1.0,0.55,0.25); skyU.uCloud.value = 0.45;
+    skyU.uCloudCol.value.set(0.92,0.62,0.48); }
+  else { skyU.uSunCol.value.set(0.55,0.62,0.75); skyU.uCloud.value = 0.3;
+    skyU.uCloudCol.value.set(0.10,0.12,0.18); }
 }
 /* sol : terre/herbe rase */
 {
@@ -482,6 +518,36 @@ const glowTex = (()=>{
   return new THREE.CanvasTexture(c);
 })();
 
+/* ================= pluie ================= */
+let raining = false;
+const rain = (() => {
+  const N = 1500;
+  const pos = new Float32Array(N*3);
+  for(let i=0;i<N;i++){
+    pos[i*3] = Math.random()*220-110;
+    pos[i*3+1] = Math.random()*90;
+    pos[i*3+2] = Math.random()*220-110;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const m = new THREE.Points(geo, new THREE.PointsMaterial({
+    color: 0x9db4cc, size: 0.35, transparent: true, opacity: 0.45, depthWrite: false }));
+  m.visible = false; m.frustumCulled = false;
+  scene.add(m);
+  return m;
+})();
+function rainUpdate(dt){
+  if(!raining) return;
+  rain.position.set(S.pos.x, 0, S.pos.z);
+  const p = rain.geometry.attributes.position;
+  for(let i=0;i<p.count;i++){
+    let y = p.getY(i) - 44*dt;
+    if(y < 0) y += 90;
+    p.setY(i, y);
+  }
+  p.needsUpdate = true;
+}
+
 /* ================= zone d'opération ================= */
 const OPZONE = { c: new THREE.Vector3(), r: 260, wall: null };
 function setZone(cx, cz, r){
@@ -542,6 +608,14 @@ function hausTex(pal){
     else if(isDay()){ gr.addColorStop(0,'#a9bfd2'); gr.addColorStop(1,'#5f7488'); }
     else { gr.addColorStop(0,'#1a2028'); gr.addColorStop(1,'#0c1016'); }
     g.fillStyle = gr; g.fillRect(wx,wy,ww,wh);                   // vitre
+    if(isDay()){                                                  // reflet diagonal
+      g.save(); g.beginPath(); g.rect(wx,wy,ww,wh); g.clip();
+      g.fillStyle = 'rgba(255,255,255,.16)';
+      g.beginPath();
+      g.moveTo(wx-10, wy+wh); g.lineTo(wx+18, wy-6); g.lineTo(wx+34, wy-6); g.lineTo(wx+6, wy+wh);
+      g.closePath(); g.fill();
+      g.restore();
+    }
     g.strokeStyle = pal.trim; g.lineWidth = 5;                   // encadrement pierre
     g.strokeRect(wx-4, wy-4, ww+8, wh+8);
     g.strokeStyle = lit ? 'rgba(70,40,16,.8)' : 'rgba(232,228,214,.9)';
@@ -594,6 +668,7 @@ function buildParisBuildings(){
   const wallBuckets = PALETTES.map(()=>[]);
   const shopBucket = [];
   const roofBuckets = [[],[]];
+  const chimGeos = [];   // cheminées + antennes TV : la signature des toits parisiens
   const SHOP_H = 3.8, MOD_W = 12.8, MOD_H = 12.4;
   PARIS.b.forEach((b, bi) => {
     const p = b.p, h = b.h;
@@ -637,6 +712,30 @@ function buildParisBuildings(){
     const gr = new THREE.ShapeGeometry(shape);
     gr.rotateX(-Math.PI/2); gr.translate(0, h, 0);
     roofBuckets[bi%2].push(gr);
+    /* cheminées groupées + antennes TV sur les toits */
+    if(h > 9){
+      const rx = (maxx-minx)*0.22, rz = (maxz-minz)*0.22;
+      const nCl = 1 + (rnd()*2.4|0);
+      for(let k=0;k<nCl;k++){
+        const px = cx + (rnd()*2-1)*rx, pz = cz + (rnd()*2-1)*rz;
+        const terra = rnd() < 0.7;
+        const col = terra ? 0xa8613e : 0x8d9298;
+        chimGeos.push(boxGeoColored(1.5, 0.9, 0.9, px, h+0.45, pz, col));
+        const nPots = 2 + (rnd()*3|0);
+        for(let q=0;q<nPots;q++){
+          const ph = 0.7 + rnd()*0.8;
+          chimGeos.push(boxGeoColored(0.26, ph, 0.26,
+            px - 0.55 + q*(1.1/Math.max(1,nPots-1)), h + 0.9 + ph/2, pz + (rnd()*0.3-0.15),
+            terra ? 0xb06a45 : 0x9aa0a6));
+        }
+      }
+      if(rnd() < 0.5){   // antenne TV râteau
+        const px = cx + (rnd()*2-1)*rx, pz = cz + (rnd()*2-1)*rz;
+        chimGeos.push(boxGeoColored(0.06, 2.6, 0.06, px, h+1.3, pz, 0x2c2f34));
+        chimGeos.push(boxGeoColored(1.4, 0.05, 0.05, px, h+2.4, pz, 0x2c2f34));
+        chimGeos.push(boxGeoColored(1.0, 0.05, 0.05, px, h+2.1, pz, 0x2c2f34));
+      }
+    }
   });
   const mkMat = (tex, emissive) => {
     const m = new THREE.MeshLambertMaterial({map: tex, side: THREE.DoubleSide});
@@ -661,6 +760,11 @@ function buildParisBuildings(){
     m.castShadow = m.receiveShadow = true;
     cityGrp.add(m);
   });
+  if(chimGeos.length){
+    const m = new THREE.Mesh(mergeGeometries(chimGeos), carPaintMat);
+    m.castShadow = true;
+    cityGrp.add(m);
+  }
   /* feux rouges sur les 6 plus hauts toits, la nuit */
   if(!isDay()){
     [...built].sort((a,b)=>b.h-a.h).slice(0,6).forEach(b => blinker(b.x, b.h+1.6, b.z));
@@ -908,6 +1012,9 @@ function buildWorld(def){
   built.length = 0;
   seed = (def.map?.seed || 7);
   applyTod(def.tod || 'night');
+  raining = !!def.rain;
+  rain.visible = raining;
+  if(raining){ scene.fog.far *= 0.72; scene.fog.near *= 0.8; }
 
   /* le vrai quartier Opéra/Vendôme */
   buildParisBuildings();
@@ -1855,6 +1962,8 @@ function loop(){
     }
   }
   updateAudio(dt);
+  skyU.uTime.value += dt;
+  rainUpdate(dt);
   if(S.shakeT > 0) S.shakeT -= dt;
   for(let i=empFx.length-1;i>=0;i--){
     const f = empFx[i];
@@ -1864,12 +1973,22 @@ function loop(){
     if(f.t > 0.8){ cityGrp.remove(f.m); empFx.splice(i,1); }
   }
   S.zoom += (S.zoomT - S.zoom)*Math.min(1, 10*dt);
-  cam.fov = 78 / S.zoom; cam.updateProjectionMatrix();
+  /* FOV dynamique : la vitesse et le boost élargissent le champ */
+  const spdN = Math.min(1, S.vel.length()/(T.maxSpd*EFF.spd));
+  S._fov = (S._fov ?? 78) + ((78 + (S.boost?7:0) + spdN*4) - (S._fov ?? 78))*Math.min(1, 6*dt);
+  cam.fov = S._fov / S.zoom; cam.updateProjectionMatrix();
   cam.position.copy(S.pos);
   cam.rotation.set(0,0,0);
   cam.rotateY(S.yaw); cam.rotateX(S.pitch);
+  /* assiette : pique du nez à l'accélération, cabre au freinage */
+  S._tilt = (S._tilt ?? 0) + (((keys['KeyW']? -0.05 : 0) + (keys['KeyS']? 0.035 : 0)) - (S._tilt ?? 0))*Math.min(1, 4.5*dt);
+  cam.rotateX(S._tilt);
   const bank = THREE.MathUtils.clamp(-S.vel.dot(new THREE.Vector3(Math.cos(S.yaw),0,-Math.sin(S.yaw)))*0.006, -0.18, 0.18);
   cam.rotateZ(bank);
+  if(spdN > 0.72 && S.flying){   // micro-vibrations à haute vitesse
+    const v = (spdN-0.72)*0.011;
+    cam.rotateX((Math.random()-0.5)*v); cam.rotateZ((Math.random()-0.5)*v);
+  }
   if(S.shakeT > 0){   // secousse d'impact
     const k = S.shakeT*0.05;
     cam.rotateX((Math.random()-0.5)*k); cam.rotateZ((Math.random()-0.5)*k);
