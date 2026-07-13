@@ -857,14 +857,48 @@ function spawnObstacles(def){
   for(let i=0;i<3;i++){ const s = pick(); scaffold(s, 0.25 + rnd()*0.5, rnd()<0.5? 1 : -1); }
   for(let i=0;i<6;i++){ const s = pick(); wireline(s, 0.2 + rnd()*0.6); }
 }
-const CAR_COLORS = [0xc23b2e, 0x2e5fc2, 0xd8d9dd, 0xd9b12e, 0x8a929c, 0x2f8f52, 0x14161c];
-function parkedCar(x,z,ry){
-  const m = new THREE.Mesh(carGeoShared, new THREE.MeshLambertMaterial({color: CAR_COLORS[rnd()*CAR_COLORS.length|0]}));
-  m.position.set(x, 0.75, z); m.rotation.y = ry;
-  cityGrp.add(m);
-  addCollider(x, z, 4.6, 4.6, 1.6);
+const CAR_COLORS = [0xc23b2e, 0x2e5fc2, 0xd8d9dd, 0xd9b12e, 0x8a929c, 0x2f8f52,
+  0x14161c, 0xe07820, 0x2ab5b0, 0x8f4dc2, 0xc2527a, 0x6b4a2e, 0xf0e8dc, 0x35506e];
+/* vraie silhouette de voiture : châssis + cabine vitrée + toit + 4 roues,
+   fusionnée en UN mesh à couleurs par sommet (1 draw call) */
+const carPaintMat = new THREE.MeshLambertMaterial({vertexColors: true});
+function boxGeoColored(w,h,d, x,y,z, color){
+  const g = new THREE.BoxGeometry(w,h,d); g.translate(x,y,z);
+  const n = g.attributes.position.count;
+  const col = new Float32Array(n*3);
+  const c = new THREE.Color(color);
+  for(let i=0;i<n;i++){ col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(col,3));
+  return g;
 }
-const carGeoShared = new THREE.BoxGeometry(4.2,1.5,2);
+function wheelGeo(x,z){
+  const g = new THREE.CylinderGeometry(0.37,0.37,0.3,10);
+  g.rotateX(Math.PI/2); g.translate(x,0.38,z);
+  const n = g.attributes.position.count;
+  const col = new Float32Array(n*3).fill(0.045);
+  g.setAttribute('color', new THREE.BufferAttribute(col,3));
+  return g;
+}
+function mkCarMesh(color, taxi){
+  const parts = [
+    boxGeoColored(4.3,0.68,1.9, 0,0.74,0, color),           // châssis (avant = -x)
+    boxGeoColored(2.25,0.58,1.68, 0.12,1.36,0, 0x18222e),   // vitres
+    boxGeoColored(2.3,0.1,1.72, 0.12,1.7,0, color),         // toit
+    boxGeoColored(0.28,0.18,1.5, -2.2,0.78,0, 0xf4f0dc),    // feux avant
+    boxGeoColored(0.24,0.18,1.5, 2.2,0.78,0, 0x8f1a14),     // feux arrière
+    wheelGeo(1.42,0.97), wheelGeo(1.42,-0.97), wheelGeo(-1.42,0.97), wheelGeo(-1.42,-0.97),
+  ];
+  if(taxi) parts.push(boxGeoColored(0.9,0.26,0.5, 0.12,1.88,0, 0xfff0b8));
+  const m = new THREE.Mesh(mergeGeometries(parts), carPaintMat);
+  m.castShadow = true;
+  return m;
+}
+function parkedCar(x,z,ry){
+  const m = mkCarMesh(CAR_COLORS[rnd()*CAR_COLORS.length|0], rnd()<0.08);
+  m.position.set(x, 0, z); m.rotation.y = ry;
+  cityGrp.add(m);
+  addCollider(x, z, 4.6, 4.6, 1.9);
+}
 
 function buildWorld(def){
   if(cityGrp) scene.remove(cityGrp);
@@ -922,9 +956,9 @@ function buildWorld(def){
   if(def.meeting){
     const [mx, mz] = POI.vendome;  // place Vendôme
     for(const [ox,oz,c] of [[-4,-2,0x14161c],[4,-1,0x23262e]]){
-      const cm = new THREE.Mesh(carGeoShared, new THREE.MeshLambertMaterial({color:c}));
-      cm.position.set(mx+ox, 0.75, mz+oz); cm.rotation.y = rnd(); cityGrp.add(cm);
-      addCollider(mx+ox, mz+oz, 4.6, 4.6, 1.6);
+      const cm = mkCarMesh(c);
+      cm.position.set(mx+ox, 0, mz+oz); cm.rotation.y = rnd(); cityGrp.add(cm);
+      addCollider(mx+ox, mz+oz, 4.6, 4.6, 1.9);
     }
     for(let i=0;i<4;i++){
       const p = new THREE.Mesh(new THREE.BoxGeometry(0.55,1.7,0.4), new THREE.MeshLambertMaterial({color:0x0e1014}));
@@ -986,16 +1020,7 @@ function buildWorld(def){
 /* ================= voiture cible ================= */
 const car = { grp: new THREE.Group(), pos: new THREE.Vector3(-80,0.65,-80), node: 0, prev: -1, heading: 0, spd: 20, head:null };
 {
-  const body = new THREE.Mesh(new THREE.BoxGeometry(4.4,1.1,2), new THREE.MeshLambertMaterial({color: 0xb8bec8}));
-  body.position.y = 0.55;
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.85,1.8), new THREE.MeshLambertMaterial({color: 0x14161c}));
-  cab.position.set(-0.2, 1.45, 0);
-  const wgeo = new THREE.CylinderGeometry(0.42,0.42,0.32,10); wgeo.rotateX(Math.PI/2);
-  const wmat = new THREE.MeshLambertMaterial({color: 0x0c0c0c});
-  for(const [wx,wz] of [[1.5,1],[1.5,-1],[-1.5,1],[-1.5,-1]]){
-    const w = new THREE.Mesh(wgeo, wmat); w.position.set(wx, 0.42, wz); car.grp.add(w);
-  }
-  car.grp.add(body, cab);
+  car.grp.add(mkCarMesh(0xc8ccd4));
   const head = new THREE.SpotLight(0xf2f6ff, 220, 70, 0.42, 0.5, 1.6);
   head.position.set(-2, 1, 0);
   const headTgt = new THREE.Object3D(); headTgt.position.set(-20, 0, 0);
@@ -1029,16 +1054,13 @@ const traffic = [];
 const peds = [];
 function mkCivCar(){
   const grp = new THREE.Group();
-  const body = new THREE.Mesh(carGeoShared, new THREE.MeshLambertMaterial({color: CAR_COLORS[rnd()*CAR_COLORS.length|0]}));
-  body.position.y = 0.75; grp.add(body);
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(2,0.7,1.7), new THREE.MeshLambertMaterial({color:0x1c2026}));
-  cab.position.set(-0.1, 1.5, 0); grp.add(cab);
+  grp.add(mkCarMesh(CAR_COLORS[rnd()*CAR_COLORS.length|0], rnd()<0.12));
   if(!isDay()){
     const lg = new THREE.PlaneGeometry(0.3,0.2);
-    for(const [lx,col] of [[-2.15,0xfff4d8],[2.15,0xff2626]]){
+    for(const [lx,col] of [[-2.24,0xfff4d8],[2.24,0xff2626]]){
       for(const lz of [0.6,-0.6]){
         const l = new THREE.Mesh(lg, new THREE.MeshBasicMaterial({color:col}));
-        l.position.set(lx, 0.7, lz); l.rotation.y = lx<0 ? -Math.PI/2 : Math.PI/2;
+        l.position.set(lx, 0.78, lz); l.rotation.y = lx<0 ? -Math.PI/2 : Math.PI/2;
         grp.add(l);
       }
     }
@@ -1059,12 +1081,16 @@ function vehStep(v, dt){
   const tgt = graph.pts[v.node];
   if(!tgt) return;
   const dx = tgt.x - v.pos.x, dz = tgt.z - v.pos.z;
-  if(Math.hypot(dx,dz) < 2){ vehPick(v, v.node); return; }
+  if(Math.hypot(dx,dz) < 2 + v.spd*0.06){ vehPick(v, v.node); return; }
   const want = Math.atan2(dx,dz);
   let diff = want - v.heading;
   while(diff > Math.PI) diff -= 2*Math.PI; while(diff < -Math.PI) diff += 2*Math.PI;
-  v.heading += THREE.MathUtils.clamp(diff, -2.2*dt, 2.2*dt);
-  const slow = Math.abs(diff) > 0.4 ? 0.55 : 1;
+  const adiff = Math.abs(diff);
+  /* braquage vif + fort ralentissement en virage : les voitures tournent
+     au carrefour au lieu de couper à travers les immeubles ; demi-tour
+     = pivot quasi sur place au lieu d'un grand cercle */
+  v.heading += THREE.MathUtils.clamp(diff, -3.8*dt, 3.8*dt);
+  const slow = adiff > 2.2 ? 0.1 : adiff > 0.9 ? 0.28 : adiff > 0.35 ? 0.55 : 1;
   v.pos.x += Math.sin(v.heading)*v.spd*slow*dt;
   v.pos.z += Math.cos(v.heading)*v.spd*slow*dt;
   v.grp.position.copy(v.pos);
@@ -1072,9 +1098,17 @@ function vehStep(v, dt){
 }
 function mkBus(){
   const grp = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(9.6,2.6,2.4),
-    new THREE.MeshLambertMaterial({color: rnd()<0.5 ? 0x2e7a52 : 0xd8d9dd}));
-  body.position.y = 1.5; grp.add(body);
+  const col = rnd()<0.4 ? 0x2e7a52 : rnd()<0.5 ? 0xd8d9dd : 0x3a6db0;
+  const parts = [
+    boxGeoColored(9.6,1.6,2.4, 0,1.0,0, col),               // caisse
+    boxGeoColored(9.4,0.85,2.42, 0,2.2,0, 0x18222e),        // bande de vitres
+    boxGeoColored(9.6,0.18,2.36, 0,2.72,0, 0xe8e9ec),       // toit blanc
+    boxGeoColored(0.24,0.5,2.0, -4.75,1.1,0, 0xf4f0dc),     // feux avant
+    boxGeoColored(0.2,0.5,2.0, 4.75,1.1,0, 0x8f1a14),       // feux arrière
+    wheelGeo(3.4,1.15), wheelGeo(3.4,-1.15), wheelGeo(-3.4,1.15), wheelGeo(-3.4,-1.15),
+  ];
+  const body = new THREE.Mesh(mergeGeometries(parts), carPaintMat);
+  body.castShadow = true; grp.add(body);
   if(!isDay()){
     const lg = new THREE.PlaneGeometry(0.34,0.24);
     for(const [lx,col] of [[-4.85,0xfff4d8],[4.85,0xff2626]]){
