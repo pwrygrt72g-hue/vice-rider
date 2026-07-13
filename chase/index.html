@@ -50,7 +50,28 @@
   .shots img{display:block;width:210px;border:7px solid #f2efe6;border-bottom-width:26px;
     box-shadow:0 8px 22px rgba(0,0,0,.65)}
   .shots figcaption{font-size:10px;color:#2a2d33;letter-spacing:1px;margin-top:-22px;position:relative;text-align:center}
-  #screen-shop{display:none}
+  #screen-shop{display:none;flex-direction:row;justify-content:space-between;align-items:stretch;
+    background:linear-gradient(90deg, rgba(3,6,8,0) 0%, rgba(3,6,8,0) 42%, rgba(4,8,12,0.94) 60%);padding:0}
+  #hangar-left{align-self:flex-end;padding:26px 34px;text-align:left}
+  #hangar-stats{margin-top:12px;font-size:12.5px;letter-spacing:2px;color:#9fd4f5;line-height:2}
+  #hangar-stats b{color:#eef7ff;display:inline-block;min-width:120px;font-weight:normal}
+  #hangar-stats .bar{display:inline-block;width:110px;height:7px;border:1px solid rgba(111,208,255,.5);
+    vertical-align:middle;margin-left:8px}
+  #hangar-stats .bar i{display:block;height:100%;background:#6fd0ff}
+  #hangar-right{width:400px;max-width:44vw;padding:22px 22px 12px;overflow-y:auto;display:flex;flex-direction:column}
+  #hangar-cards{display:flex;flex-direction:column;gap:9px;margin-top:10px}
+  .ucard{border:1px solid rgba(111,208,255,.4);background:rgba(10,20,30,.6);padding:10px 14px;text-align:left;cursor:pointer}
+  .ucard:hover{background:rgba(111,208,255,.10);box-shadow:0 0 14px rgba(90,180,255,.25)}
+  .ucard.maxed{cursor:default;border-color:rgba(125,255,176,.45)}
+  .ucard .uhead{display:flex;justify-content:space-between;align-items:baseline}
+  .ucard .uname{font-size:14px;letter-spacing:3px;color:#eef7ff}
+  .ucard .pips{color:#ffd27a;font-size:13px;letter-spacing:3px}
+  .ucard .pips .off{color:#2e3c4e}
+  .ucard .unext{font-size:11.5px;color:#9fd4f5;letter-spacing:1px;margin-top:4px}
+  .ucard .uprice{font-size:12px;color:#ffd27a;letter-spacing:2px;margin-top:3px}
+  .ucard.maxed .uprice{color:#7dffb0}
+  .mprev{display:block;width:100%;height:56px}
+  .mbody{padding:9px 13px 11px}
   .dprice{font-size:12px;color:#ffd27a;letter-spacing:2px;margin-top:5px}
   .mcard.equipped{border-color:#7dffb0;box-shadow:0 0 14px rgba(90,255,150,.25)}
   .mcard .desc{font-size:11px;color:#7fa3c0;line-height:1.5;margin-top:4px;letter-spacing:1px}
@@ -77,10 +98,15 @@
 </div>
 
 <div class="screen" id="screen-shop">
-  <h1><span>HANGAR</span></h1>
-  <div id="credits-bar2" style="font-size:15px;letter-spacing:4px;color:#ffd27a;margin:2px 0 8px">◈ 0 CRÉDITS</div>
-  <div id="shop-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,250px));gap:10px;justify-content:center;margin:14px 0;max-width:820px"></div>
-  <button id="btn-shop-back">Retour</button>
+  <div id="hangar-left">
+    <h1 style="font-size:34px;letter-spacing:10px;margin:0"><span>HANGAR</span></h1>
+    <div id="hangar-stats"></div>
+  </div>
+  <div id="hangar-right">
+    <div id="credits-bar2">◈ 0 CRÉDITS</div>
+    <div id="hangar-cards"></div>
+    <button id="btn-shop-back" style="margin:10px 0 4px;width:100%">Retour</button>
+  </div>
 </div>
 
 <div class="screen" id="screen-brief">
@@ -165,42 +191,65 @@ let cur = 0;
 let endlessLvl = 0;
 
 /* ================= hangar : drones & crédits ================= */
-const DRONES = [
-  { id:'vector', name:'VECTOR', ty:'STANDARD', price:0,
-    desc:"Le drone d'entraînement de la division. Aucun bonus, aucune excuse.",
-    spd:1, drain:1, alarm:1, see:1, boostDrain:1, hp:0 },
-  { id:'onyx', name:'ONYX', ty:'FURTIF', price:1600,
-    desc:"Revêtement absorbant : alarme des projecteurs -45 %, et les intercepteurs ne te repèrent qu'à 50 m au lieu de 70.",
-    spd:1, drain:1, alarm:0.55, see:0.72, boostDrain:1, hp:0 },
-  { id:'atlas', name:'ATLAS', ty:'BLINDÉ', price:2400,
-    desc:"Cellule renforcée : +30 d'intégrité et batterie +80 %. Légèrement plus lent.",
-    spd:0.95, drain:0.55, alarm:1, see:1, boostDrain:1, hp:30 },
-  { id:'strix', name:'STRIX', ty:'COURSE', price:2800,
-    desc:"+20 % de vitesse et un boost qui consomme 35 % de batterie en moins. Pour semer, pas pour encaisser.",
-    spd:1.2, drain:1.1, alarm:1, see:1, boostDrain:0.65, hp:0 },
+/* 6 améliorations × 3 niveaux — chaque niveau se VOIT sur le drone au hangar */
+const UPG = [
+  { id:'motor', name:'MOTEURS',
+    prices:[900, 1700, 2800],
+    levels:['+8 % de vitesse', '+16 % vitesse · boost -15 % conso', '+25 % vitesse · boost -30 % conso'],
+    desc:"Rotors surdimensionnés, contrôleurs déverrouillés." },
+  { id:'batt', name:'BATTERIE',
+    prices:[700, 1400, 2300],
+    levels:['+25 % d’autonomie', '+50 % d’autonomie', '+80 % d’autonomie'],
+    desc:"Packs de cellules additionnels sous la coque." },
+  { id:'armor', name:'BLINDAGE',
+    prices:[800, 1500, 2500],
+    levels:['+20 d’intégrité', '+40 d’intégrité', '+60 d’intégrité · chocs -15 %'],
+    desc:"Plaques composites : encaisser l'impact de trop." },
+  { id:'stealth', name:'FURTIVITÉ',
+    prices:[900, 1800, 2900],
+    levels:['Alarme -20 %', 'Alarme -35 % · détection -20 %', 'Alarme -50 % · détection -30 %'],
+    desc:"Revêtement absorbant : projecteurs et intercepteurs te voient moins vite." },
+  { id:'emp', name:'SYSTÈME IEM',
+    prices:[1000, 1900, 3000],
+    levels:['3e charge IEM', 'Rayon +30 % · recharge 2× plus vite', '4e charge · rayon +50 %'],
+    desc:"Bobine dorsale et condensateurs : plus d'impulsions, plus loin." },
+  { id:'optic', name:'OPTIQUE',
+    prices:[600, 1300, 2200],
+    levels:['Zoom ×3', 'Zoom ×4', 'Zoom ×6'],
+    desc:"Téléobjectif stabilisé : photographier sans approcher." },
 ];
-const MODS = [
-  { id:'zoom4', name:'OPTIQUE ×4', ty:'MODULE', price:1200,
-    desc:"Le double-clic enchaîne ×2 puis ×4 : photographie sans t'approcher des faisceaux." },
-  { id:'emp2', name:'CONDENSATEUR IEM', ty:'MODULE', price:1800,
-    desc:"Une 3e charge IEM par mission. Un intercepteur au sol, c'est 9 secondes de tranquillité." },
-  { id:'plating', name:'BLINDAGE COMPOSITE', ty:'MODULE', price:1600,
-    desc:"+30 d'intégrité, cumulable avec l'ATLAS. Survivre à un impact de plus change une mission." },
-];
-let shopState = { owned:['vector'], cur:'vector', mods:[] };
-try{ shopState = Object.assign(shopState, JSON.parse(localStorage.getItem('ic-shop')||'{}')); }catch(e){}
+let shopState = { lvl: {motor:0, batt:0, armor:0, stealth:0, emp:0, optic:0} };
+try{
+  const raw = JSON.parse(localStorage.getItem('ic-shop')||'{}');
+  if(raw.lvl) shopState.lvl = Object.assign(shopState.lvl, raw.lvl);
+  else {   // migration des achats V7 (drones/modules)
+    if(raw.owned?.includes('strix')) shopState.lvl.motor = 2;
+    if(raw.owned?.includes('atlas')){ shopState.lvl.batt = 2; shopState.lvl.armor = 1; }
+    if(raw.owned?.includes('onyx')) shopState.lvl.stealth = 2;
+    if(raw.mods?.includes('plating')) shopState.lvl.armor = Math.min(3, shopState.lvl.armor + 1);
+    if(raw.mods?.includes('emp2')) shopState.lvl.emp = 1;
+    if(raw.mods?.includes('zoom4')) shopState.lvl.optic = 2;
+  }
+}catch(e){}
 let credits = +(localStorage.getItem('ic-credits') || 0);
 let stars = [];
 try{ stars = JSON.parse(localStorage.getItem('ic-stars')||'[]'); }catch(e){}
-const EFF = { spd:1, drain:1, alarm:1, see:1, boostDrain:1, zoomMax:2, hpMax:100, empMax:2 };
+const EFF = { spd:1, drain:1, alarm:1, see:1, boostDrain:1, zoomMax:2, hpMax:100, empMax:2, empR:30, empCd:3, dmgMul:1 };
 function applyEff(){
-  const d = DRONES.find(x=>x.id===shopState.cur) || DRONES[0];
-  EFF.spd = d.spd; EFF.drain = d.drain; EFF.alarm = d.alarm;
-  EFF.see = d.see; EFF.boostDrain = d.boostDrain;
-  EFF.zoomMax = shopState.mods.includes('zoom4') ? 4 : 2;
-  EFF.hpMax = 100 + d.hp + (shopState.mods.includes('plating') ? 30 : 0);
-  EFF.empMax = 2 + (shopState.mods.includes('emp2') ? 1 : 0);
+  const L = shopState.lvl;
+  EFF.spd = 1 + [0, 0.08, 0.16, 0.25][L.motor];
+  EFF.boostDrain = [1, 1, 0.85, 0.7][L.motor];
+  EFF.drain = 1/(1 + [0, 0.25, 0.5, 0.8][L.batt]);
+  EFF.hpMax = 100 + [0, 20, 40, 60][L.armor];
+  EFF.dmgMul = L.armor >= 3 ? 0.85 : 1;
+  EFF.alarm = [1, 0.8, 0.65, 0.5][L.stealth];
+  EFF.see = [1, 1, 0.8, 0.7][L.stealth];
+  EFF.empMax = 2 + (L.emp >= 1 ? 1 : 0) + (L.emp >= 3 ? 1 : 0);
+  EFF.empR = 30 * (L.emp >= 3 ? 1.5 : L.emp >= 2 ? 1.3 : 1);
+  EFF.empCd = L.emp >= 2 ? 1.5 : 3;
+  EFF.zoomMax = [2, 3, 4, 6][L.optic];
 }
+applyEff();
 function saveShop(){
   localStorage.setItem('ic-shop', JSON.stringify(shopState));
   localStorage.setItem('ic-credits', credits);
@@ -1283,7 +1332,7 @@ function lifeUpdate(dt){
 const fxHit = document.getElementById('fx-hit');
 function damage(n, why){
   if(!S.flying) return;
-  S.hp = Math.max(0, S.hp - n);
+  S.hp = Math.max(0, S.hp - Math.round(n*EFF.dmgMul));
   S.shakeT = 0.4;
   fxHit.style.opacity = 0.9;
   setTimeout(()=>{ fxHit.style.opacity = 0; }, 140);
@@ -1302,7 +1351,7 @@ function damage(n, why){
 const empFx = [];
 function fireEmp(){
   if(!S.flying || S.emp <= 0 || S.empCd > 0) return;
-  S.emp--; S.empCd = 3;
+  S.emp--; S.empCd = EFF.empCd;
   S.batt = Math.max(0, S.batt - 7);
   const m = new THREE.Mesh(new THREE.SphereGeometry(1, 22, 14),
     new THREE.MeshBasicMaterial({color:0x7fd4ff, transparent:true, opacity:0.55, wireframe:true}));
@@ -1314,12 +1363,12 @@ function fireEmp(){
   tone(220, 0.8, 'sine', 0.3, 36);
   let got = 0;
   for(const h of hunters){
-    if(h.pos.distanceTo(S.pos) < 30 && h.state !== 'down'){
+    if(h.pos.distanceTo(S.pos) < EFF.empR && h.state !== 'down'){
       h.state = 'down'; h.downT = 9; h.vel.set(0,0,0); got++;
     }
   }
   for(const L of searchlights){
-    if(new THREE.Vector3(L.x, L.h, L.z).distanceTo(S.pos) < 34) L.offT = 8;
+    if(new THREE.Vector3(L.x, L.h, L.z).distanceTo(S.pos) < EFF.empR + 4) L.offT = 8;
   }
   if(got){ photoMsg = `⚡ ${got} INTERCEPTEUR${got>1?'S':''} NEUTRALISÉ${got>1?'S':''} (9 s)`; photoMsgT = 2.5; }
 }
@@ -1519,7 +1568,7 @@ function takePhoto(){
 }
 addEventListener('dblclick', () => {
   if(!S.flying) return;
-  S.zoomT = S.zoomT >= EFF.zoomMax ? 1 : S.zoomT*2;   // 1 → 2 (→ 4 avec l'optique)
+  S.zoomT = S.zoomT >= EFF.zoomMax ? 1 : Math.min(S.zoomT*2, EFF.zoomMax);
   tone(S.zoomT > 1 ? 900 : 600, 0.07, 'square', 0.12);
 });
 addEventListener('contextmenu', e => e.preventDefault());
@@ -1613,6 +1662,32 @@ const scrStart = document.getElementById('screen-start');
 const scrBrief = document.getElementById('screen-brief');
 const scrFail = document.getElementById('screen-fail');
 const scrWin = document.getElementById('screen-win');
+function svgPrev(d, i){
+  const skies = { day:['#7db8e8','#cfe4f2','#f4e9c8'], dusk:['#26355c','#c9704e','#f5b95e'], night:['#04060d','#241826','#e8e2c8'] };
+  const [c1,c2,celest] = skies[d.tod];
+  let sd = i*137 + 11;
+  const rr = () => (sd = (sd*16807)%2147483647) / 2147483647;
+  const bCol = d.tod === 'night' ? '#0b0e14' : d.tod === 'dusk' ? '#2c2530' : '#5a6068';
+  let bs = '';
+  for(let x = -6; x < 250; x += 16 + rr()*15){
+    const bh = 13 + rr()*25;
+    bs += `<rect x="${x.toFixed(0)}" y="${(58-bh).toFixed(0)}" width="${(13+rr()*13).toFixed(0)}" height="${bh.toFixed(0)}" fill="${bCol}"/>`;
+    if(d.tod === 'night') for(let k=0;k<3;k++)
+      bs += `<rect x="${(x+2+rr()*9).toFixed(0)}" y="${(58-bh+2+rr()*(bh-6)).toFixed(0)}" width="2" height="3" fill="#ffca7a" opacity="${(0.4+rr()*0.6).toFixed(2)}"/>`;
+  }
+  let icon = '';
+  const IC = 'stroke="#8fd8ff" stroke-width="2" fill="none"';
+  if(d.type === 'chase') icon = `<circle cx="222" cy="20" r="9" ${IC}/><path d="M222 7v6M222 27v6M209 20h6M229 20h6" ${IC}/>`;
+  if(d.type === 'photo') icon = `<rect x="210" y="13" width="24" height="16" rx="2" ${IC}/><circle cx="222" cy="21" r="5" ${IC}/>`;
+  if(d.type === 'race')  icon = `<circle cx="214" cy="21" r="7" ${IC} opacity=".5"/><circle cx="224" cy="19" r="7" ${IC} opacity=".75"/><circle cx="234" cy="17" r="7" ${IC}/>`;
+  if(d.type === 'infil') icon = `<path d="M216 8l14 24h-22z" fill="#ffd27a" opacity=".55"/><circle cx="216" cy="8" r="3" fill="#ffd27a"/>`;
+  return `<svg class="mprev" viewBox="0 0 250 58" preserveAspectRatio="none">
+    <defs><linearGradient id="sk${i}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs>
+    <rect width="250" height="58" fill="url(#sk${i})"/>
+    <circle cx="${40+i*22}" cy="16" r="${d.tod==='day'?7:5}" fill="${celest}" opacity="${d.tod==='night'?0.8:0.95}"/>
+    ${bs}${icon}</svg>`;
+}
 function starStr(n){
   return '★'.repeat(n) + `<span class="off">${'★'.repeat(3-n)}</span>`;
 }
@@ -1623,48 +1698,14 @@ function renderMenu(){
   DEFS.forEach((d,i)=>{
     const el = document.createElement('div');
     el.className = 'mcard' + (i > prog ? ' lock' : '') + (i < prog ? ' done' : '');
-    el.innerHTML = `<div class="mnum">OP. ${String(i+1).padStart(2,'0')} ${i>prog?'🔒':''}</div>
+    el.style.padding = '0';
+    el.innerHTML = `${svgPrev(d, i)}<div class="mbody">
+      <div class="mnum">OP. ${String(i+1).padStart(2,'0')} ${i>prog?'🔒':''}</div>
       <div class="mti">${d.title}</div><div class="mty">${d.ty} · ${d.tod==='day'?'JOUR':d.tod==='dusk'?'CRÉPUSCULE':'NUIT'}</div>
-      ${i < prog || (stars[i]|0) ? `<div class="mstars">${starStr(stars[i]|0)}</div>` : ''}`;
+      ${i < prog || (stars[i]|0) ? `<div class="mstars">${starStr(stars[i]|0)}</div>` : ''}</div>`;
     el.onclick = () => { if(i <= prog) brief(i); };
     box.appendChild(el);
   });
-}
-function renderShop(){
-  document.getElementById('credits-bar2').textContent = `◈ ${credits} CRÉDITS`;
-  const box = document.getElementById('shop-list');
-  box.innerHTML = '';
-  for(const d of DRONES){
-    const owned = shopState.owned.includes(d.id);
-    const eq = shopState.cur === d.id;
-    const el = document.createElement('div');
-    el.className = 'mcard' + (eq ? ' equipped' : '');
-    el.innerHTML = `<div class="mnum">${d.ty}</div><div class="mti">${d.name}</div>
-      <div class="desc">${d.desc}</div>
-      <div class="dprice">${eq ? '✓ ÉQUIPÉ' : owned ? 'CLIQUE POUR ÉQUIPER' : `◈ ${d.price}`}</div>`;
-    el.onclick = () => {
-      if(eq) return;
-      if(owned){ shopState.cur = d.id; }
-      else if(credits >= d.price){ credits -= d.price; shopState.owned.push(d.id); shopState.cur = d.id; sfxBuy(); }
-      else { tone(220, 0.25, 'sawtooth', 0.18); return; }
-      saveShop(); renderShop();
-    };
-    box.appendChild(el);
-  }
-  for(const m of MODS){
-    const owned = shopState.mods.includes(m.id);
-    const el = document.createElement('div');
-    el.className = 'mcard' + (owned ? ' equipped' : '');
-    el.innerHTML = `<div class="mnum">${m.ty}</div><div class="mti">${m.name}</div>
-      <div class="desc">${m.desc}</div>
-      <div class="dprice">${owned ? '✓ INSTALLÉ' : `◈ ${m.price}`}</div>`;
-    el.onclick = () => {
-      if(owned) return;
-      if(credits >= m.price){ credits -= m.price; shopState.mods.push(m.id); sfxBuy(); saveShop(); renderShop(); }
-      else tone(220, 0.25, 'sawtooth', 0.18);
-    };
-    box.appendChild(el);
-  }
 }
 function brief(i){
   cur = i;
@@ -1751,8 +1792,8 @@ document.getElementById('btn-retry').onclick = e => { e.target.blur(); initAudio
 document.getElementById('btn-next').onclick = e => { e.target.blur(); brief(Math.min(cur+1, DEFS.length-1)); scrWin.style.display='none'; };
 document.getElementById('btn-menu1').onclick = e => { e.target.blur(); scrFail.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
 document.getElementById('btn-menu2').onclick = e => { e.target.blur(); scrWin.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
-document.getElementById('btn-shop').onclick = e => { e.target.blur(); initAudio(); scrStart.style.display='none'; renderShop(); scrShop.style.display='flex'; };
-document.getElementById('btn-shop-back').onclick = e => { e.target.blur(); scrShop.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
+document.getElementById('btn-shop').onclick = e => { e.target.blur(); initAudio(); scrStart.style.display='none'; hangarMode = true; buildHangarDrone(); renderHangar(); scrShop.style.display='flex'; };
+document.getElementById('btn-shop-back').onclick = e => { e.target.blur(); hangarMode = false; scrShop.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
 renderMenu();
 
 /* ================= entrées ================= */
@@ -1774,12 +1815,148 @@ addEventListener('mousedown', e => {
   if(e.button === 0) takePhoto();
 });
 
+/* ================= hangar 3D : le drone se transforme avec les achats ================= */
+let hangarMode = false, hangarT = 0;
+const hangarScene = new THREE.Scene();
+hangarScene.background = new THREE.Color(0x07090d);
+const hangarCam = new THREE.PerspectiveCamera(34, 1, 0.1, 60);
+hangarCam.position.set(3.6, 2.3, 5.0);
+hangarCam.lookAt(0.85, 0.95, 0);   // drone cadré dans la moitié gauche (UI à droite)
+{
+  const key = new THREE.SpotLight(0xbfe0ff, 620, 32, 0.7, 0.5); key.position.set(4,7,3);
+  const rim = new THREE.SpotLight(0xff9a50, 320, 32, 0.8, 0.6); rim.position.set(-5,4,-3);
+  hangarScene.add(key, rim, new THREE.AmbientLight(0x2a3542, 1.3));
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(2.6, 48), new THREE.MeshLambertMaterial({color:0x11151b}));
+  disc.rotation.x = -Math.PI/2; hangarScene.add(disc);
+  const ring1 = new THREE.Mesh(new THREE.RingGeometry(2.45, 2.6, 64),
+    new THREE.MeshBasicMaterial({color:0x2f9fd8, transparent:true, opacity:0.65, side:THREE.DoubleSide}));
+  ring1.rotation.x = -Math.PI/2; ring1.position.y = 0.012; hangarScene.add(ring1);
+  const grid = new THREE.GridHelper(16, 32, 0x1c3a4e, 0x101c26); hangarScene.add(grid);
+}
+let hangarDrone = null, hangarRotors = [];
+function buildHangarDrone(){
+  if(hangarDrone) hangarScene.remove(hangarDrone);
+  hangarRotors = [];
+  const L = shopState.lvl;
+  const g = new THREE.Group();
+  const bodyCol = L.stealth >= 2 ? 0x14171d : L.stealth >= 1 ? 0x232a33 : 0x3a4350;
+  const bodyMat = new THREE.MeshLambertMaterial({color: bodyCol});
+  const darkMat = new THREE.MeshLambertMaterial({color: 0x0e1114});
+  const plateMat = new THREE.MeshLambertMaterial({color: 0x4d5763});
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.3, 1.35), bodyMat);
+  body.position.y = 1.05; g.add(body);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.14, 0.9),
+    new THREE.MeshLambertMaterial({color: L.stealth >= 3 ? 0x0c0e11 : 0x2b333e}));
+  top.position.y = 1.27; g.add(top);
+  /* nacelle caméra (OPTIQUE) */
+  const camR = 0.13 + L.optic*0.03;
+  const nac = new THREE.Mesh(new THREE.SphereGeometry(camR + 0.06, 12, 10), darkMat);
+  nac.position.set(0, 0.95, -0.72); g.add(nac);
+  const lens = new THREE.Mesh(new THREE.CylinderGeometry(camR, camR, 0.18 + L.optic*0.13, 12), darkMat);
+  lens.rotation.x = Math.PI/2; lens.position.set(0, 0.95, -0.84 - L.optic*0.065); g.add(lens);
+  const glass = new THREE.Mesh(new THREE.CircleGeometry(camR*0.75, 12),
+    new THREE.MeshBasicMaterial({color:0x66d4ff}));
+  glass.rotation.y = Math.PI;
+  glass.position.set(0, 0.95, -0.935 - L.optic*0.13); g.add(glass);
+  /* bras + rotors (MOTEURS) */
+  const rotR = 0.33 + L.motor*0.05;
+  for(const [sx,sz] of [[1,1],[1,-1],[-1,1],[-1,-1]]){
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.07, 0.8), bodyMat);
+    arm.position.set(sx*0.42, 1.03, sz*0.42);
+    arm.rotation.y = Math.atan2(sx, sz);
+    g.add(arm);
+    const hx = sx*0.72, hz = sz*0.72;
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.16, 10),
+      L.motor >= 3 ? new THREE.MeshLambertMaterial({color:0xff8830}) : darkMat);
+    hub.position.set(hx, 1.1, hz); g.add(hub);
+    const rotor = new THREE.Group();
+    const b1 = new THREE.Mesh(new THREE.BoxGeometry(rotR*2, 0.014, 0.06), darkMat);
+    const b2 = b1.clone(); b2.rotation.y = Math.PI/2;
+    rotor.add(b1, b2); rotor.position.set(hx, 1.2, hz);
+    g.add(rotor); hangarRotors.push(rotor);
+    const guard = new THREE.Mesh(new THREE.TorusGeometry(rotR + 0.05, 0.02, 6, 26), bodyMat);
+    guard.rotation.x = Math.PI/2; guard.position.set(hx, 1.18, hz); g.add(guard);
+  }
+  /* packs batterie (BATTERIE) */
+  for(let i=0;i<L.batt;i++){
+    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.115, 0.9),
+      new THREE.MeshLambertMaterial({color: 0xc7952f}));
+    pack.position.set(0, 0.86 - i*0.13, 0.08); g.add(pack);
+  }
+  /* plaques (BLINDAGE) */
+  if(L.armor >= 1) for(const sx of [-1,1]){
+    const pl = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.26, 1.05), plateMat);
+    pl.position.set(sx*0.5, 1.05, 0.05); g.add(pl);
+  }
+  if(L.armor >= 2){
+    const fr = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.24, 0.05), plateMat);
+    fr.position.set(0, 1.08, -0.71); g.add(fr);
+  }
+  if(L.armor >= 3){
+    const cage = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.025, 6, 26),
+      new THREE.MeshLambertMaterial({color:0x5c6672}));
+    cage.rotation.x = Math.PI/2; cage.position.y = 1.32; g.add(cage);
+  }
+  /* bobines dorsales (IEM) */
+  for(let i=0;i<L.emp;i++){
+    const coil = new THREE.Mesh(new THREE.TorusGeometry(0.15 + i*0.055, 0.03, 8, 20),
+      new THREE.MeshLambertMaterial({color:0xc77a3a}));
+    coil.rotation.x = Math.PI/2; coil.position.set(0, 1.37 + i*0.055, 0.3); g.add(coil);
+  }
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6),
+    new THREE.MeshBasicMaterial({color: 0x27e8ff}));
+  led.position.set(0, 1.14, -0.66); g.add(led);
+  hangarScene.add(g);
+  hangarDrone = g;
+}
+function renderHangar(){
+  document.getElementById('credits-bar2').textContent = `◈ ${credits} CRÉDITS`;
+  const box = document.getElementById('hangar-cards');
+  box.innerHTML = '';
+  for(const u of UPG){
+    const lvl = shopState.lvl[u.id];
+    const maxed = lvl >= 3;
+    const el = document.createElement('div');
+    el.className = 'ucard' + (maxed ? ' maxed' : '');
+    const pips = '◆'.repeat(lvl) + `<span class="off">${'◆'.repeat(3-lvl)}</span>`;
+    el.innerHTML = `<div class="uhead"><span class="uname">${u.name}</span><span class="pips">${pips}</span></div>
+      <div class="unext">${maxed ? u.desc : 'NIV. ' + (lvl+1) + ' — ' + u.levels[lvl]}</div>
+      <div class="uprice">${maxed ? '✓ AU MAXIMUM' : '◈ ' + u.prices[lvl]}</div>`;
+    el.onclick = () => {
+      if(maxed) return;
+      const price = u.prices[lvl];
+      if(credits < price){ tone(220, 0.25, 'sawtooth', 0.18); return; }
+      credits -= price;
+      shopState.lvl[u.id]++;
+      saveShop(); applyEff(); sfxBuy();
+      buildHangarDrone(); renderHangar();
+    };
+    box.appendChild(el);
+  }
+  /* fiche technique live */
+  applyEff();
+  const auton = Math.round(100/(T.battDrain*EFF.drain));
+  const st = document.getElementById('hangar-stats');
+  const bar = (v) => `<span class="bar"><i style="width:${Math.min(100, v)}%"></i></span>`;
+  st.innerHTML =
+    `<div><b>VITESSE</b> ${Math.round(T.maxSpd*EFF.spd*3.6)} km/h ${bar((EFF.spd-1)/0.25*100*0.7+30)}</div>` +
+    `<div><b>AUTONOMIE</b> ${auton} s ${bar((auton-115)/92*70+30)}</div>` +
+    `<div><b>INTÉGRITÉ</b> ${EFF.hpMax} ${bar((EFF.hpMax-100)/60*70+30)}</div>` +
+    `<div><b>FURTIVITÉ</b> alarme -${Math.round((1-EFF.alarm)*100)} % ${bar((1-EFF.alarm)/0.5*70+30)}</div>` +
+    `<div><b>IEM</b> ${EFF.empMax} charges · ${Math.round(EFF.empR)} m ${bar((EFF.empMax-2)/2*50+(EFF.empR-30)/15*20+30)}</div>` +
+    `<div><b>ZOOM</b> ×${EFF.zoomMax} ${bar((EFF.zoomMax-2)/4*70+30)}</div>`;
+}
+
+
 /* ================= HUD ================= */
 const hud = document.getElementById('hud');
 const hctx = hud.getContext('2d');
 function resize(){
   const w = innerWidth, h = innerHeight;
-  renderer.setSize(w,h); cam.aspect = w/h; cam.updateProjectionMatrix();
+  renderer.setSize(w,h);
+  cam.aspect = w/h; cam.updateProjectionMatrix();
+  hangarCam.aspect = w/h; hangarCam.updateProjectionMatrix();
+  hangarCam.position.set(3.6, 2.3, 5.0); hangarCam.lookAt(0.85, 0.95, 0);
   hud.width = w; hud.height = h;
 }
 addEventListener('resize', resize); resize();
@@ -1993,13 +2170,19 @@ function loop(){
     const k = S.shakeT*0.05;
     cam.rotateX((Math.random()-0.5)*k); cam.rotateZ((Math.random()-0.5)*k);
   }
-  renderer.render(scene, cam);
+  if(hangarMode){
+    hangarT += dt;
+    if(hangarDrone){ hangarDrone.rotation.y += dt*0.5;
+      hangarDrone.position.y = Math.sin(hangarT*1.3)*0.045; }
+    for(const r of hangarRotors) r.rotation.y += dt*16;
+    renderer.render(hangarScene, hangarCam);
+  } else renderer.render(scene, cam);
   drawHUD();
 }
-loop();
+
 
 /* ================= hooks de test ================= */
-window.__chase = { state: S, keys, T, car, graph, PARIS, EFF, DRONES, MODS,
+window.__chase = { state: S, keys, T, car, graph, PARIS, EFF, UPG,
   get colliders(){ return colliders; },
   get photoTargets(){ return photoTargets; },
   get rings(){ return rings; }, get ringIdx(){ return ringIdx; },
@@ -2011,10 +2194,11 @@ window.__chase = { state: S, keys, T, car, graph, PARIS, EFF, DRONES, MODS,
   addCredits: n => { credits += n; saveShop(); },
   DEFS, get cur(){ return cur; }, get prog(){ return prog; },
   brief, launch, launchMission: i => { cur = i; launch(); },
-  takePhoto, respawn, fail, win, applyTod, renderShop,
+  takePhoto, respawn, fail, win, applyTod, renderHangar, buildHangarDrone,
   setLook: (y,p) => { S.yaw = y; S.pitch = p; },
   setZoom: z => { S.zoomT = z; S.zoom = z; },
   cam, scene, THREE };
+loop();
 </script>
 </body>
 </html>
