@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>INTERCEPT FPV</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060a08'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%237dffb0' stroke-width='2'/%3E%3Cpath d='M16 3v7M16 22v7M3 16h7M22 16h7' stroke='%237dffb0' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#05070a;
+    font-family:"Courier New",monospace;color:#b8ffd0;cursor:crosshair}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #fx-scan{position:absolute;inset:0;pointer-events:none;opacity:.13;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.6) 0 1px,transparent 1px 3px)}
+  #fx-vig{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 180px 60px rgba(0,0,0,.75)}
+  .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(3,6,5,.86);z-index:10;text-align:center;padding:20px}
+  .screen h1{font-size:52px;letter-spacing:14px;margin:0 0 6px;color:#eafff2;
+    text-shadow:0 0 24px rgba(90,255,150,.6)}
+  .screen h1 span{color:#7dffb0}
+  .screen h2{font-size:22px;letter-spacing:8px;margin:0 0 26px;color:#7dffb0;font-weight:normal}
+  .screen p{max-width:560px;line-height:1.7;letter-spacing:1px;font-size:14px;color:#9adbb4;margin:6px 0}
+  .screen .ctl{margin:18px 0;font-size:13px;line-height:2;color:#c9ffd9}
+  .screen .ctl b{display:inline-block;min-width:110px;color:#7dffb0}
+  button{background:none;border:1px solid #7dffb0;color:#c9ffd9;font-family:inherit;font-size:17px;
+    letter-spacing:6px;padding:14px 44px;margin-top:18px;cursor:pointer;text-transform:uppercase}
+  button:hover{background:rgba(125,255,176,.12);box-shadow:0 0 24px rgba(90,255,150,.35)}
+  .fail h1{color:#ff8177;text-shadow:0 0 24px rgba(255,80,60,.6)}
+  .fail h1 span{color:#ffb3ac}
+  #screen-fail,#screen-win{display:none}
+  .stat{font-size:15px;letter-spacing:3px;color:#c9ffd9;margin:3px 0}
+</style>
+</head>
+<body>
+<canvas id="c3d"></canvas>
+<canvas id="hud"></canvas>
+<div id="fx-scan"></div>
+<div id="fx-vig"></div>
+
+<div class="screen" id="screen-start">
+  <h1>INTERCEPT <span>FPV</span></h1>
+  <h2>UNITÉ DE POURSUITE AÉRIENNE</h2>
+  <p>Des véhicules non identifiés fuient à travers la zone d'exclusion.
+     Prends-les en chasse, reste au contact et maintiens le verrouillage caméra
+     jusqu'à identification complète — avant qu'ils te sèment ou que ta batterie meure.</p>
+  <div class="ctl">
+    <div><b>Z Q S D</b> se déplacer</div>
+    <div><b>A / E</b> monter · descendre</div>
+    <div><b>SOURIS</b> orienter la caméra</div>
+    <div><b>ESPACE</b> boost (consomme la batterie)</div>
+  </div>
+  <button id="btn-start">Décoller</button>
+</div>
+
+<div class="screen fail" id="screen-fail">
+  <h1>ÉCHEC <span id="fail-why">CIBLE PERDUE</span></h1>
+  <div class="stat" id="fail-stats"></div>
+  <button id="btn-retry">Redécoller</button>
+</div>
+
+<div class="screen" id="screen-win">
+  <h1>CIBLE <span>IDENTIFIÉE</span></h1>
+  <div class="stat" id="win-stats"></div>
+  <button id="btn-next">Mission suivante</button>
+</div>
+
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ---------- réglages ---------- */
+const T = {
+  lookSens: 0.0021,
+  maxSpd: 36, maxUp: 14, accel: 26, boostMul: 1.55,
+  battDrain: 100/115, battBoost: 3.2,     // %/s
+  lockDist: 24, lockAngle: 0.22,          // rad
+  escapeDist: 170, escapeTime: 8,
+  missionTime: 100,
+};
+const MISSIONS = m => ({ spd: Math.min(19 + m*3, 34), need: Math.min(5 + m, 9) });
+
+/* ---------- état ---------- */
+const S = {
+  pos: new THREE.Vector3(0,22,150), vel: new THREE.Vector3(),
+  yaw: 0, pitch: -0.12,
+  flying: false, crashed: false,
+  batt: 100, timer: T.missionTime,
+  lockT: 0, escapeT: 0,
+  mission: 0, score: 0, best: +(localStorage.getItem('ic-best')||0),
+  boost: false,
+};
+const keys = {};
+
+/* ---------- scène ---------- */
+const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('c3d'), antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x8a8f86, 90, 560);
+const cam = new THREE.PerspectiveCamera(78, 1, 0.1, 1200);
+
+const sun = new THREE.DirectionalLight(0xffe8c8, 2.4); sun.position.set(-160, 190, 90); scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xbcc8c4, 0x3a3630, 0.9));
+
+/* ciel */
+{
+  const geo = new THREE.SphereGeometry(900, 24, 16);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    vertexShader: `varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+    fragmentShader: `varying vec3 vP;
+      void main(){
+        float h = normalize(vP).y;
+        vec3 top = vec3(0.35,0.42,0.47), mid = vec3(0.72,0.72,0.66), low = vec3(0.85,0.78,0.62);
+        vec3 c = h > 0.25 ? mix(mid, top, (h-0.25)/0.75) : mix(low, mid, max(h,0.)/0.25);
+        gl_FragColor = vec4(c,1.);
+      }`
+  });
+  scene.add(new THREE.Mesh(geo, mat));
+}
+
+/* sol */
+{
+  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 256;
+  const g = cnv.getContext('2d');
+  g.fillStyle = '#6d6a58'; g.fillRect(0,0,256,256);
+  for(let i=0;i<900;i++){ g.fillStyle = `rgba(${40+Math.random()*40|0},${38+Math.random()*36|0},${30+Math.random()*30|0},.35)`;
+    g.fillRect(Math.random()*256, Math.random()*256, 2+Math.random()*4, 2+Math.random()*4); }
+  const tex = new THREE.CanvasTexture(cnv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(60,60);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1600,1600), new THREE.MeshLambertMaterial({map: tex}));
+  m.rotation.x = -Math.PI/2; scene.add(m);
+}
+
+/* routes : grille 5×5 (croisements tous les 80 m, de -160 à 160) */
+const NODES = [];
+const ROAD_XZ = [-160,-80,0,80,160];
+for(const x of ROAD_XZ) for(const z of ROAD_XZ) NODES.push(new THREE.Vector3(x,0,z));
+const roadMat = (()=>{ const c = document.createElement('canvas'); c.width = 128; c.height = 512;
+  const g = c.getContext('2d'); g.fillStyle = '#3c3c40'; g.fillRect(0,0,128,512);
+  g.strokeStyle = 'rgba(200,200,190,.5)'; g.lineWidth = 4; g.setLineDash([26,30]);
+  g.beginPath(); g.moveTo(64,0); g.lineTo(64,512); g.stroke();
+  for(let i=0;i<300;i++){ g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(Math.random()*128, Math.random()*512, 3, 3); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1,6);
+  return new THREE.MeshLambertMaterial({map: t}); })();
+for(const k of ROAD_XZ){
+  const r1 = new THREE.Mesh(new THREE.PlaneGeometry(11, 340), roadMat);
+  r1.rotation.x = -Math.PI/2; r1.position.set(k, 0.02, 0); scene.add(r1);
+  const r2 = new THREE.Mesh(new THREE.PlaneGeometry(11, 340), roadMat);
+  r2.rotation.x = -Math.PI/2; r2.rotation.z = Math.PI/2; r2.position.set(0, 0.02, k); scene.add(r2);
+}
+
+/* immeubles : blocs entre les routes, colliders AABB */
+const colliders = [];   // {min:Vector3, max:Vector3}
+function winTex(w,h,burn){
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = burn ? '#2a2622' : `hsl(${28+Math.random()*22|0},${12+Math.random()*14|0}%,${30+Math.random()*16|0}%)`;
+  g.fillRect(0,0,64,64);
+  g.fillStyle = 'rgba(12,14,18,.9)';
+  for(let y=8;y<60;y+=14) for(let x=6;x<58;x+=12)
+    if(Math.random()>0.14) g.fillRect(x,y,7,9);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(Math.max(1,Math.round(w/14)), Math.max(1,Math.round(h/11)));
+  return t;
+}
+function building(x,z,w,d,h,burn){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshLambertMaterial({map: winTex(Math.max(w,d),h,burn), color: burn? 0x555049 : 0xffffff}));
+  m.position.set(x, h/2, z); scene.add(m);
+  colliders.push({min: new THREE.Vector3(x-w/2-0.5, 0, z-d/2-0.5), max: new THREE.Vector3(x+w/2+0.5, h+0.5, z+d/2+0.5)});
+}
+let seed = 7;
+const rnd = () => (seed = (seed*16807)%2147483647) / 2147483647;
+for(let bx=0; bx<4; bx++) for(let bz=0; bz<4; bz++){
+  const cx0 = -160 + bx*80, cz0 = -160 + bz*80;     // coin du bloc
+  const n = 2 + (rnd()*2|0);
+  for(let i=0;i<n;i++){
+    const w = 16+rnd()*22, d = 16+rnd()*22, h = 12+rnd()*30 + (rnd()<0.18? 26:0);
+    const x = cx0 + 14 + w/2 + rnd()*(80-28-w);
+    const z = cz0 + 14 + d/2 + rnd()*(80-28-d);
+    building(x, z, w, d, h, rnd()<0.3);
+  }
+}
+/* épaves le long des routes */
+{
+  const geo = new THREE.BoxGeometry(4.2,1.5,2);
+  const mats = [0x5a3f34,0x3f4a52,0x4a4438,0x38312b].map(c=>new THREE.MeshLambertMaterial({color:c}));
+  for(let i=0;i<26;i++){
+    const onX = rnd()<0.5, k = ROAD_XZ[rnd()*5|0];
+    const m = new THREE.Mesh(geo, mats[i%4]);
+    const off = (rnd()<0.5? -3.4 : 3.4), along = -150 + rnd()*300;
+    m.position.set(onX? k+off : along, 0.75, onX? along : k+off);
+    m.rotation.y = rnd()*0.5 - 0.25 + (onX? 0 : Math.PI/2);
+    scene.add(m);
+    colliders.push({min: m.position.clone().add(new THREE.Vector3(-2.4,-1,-2.4)), max: m.position.clone().add(new THREE.Vector3(2.4,1.4,2.4))});
+  }
+}
+
+/* ---------- cible : voiture en fuite ---------- */
+const car = { grp: new THREE.Group(), pos: new THREE.Vector3(-160,0.65,-160), node: 0, prev: -1, heading: 0, spd: 20 };
+{
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.4,1.1,2), new THREE.MeshLambertMaterial({color: 0x8a1f1f}));
+  body.position.y = 0.55;
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.85,1.8), new THREE.MeshLambertMaterial({color: 0x1a1c20}));
+  cab.position.set(-0.2, 1.45, 0);
+  const wgeo = new THREE.CylinderGeometry(0.42,0.42,0.32,10); wgeo.rotateX(Math.PI/2);
+  const wmat = new THREE.MeshLambertMaterial({color: 0x0c0c0c});
+  for(const [wx,wz] of [[1.5,1],[1.5,-1],[-1.5,1],[-1.5,-1]]){
+    const w = new THREE.Mesh(wgeo, wmat); w.position.set(wx, 0.42, wz); car.grp.add(w);
+  }
+  car.grp.add(body, cab);
+  scene.add(car.grp);
+}
+function nodeIdx(x,z){ return ROAD_XZ.indexOf(x)*5 + ROAD_XZ.indexOf(z); }
+function neighbors(i){
+  const xi = (i/5|0), zi = i%5, out = [];
+  if(xi>0) out.push(i-5); if(xi<4) out.push(i+5);
+  if(zi>0) out.push(i-1); if(zi<4) out.push(i+1);
+  return out;
+}
+function carReset(){
+  const starts = [nodeIdx(-80,-80), nodeIdx(80,-80), nodeIdx(-80,80), nodeIdx(80,80), nodeIdx(0,0)];
+  const s = starts[Math.random()*starts.length|0];
+  car.pos.copy(NODES[s]); car.pos.y = 0.65;
+  car.prev = -1; pickNext(s);
+  car.spd = MISSIONS(S.mission).spd;
+}
+function pickNext(from){
+  const opts = neighbors(from).filter(n => n !== car.prev);
+  car.node = opts[Math.random()*opts.length|0] ?? neighbors(from)[0];
+  car.prev = from;
+}
+function carUpdate(dt){
+  const tgt = NODES[car.node];
+  const dx = tgt.x - car.pos.x, dz = tgt.z - car.pos.z;
+  const d = Math.hypot(dx,dz);
+  if(d < 2){ pickNext(car.node); return; }
+  const want = Math.atan2(dx,dz);
+  let diff = want - car.heading;
+  while(diff > Math.PI) diff -= 2*Math.PI; while(diff < -Math.PI) diff += 2*Math.PI;
+  car.heading += THREE.MathUtils.clamp(diff, -2.2*dt, 2.2*dt);
+  const slow = Math.abs(diff) > 0.4 ? 0.55 : 1;
+  car.pos.x += Math.sin(car.heading)*car.spd*slow*dt;
+  car.pos.z += Math.cos(car.heading)*car.spd*slow*dt;
+  car.grp.position.copy(car.pos);
+  car.grp.rotation.y = car.heading + Math.PI/2;
+}
+
+/* ---------- drone ---------- */
+function respawn(){
+  S.pos.set(car.pos.x + 40, 26, car.pos.z + 40);
+  S.vel.set(0,0,0);
+  S.yaw = Math.atan2(car.pos.x - S.pos.x, car.pos.z - S.pos.z) + Math.PI;
+  S.pitch = -0.2;
+  S.batt = 100; S.timer = T.missionTime; S.lockT = 0; S.escapeT = 0;
+  S.crashed = false;
+}
+function physics(dt){
+  const f = new THREE.Vector3(-Math.sin(S.yaw), 0, -Math.cos(S.yaw));
+  const r = new THREE.Vector3(-f.z, 0, f.x);
+  const dir = new THREE.Vector3();
+  if(keys['KeyW']) dir.add(f);              // Z (AZERTY) / W (QWERTY)
+  if(keys['KeyS']) dir.sub(f);
+  if(keys['KeyD']) dir.add(r);
+  if(keys['KeyA']) dir.sub(r);              // Q (AZERTY) / A (QWERTY)
+  if(dir.lengthSq()>0) dir.normalize();
+  S.boost = !!keys['Space'] && S.batt > 0;
+  const mul = S.boost ? T.boostMul : 1;
+  const tv = dir.multiplyScalar(T.maxSpd*mul);
+  // A/E monter·descendre sur AZERTY = codes physiques KeyQ/KeyE (idem Q/E en QWERTY)
+  const vy = (keys['KeyQ'] ? T.maxUp : 0) + (keys['KeyE'] ? -T.maxUp : 0);
+  S.vel.x += (tv.x - S.vel.x)*Math.min(1, T.accel*dt/ T.maxSpd*10);
+  S.vel.z += (tv.z - S.vel.z)*Math.min(1, T.accel*dt/ T.maxSpd*10);
+  S.vel.y += (vy - S.vel.y)*Math.min(1, 6*dt);
+  S.batt = Math.max(0, S.batt - dt*(T.battDrain + (S.boost? T.battBoost : 0)));
+  // sous-pas anti-tunneling
+  const step = S.vel.length()*dt;
+  const n = THREE.MathUtils.clamp(Math.ceil(step/0.4), 1, 10);
+  for(let i=0;i<n;i++){
+    const nx = S.pos.x + S.vel.x*dt/n, ny = S.pos.y + S.vel.y*dt/n, nz = S.pos.z + S.vel.z*dt/n;
+    let hit = false;
+    for(const c of colliders){
+      if(nx>c.min.x && nx<c.max.x && ny>c.min.y && ny<c.max.y && nz>c.min.z && nz<c.max.z){ hit = true; break; }
+    }
+    if(ny < 0.5) hit = true;
+    if(hit){
+      if(S.vel.length() > 9){ crash('COLLISION STRUCTURE'); return; }
+      S.vel.multiplyScalar(0.2); return;
+    }
+    S.pos.set(nx, Math.min(ny, 220), nz);
+  }
+}
+function crash(why){
+  S.crashed = true; S.flying = false;
+  document.exitPointerLock && document.exitPointerLock();
+  showFail(why);
+}
+
+/* ---------- boucle mission ---------- */
+function missionUpdate(dt){
+  S.timer -= dt;
+  const toCar = car.pos.clone().sub(S.pos);
+  const dist = toCar.length();
+  const look = new THREE.Vector3(-Math.sin(S.yaw)*Math.cos(S.pitch), Math.sin(S.pitch), -Math.cos(S.yaw)*Math.cos(S.pitch));
+  const ang = look.angleTo(toCar.normalize());
+  const locking = dist < T.lockDist && ang < T.lockAngle;
+  const need = MISSIONS(S.mission).need;
+  if(locking) S.lockT = Math.min(need, S.lockT + dt);
+  else        S.lockT = Math.max(0, S.lockT - dt*0.8);
+  S.escapeT = dist > T.escapeDist ? S.escapeT + dt : 0;
+  if(S.lockT >= need){ win(); return; }
+  if(S.escapeT > T.escapeTime){ crashSoft('CIBLE PERDUE'); return; }
+  if(S.timer <= 0){ crashSoft('TEMPS ÉCOULÉ'); return; }
+  if(S.batt <= 0 && S.pos.y < 2){ crashSoft('BATTERIE À PLAT'); return; }
+  if(S.batt <= 0) S.vel.y = Math.min(S.vel.y, -6);   // chute moteur coupé
+  S._dist = dist; S._locking = locking;
+}
+function crashSoft(why){ S.flying = false; document.exitPointerLock && document.exitPointerLock(); showFail(why); }
+function win(){
+  const bonus = Math.round(S.timer*10);
+  S.score += 1000 + bonus;
+  if(S.score > S.best){ S.best = S.score; localStorage.setItem('ic-best', S.best); }
+  S.flying = false; document.exitPointerLock && document.exitPointerLock();
+  document.getElementById('win-stats').textContent =
+    `MISSION ${S.mission+1} · +${1000+bonus} PTS · SCORE ${S.score} · RECORD ${S.best}`;
+  document.getElementById('screen-win').style.display = 'flex';
+}
+
+/* ---------- écrans ---------- */
+const scrStart = document.getElementById('screen-start');
+const scrFail = document.getElementById('screen-fail');
+const scrWin = document.getElementById('screen-win');
+function showFail(why){
+  document.getElementById('fail-why').textContent = why;
+  document.getElementById('fail-stats').textContent =
+    `MISSION ${S.mission+1} · SCORE ${S.score} · RECORD ${S.best}`;
+  scrFail.style.display = 'flex';
+}
+function grab(){
+  const p = document.body.requestPointerLock && document.body.requestPointerLock();
+  if(p && p.catch) p.catch(()=>{});
+}
+function launch(){
+  scrStart.style.display = 'none'; scrFail.style.display = 'none'; scrWin.style.display = 'none';
+  carReset(); respawn();
+  S.flying = true;
+  grab();
+}
+document.getElementById('btn-start').onclick = launch;
+document.getElementById('btn-retry').onclick = () => { S.score = Math.max(0, S.score - 200); launch(); };
+document.getElementById('btn-next').onclick = () => { S.mission++; launch(); };
+
+/* ---------- entrées ---------- */
+addEventListener('keydown', e => { keys[e.code] = true; if(e.code==='Space') e.preventDefault(); });
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('mousemove', e => {
+  if(!S.flying || !document.pointerLockElement) return;
+  S.yaw   -= e.movementX * T.lookSens;
+  S.pitch = THREE.MathUtils.clamp(S.pitch - e.movementY*T.lookSens, -1.35, 1.35);
+});
+addEventListener('mousedown', () => { if(S.flying && !document.pointerLockElement) grab(); });
+
+/* ---------- HUD ---------- */
+const hud = document.getElementById('hud');
+const hctx = hud.getContext('2d');
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w,h); cam.aspect = w/h; cam.updateProjectionMatrix();
+  hud.width = w; hud.height = h;
+}
+addEventListener('resize', resize); resize();
+
+function drawHUD(dt){
+  const w = hud.width, h = hud.height, g = hctx;
+  g.clearRect(0,0,w,h);
+  if(!S.flying) return;
+  g.font = '13px "Courier New",monospace';
+  g.textBaseline = 'middle';
+  const GRN = '#9dffc0', DIM = 'rgba(157,255,192,.55)', RED = '#ff7a6e', AMB = '#ffd27a';
+  g.strokeStyle = GRN; g.fillStyle = GRN; g.lineWidth = 1.2;
+  const cx = w/2, cy = h/2;
+
+  /* réticule */
+  g.beginPath();
+  g.moveTo(cx-16,cy); g.lineTo(cx-5,cy); g.moveTo(cx+5,cy); g.lineTo(cx+16,cy);
+  g.moveTo(cx,cy-14); g.lineTo(cx,cy-5); g.moveTo(cx,cy+5); g.lineTo(cx,cy+14);
+  g.stroke();
+
+  /* vitesse / alt */
+  const spd = Math.round(S.vel.length()*3.6);
+  g.font = 'bold 26px "Courier New",monospace'; g.textAlign = 'center';
+  g.strokeRect(cx-260-52, cy-18, 104, 36); g.fillText(spd, cx-260, cy);
+  g.strokeRect(cx+260-52, cy-18, 104, 36); g.fillText(S.pos.y.toFixed(0), cx+260, cy);
+  g.font = '11px "Courier New",monospace'; g.fillStyle = DIM;
+  g.fillText('KM/H', cx-260, cy-28); g.fillText('ALT M', cx+260, cy-28);
+
+  /* haut : mission + timer + score */
+  g.textAlign = 'left'; g.fillStyle = GRN; g.font = '13px "Courier New",monospace';
+  g.fillText(`UAV-11 // POURSUITE`, 24, 26);
+  g.fillText(`MISSION ${S.mission+1} — IDENTIFIER LE VÉHICULE`, 24, 46);
+  g.textAlign = 'right';
+  g.fillStyle = S.timer < 15 ? RED : GRN;
+  g.fillText(`T-${Math.max(0,S.timer).toFixed(0).padStart(3,'0')}`, w-24, 26);
+  g.fillStyle = GRN;
+  g.fillText(`SCORE ${S.score}`, w-24, 46);
+  g.fillText(`RECORD ${S.best}`, w-24, 64);
+
+  /* batterie */
+  g.textAlign = 'left';
+  g.fillStyle = S.batt < 25 ? RED : GRN;
+  g.fillText(`BAT ${S.batt.toFixed(0)}%`, 24, h-40);
+  g.strokeRect(24, h-30, 120, 10);
+  g.fillRect(26, h-28, 116*(S.batt/100), 6);
+  if(S.boost){ g.fillStyle = AMB; g.fillText('BOOST', 160, h-40); }
+
+  /* marqueur cible */
+  const p = car.pos.clone(); p.y += 1.2;
+  const v = p.project(cam);
+  const need = MISSIONS(S.mission).need;
+  const sx = (v.x*0.5+0.5)*w, sy = (-v.y*0.5+0.5)*h;
+  const onScr = v.z < 1 && sx > 0 && sx < w && sy > 0 && sy < h;
+  const dist = S._dist ?? 999;
+  if(onScr){
+    const r = THREE.MathUtils.clamp(1400/Math.max(dist,6), 18, 70);
+    g.strokeStyle = S._locking ? AMB : GRN; g.lineWidth = 2;
+    g.strokeRect(sx-r, sy-r, r*2, r*2);
+    g.beginPath();               /* anneau de verrouillage */
+    g.arc(sx, sy, r+10, -Math.PI/2, -Math.PI/2 + 2*Math.PI*(S.lockT/need));
+    g.strokeStyle = AMB; g.lineWidth = 3.5; g.stroke();
+    g.fillStyle = GRN; g.textAlign = 'center'; g.font = '12px "Courier New",monospace';
+    g.fillText(`${dist.toFixed(0)} m`, sx, sy + r + 24);
+    if(S._locking){
+      g.fillStyle = AMB; g.font = 'bold 14px "Courier New",monospace';
+      g.fillText(`SCAN ${(S.lockT/need*100).toFixed(0)}%`, sx, sy - r - 16);
+    }
+  } else {
+    /* flèche de bord */
+    const a = Math.atan2(sy-cy, sx-cx);
+    const bx = cx + Math.cos(a)*(Math.min(w,h)*0.42), by = cy + Math.sin(a)*(Math.min(w,h)*0.42);
+    g.save(); g.translate(bx,by); g.rotate(a);
+    g.fillStyle = dist > T.escapeDist ? RED : GRN;
+    g.beginPath(); g.moveTo(14,0); g.lineTo(-8,-9); g.lineTo(-8,9); g.closePath(); g.fill();
+    g.restore();
+    g.fillStyle = g.fillStyle; g.textAlign = 'center'; g.font = '12px "Courier New",monospace';
+    g.fillText(`${dist.toFixed(0)} m`, bx, by + 22);
+  }
+
+  /* alerte fuite */
+  if(S.escapeT > 0){
+    g.fillStyle = RED; g.textAlign = 'center'; g.font = 'bold 17px "Courier New",monospace';
+    g.fillText(`⚠ SIGNAL FAIBLE — LA CIBLE SÈME ${(T.escapeTime-S.escapeT).toFixed(1)} s`, cx, cy - 120);
+  }
+  if(S.batt <= 0){
+    g.fillStyle = RED; g.textAlign = 'center'; g.font = 'bold 17px "Courier New",monospace';
+    g.fillText('⚠ BATTERIE VIDE — MOTEURS COUPÉS', cx, cy - 148);
+  }
+}
+
+/* ---------- boucle ---------- */
+const clock = new THREE.Clock();
+function loop(){
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if(S.flying && !S.crashed){
+    physics(dt);
+    if(S.flying){
+      carUpdate(dt);
+      missionUpdate(dt);
+    }
+  }
+  cam.position.copy(S.pos);
+  cam.rotation.set(0,0,0);
+  cam.rotateY(S.yaw); cam.rotateX(S.pitch);
+  const bank = THREE.MathUtils.clamp(-S.vel.dot(new THREE.Vector3(Math.cos(S.yaw),0,-Math.sin(S.yaw)))*0.006, -0.18, 0.18);
+  cam.rotateZ(bank);
+  renderer.render(scene, cam);
+  drawHUD(dt);
+}
+loop();
+
+/* ---------- hooks de test ---------- */
+window.__chase = { state: S, keys, T, car, NODES, colliders,
+  start: launch, respawn, crash, win,
+  setLook: (y,p) => { S.yaw = y; S.pitch = p; },
+  cam, scene, THREE };
+</script>
+</body>
+</html>
