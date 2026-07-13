@@ -39,6 +39,21 @@
   #brief-box{max-width:620px;border:1px solid rgba(111,208,255,.5);padding:22px 30px;background:rgba(8,16,26,.7)}
   .ctl-mini{font-size:12px;letter-spacing:2px;color:#6f97b8;margin-top:22px;line-height:1.9}
   .ctl-mini b{color:#9fd4f5}
+  .mstars{font-size:13px;color:#ffd27a;letter-spacing:3px;margin-top:3px}
+  .mstars .off{color:#2e3c4e}
+  #credits-bar{font-size:15px;letter-spacing:4px;color:#ffd27a;margin:2px 0 8px}
+  .stars-big{font-size:34px;letter-spacing:10px;color:#ffd27a;margin:6px 0;text-shadow:0 0 16px rgba(255,190,80,.5)}
+  .stars-big .off{color:#2e3c4e;text-shadow:none}
+  .shots{display:flex;gap:16px;justify-content:center;margin:14px 0;flex-wrap:wrap}
+  .shots figure{margin:0;transform:rotate(-2.4deg)}
+  .shots figure:nth-child(2n){transform:rotate(2.8deg)}
+  .shots img{display:block;width:210px;border:7px solid #f2efe6;border-bottom-width:26px;
+    box-shadow:0 8px 22px rgba(0,0,0,.65)}
+  .shots figcaption{font-size:10px;color:#2a2d33;letter-spacing:1px;margin-top:-22px;position:relative;text-align:center}
+  #screen-shop{display:none}
+  .dprice{font-size:12px;color:#ffd27a;letter-spacing:2px;margin-top:5px}
+  .mcard.equipped{border-color:#7dffb0;box-shadow:0 0 14px rgba(90,255,150,.25)}
+  .mcard .desc{font-size:11px;color:#7fa3c0;line-height:1.5;margin-top:4px;letter-spacing:1px}
 </style>
 </head>
 <body>
@@ -51,11 +66,20 @@
 <div class="screen" id="screen-start">
   <h1>INTERCEPT <span>FPV</span></h1>
   <h2>DIVISION SURVEILLANCE — OPÉRATIONS SPÉCIALES</h2>
+  <div id="credits-bar">◈ 0 CRÉDITS</div>
   <div id="missions"></div>
+  <button id="btn-shop" style="margin-top:8px">Hangar</button>
   <div class="ctl-mini">
     <b>ZQSD</b> déplacer (le drone suit la caméra) · <b>A/E</b> monter/descendre · <b>SOURIS</b> caméra ·
-    <b>DOUBLE-CLIC</b> zoom ×2 · <b>CLIC</b> photo · <b>ESPACE</b> boost
+    <b>DOUBLE-CLIC</b> zoom · <b>CLIC</b> photo · <b>ESPACE</b> boost
   </div>
+</div>
+
+<div class="screen" id="screen-shop">
+  <h1><span>HANGAR</span></h1>
+  <div id="credits-bar2" style="font-size:15px;letter-spacing:4px;color:#ffd27a;margin:2px 0 8px">◈ 0 CRÉDITS</div>
+  <div id="shop-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,250px));gap:10px;justify-content:center;margin:14px 0;max-width:820px"></div>
+  <button id="btn-shop-back">Retour</button>
 </div>
 
 <div class="screen" id="screen-brief">
@@ -76,6 +100,8 @@
 
 <div class="screen" id="screen-win">
   <h1>MISSION <span>ACCOMPLIE</span></h1>
+  <div class="stars-big" id="win-stars">★★★</div>
+  <div class="shots" id="win-shots"></div>
   <div class="stat" id="win-stats"></div>
   <button id="btn-next">Mission suivante</button>
   <button id="btn-menu2" style="border-color:#557;color:#9ab">Quartier général</button>
@@ -135,6 +161,108 @@ const DEFS = [
 let prog = +(localStorage.getItem('ic-prog') || 0);
 let cur = 0;
 let endlessLvl = 0;
+
+/* ================= hangar : drones & crédits ================= */
+const DRONES = [
+  { id:'vector', name:'VECTOR', ty:'STANDARD', price:0,
+    desc:"Le drone d'entraînement de la division. Fiable, sans plus.",
+    spd:1, drain:1, alarm:1 },
+  { id:'onyx', name:'ONYX', ty:'FURTIF', price:1500,
+    desc:"Revêtement absorbant : l'alarme des projecteurs monte 45 % moins vite.",
+    spd:1, drain:1, alarm:0.55 },
+  { id:'atlas', name:'ATLAS', ty:'ENDURANCE', price:2200,
+    desc:"Double accu : la batterie tient 80 % plus longtemps. Un peu lourd.",
+    spd:0.95, drain:0.55, alarm:1 },
+  { id:'strix', name:'STRIX', ty:'COURSE', price:2800,
+    desc:"Moteurs brushless suralimentés : +20 % de vitesse et de boost.",
+    spd:1.2, drain:1.25, alarm:1 },
+];
+const MODS = [
+  { id:'zoom4', name:'OPTIQUE ×4', ty:'MODULE', price:1200,
+    desc:"Objectif longue portée : le double-clic enchaîne ×2 puis ×4." },
+];
+let shopState = { owned:['vector'], cur:'vector', mods:[] };
+try{ shopState = Object.assign(shopState, JSON.parse(localStorage.getItem('ic-shop')||'{}')); }catch(e){}
+let credits = +(localStorage.getItem('ic-credits') || 0);
+let stars = [];
+try{ stars = JSON.parse(localStorage.getItem('ic-stars')||'[]'); }catch(e){}
+const EFF = { spd:1, drain:1, alarm:1, zoomMax:2 };
+function applyEff(){
+  const d = DRONES.find(x=>x.id===shopState.cur) || DRONES[0];
+  EFF.spd = d.spd; EFF.drain = d.drain; EFF.alarm = d.alarm;
+  EFF.zoomMax = shopState.mods.includes('zoom4') ? 4 : 2;
+}
+function saveShop(){
+  localStorage.setItem('ic-shop', JSON.stringify(shopState));
+  localStorage.setItem('ic-credits', credits);
+}
+
+/* ================= audio (WebAudio, zéro fichier) ================= */
+const AU = { ctx:null };
+function initAudio(){
+  if(AU.ctx){ AU.ctx.resume && AU.ctx.resume(); return; }
+  const C = AU.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  AU.master = C.createGain(); AU.master.gain.value = 0.5; AU.master.connect(C.destination);
+  /* moteurs : 2 dents de scie désaccordées + passe-bas */
+  const lp = C.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 850;
+  AU.mGain = C.createGain(); AU.mGain.gain.value = 0;
+  AU.o1 = C.createOscillator(); AU.o1.type = 'sawtooth'; AU.o1.frequency.value = 90;
+  AU.o2 = C.createOscillator(); AU.o2.type = 'sawtooth'; AU.o2.frequency.value = 92;
+  AU.o1.connect(lp); AU.o2.connect(lp); lp.connect(AU.mGain); AU.mGain.connect(AU.master);
+  AU.o1.start(); AU.o2.start();
+  /* vent : bruit blanc en passe-bande */
+  const buf = C.createBuffer(1, C.sampleRate*2, C.sampleRate);
+  const dd = buf.getChannelData(0);
+  for(let i=0;i<dd.length;i++) dd[i] = Math.random()*2-1;
+  const wind = C.createBufferSource(); wind.buffer = buf; wind.loop = true;
+  const bp = C.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 500; bp.Q.value = 0.5;
+  AU.wGain = C.createGain(); AU.wGain.gain.value = 0;
+  wind.connect(bp); bp.connect(AU.wGain); AU.wGain.connect(AU.master);
+  wind.start();
+  /* alarme : triangle modulé */
+  AU.aOsc = C.createOscillator(); AU.aOsc.type = 'triangle'; AU.aOsc.frequency.value = 600;
+  AU.aGain = C.createGain(); AU.aGain.gain.value = 0;
+  AU.aOsc.connect(AU.aGain); AU.aGain.connect(AU.master);
+  AU.aOsc.start();
+}
+function tone(f, dur, type='sine', vol=0.22, slideTo){
+  if(!AU.ctx) return;
+  const C = AU.ctx, o = C.createOscillator(), g = C.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, C.currentTime);
+  if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, C.currentTime+dur);
+  g.gain.setValueAtTime(vol, C.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, C.currentTime+dur);
+  o.connect(g); g.connect(AU.master);
+  o.start(); o.stop(C.currentTime+dur+0.02);
+}
+function sfxShutter(){
+  tone(1700, 0.05, 'square', 0.18);
+  if(!AU.ctx) return;
+  const C = AU.ctx, b = C.createBuffer(1, C.sampleRate*0.07|0, C.sampleRate);
+  const dd = b.getChannelData(0);
+  for(let i=0;i<dd.length;i++) dd[i] = (Math.random()*2-1)*(1-i/dd.length);
+  const s = C.createBufferSource(); s.buffer = b;
+  const g = C.createGain(); g.gain.value = 0.28;
+  s.connect(g); g.connect(AU.master); s.start();
+}
+function sfxRing(){ tone(880, 0.16, 'sine', 0.3, 1320); tone(1760, 0.12, 'sine', 0.12); }
+function sfxWin(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,0.22,'triangle',0.25), i*110)); }
+function sfxFail(){ tone(320, 0.6, 'sawtooth', 0.2, 110); }
+function sfxBuy(){ tone(700,0.08,'square',0.2); setTimeout(()=>tone(1050,0.12,'square',0.2), 70); }
+function updateAudio(dt){
+  if(!AU.ctx) return;
+  const spd = S.vel.length();
+  const fly = S.flying ? 1 : 0;
+  const mT = fly ? 0.09 + (spd/(T.maxSpd*EFF.spd))*0.13 + (S.boost?0.07:0) : 0;
+  AU.mGain.gain.value += (mT - AU.mGain.gain.value)*Math.min(1, 8*dt);
+  const base = 78 + spd*2.3 + (S.boost? 28:0);
+  AU.o1.frequency.value = base; AU.o2.frequency.value = base*1.022;
+  const wT = fly ? Math.min(0.42, (spd/(T.maxSpd*EFF.spd))**2*0.38) : 0;
+  AU.wGain.gain.value += (wT - AU.wGain.gain.value)*Math.min(1, 6*dt);
+  const a = S.flying ? S.alarm/100 : 0;
+  AU.aGain.gain.value = a > 0.02 ? 0.04 + a*0.11 : 0;
+  if(a > 0.02) AU.aOsc.frequency.value = 480 + 280*(0.5+0.5*Math.sin(performance.now()/110));
+}
 
 /* ================= état ================= */
 const S = {
@@ -611,6 +739,7 @@ function buildWorld(def){
     ];
     for(const [x,y,z] of path) ring(x,y,z);
   }
+  spawnLife();
 }
 
 /* ================= voiture cible ================= */
@@ -674,6 +803,83 @@ function carUpdate(dt){
   car.grp.rotation.y = car.heading + Math.PI/2;
 }
 
+/* ================= circulation & piétons ================= */
+const traffic = [];
+const peds = [];
+function mkCivCar(){
+  const grp = new THREE.Group();
+  const body = new THREE.Mesh(carGeoShared, new THREE.MeshLambertMaterial({color: CAR_COLORS[rnd()*CAR_COLORS.length|0]}));
+  body.position.y = 0.75; grp.add(body);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2,0.7,1.7), new THREE.MeshLambertMaterial({color:0x1c2026}));
+  cab.position.set(-0.1, 1.5, 0); grp.add(cab);
+  if(!isDay()){
+    const lg = new THREE.PlaneGeometry(0.3,0.2);
+    for(const [lx,col] of [[-2.15,0xfff4d8],[2.15,0xff2626]]){
+      for(const lz of [0.6,-0.6]){
+        const l = new THREE.Mesh(lg, new THREE.MeshBasicMaterial({color:col}));
+        l.position.set(lx, 0.7, lz); l.rotation.y = lx<0 ? -Math.PI/2 : Math.PI/2;
+        grp.add(l);
+      }
+    }
+  }
+  cityGrp.add(grp);
+  return grp;
+}
+function vehPick(v, from){
+  const opts = neighbors(from).filter(n => n !== v.prev);
+  v.node = opts[Math.random()*opts.length|0] ?? neighbors(from)[0];
+  v.prev = from;
+}
+function vehStep(v, dt){
+  const tgt = NODES[v.node];
+  const dx = tgt.x - v.pos.x, dz = tgt.z - v.pos.z;
+  if(Math.hypot(dx,dz) < 2){ vehPick(v, v.node); return; }
+  const want = Math.atan2(dx,dz);
+  let diff = want - v.heading;
+  while(diff > Math.PI) diff -= 2*Math.PI; while(diff < -Math.PI) diff += 2*Math.PI;
+  v.heading += THREE.MathUtils.clamp(diff, -2.2*dt, 2.2*dt);
+  const slow = Math.abs(diff) > 0.4 ? 0.55 : 1;
+  v.pos.x += Math.sin(v.heading)*v.spd*slow*dt;
+  v.pos.z += Math.cos(v.heading)*v.spd*slow*dt;
+  v.grp.position.copy(v.pos);
+  v.grp.rotation.y = v.heading + Math.PI/2;
+}
+function spawnLife(){
+  traffic.length = 0; peds.length = 0;
+  for(let i=0;i<6;i++){
+    const start = (rnd()*25)|0;
+    const v = { grp: mkCivCar(), pos: NODES[start].clone(), prev:-1, node:0, heading: rnd()*6.28, spd: 8+rnd()*6 };
+    v.pos.y = 0; vehPick(v, start);
+    traffic.push(v);
+  }
+  const pgeo = new THREE.BoxGeometry(0.5,1.7,0.4);
+  const pcols = [0x5a4a3a, 0x3a4a5a, 0x4a3a4a, 0x2f3f34, 0x6a5a40];
+  for(let i=0;i<10;i++){
+    const m = new THREE.Mesh(pgeo, new THREE.MeshLambertMaterial({color: pcols[i%5]}));
+    const k = ROAD_XZ[rnd()*5|0];
+    const onX = rnd()<0.5, off = rnd()<0.5? -7.6 : 7.6;
+    const p = { m, onX, k: k+off, a: -140+rnd()*280, dir: rnd()<0.5? 1:-1, spd: 1+rnd()*0.8 };
+    m.position.set(onX? p.k : p.a, 0.85, onX? p.a : p.k);
+    cityGrp.add(m);
+    peds.push(p);
+  }
+}
+function lifeUpdate(dt){
+  for(const v of traffic) vehStep(v, dt);
+  for(const p of peds){
+    p.a += p.dir*p.spd*dt;
+    if(p.a > 148 || p.a < -148) p.dir *= -1;
+    p.m.position.set(p.onX? p.k : p.a, 0.85, p.onX? p.a : p.k);
+    p.m.rotation.y = p.onX ? (p.dir>0?0:Math.PI) : (p.dir>0? Math.PI/2 : -Math.PI/2);
+  }
+  /* collision drone / circulation (au ras du sol seulement) */
+  if(S.flying && S.pos.y < 2.3 && S.vel.length() > 6){
+    for(const v of traffic){
+      if(Math.abs(v.pos.x-S.pos.x) < 2.6 && Math.abs(v.pos.z-S.pos.z) < 2.6){ fail('COLLISION VÉHICULE'); return; }
+    }
+  }
+}
+
 /* ================= drone : le vol suit la caméra ================= */
 function lookDir(){
   return new THREE.Vector3(-Math.sin(S.yaw)*Math.cos(S.pitch), Math.sin(S.pitch), -Math.cos(S.yaw)*Math.cos(S.pitch));
@@ -712,14 +918,14 @@ function physics(dt){
   if(keys['KeyA']) dir.sub(r);
   if(dir.lengthSq()>0) dir.normalize();
   S.boost = !!keys['Space'] && S.batt > 0;
-  const mul = S.boost ? T.boostMul : 1;
+  const mul = (S.boost ? T.boostMul : 1) * EFF.spd;
   const tv = dir.multiplyScalar(T.maxSpd*mul);
-  tv.y += (keys['KeyQ'] ? T.maxUp : 0) + (keys['KeyE'] ? -T.maxUp : 0);
+  tv.y += ((keys['KeyQ'] ? T.maxUp : 0) + (keys['KeyE'] ? -T.maxUp : 0)) * EFF.spd;
   const k = Math.min(1, T.accel*dt/T.maxSpd*10);
   S.vel.x += (tv.x - S.vel.x)*k;
   S.vel.y += (tv.y - S.vel.y)*Math.min(1, k*1.2);
   S.vel.z += (tv.z - S.vel.z)*k;
-  S.batt = Math.max(0, S.batt - dt*(T.battDrain + (S.boost? T.battBoost : 0)));
+  S.batt = Math.max(0, S.batt - dt*(T.battDrain + (S.boost? T.battBoost : 0))*EFF.drain);
   const step = S.vel.length()*dt;
   const n = THREE.MathUtils.clamp(Math.ceil(step/0.4), 1, 10);
   for(let i=0;i<n;i++){
@@ -738,9 +944,19 @@ function physics(dt){
 /* ================= photo & zoom ================= */
 const flash = document.getElementById('fx-flash');
 let photoMsg = '', photoMsgT = 0;
+let shots = [];   // clichés de la mission {url, label}
+let beepT = 0;
+function snapFrame(label){
+  /* capture réelle de l'image rendue (rendu synchrone puis copie réduite) */
+  renderer.render(scene, cam);
+  const c = document.createElement('canvas'); c.width = 300; c.height = 168;
+  c.getContext('2d').drawImage(renderer.domElement, 0, 0, c.width, c.height);
+  shots.push({url: c.toDataURL('image/jpeg', 0.72), label});
+}
 function takePhoto(){
   if(S.photoCd > 0 || !S.flying) return;
   S.photoCd = T.photoCd;
+  sfxShutter();
   flash.style.opacity = 0.75;
   setTimeout(()=>{ flash.style.opacity = 0; }, 90);
   const ld = lookDir();
@@ -758,12 +974,18 @@ function takePhoto(){
     }
   }
   if(got){
+    snapFrame(got.label);
     photoMsg = `📷 ${got.label} — CLICHÉ VALIDÉ`; photoMsgT = 3;
     S.score += 400;
+    tone(1200, 0.18, 'sine', 0.25, 1600);
     if(photoTargets.every(t=>t.done)) setTimeout(win, 650);
   } else { photoMsg = why || 'CLICHÉ SANS INTÉRÊT'; photoMsgT = 1.6; }
 }
-addEventListener('dblclick', () => { if(S.flying) S.zoomT = S.zoomT > 1 ? 1 : 2; });
+addEventListener('dblclick', () => {
+  if(!S.flying) return;
+  S.zoomT = S.zoomT >= EFF.zoomMax ? 1 : S.zoomT*2;   // 1 → 2 (→ 4 avec l'optique)
+  tone(S.zoomT > 1 ? 900 : 600, 0.07, 'square', 0.12);
+});
 addEventListener('contextmenu', e => e.preventDefault());
 
 /* ================= mission ================= */
@@ -784,7 +1006,7 @@ function missionUpdate(dt){
       const dirL = new THREE.Vector3(tx,0,tz).sub(src).normalize();
       const toD = S.pos.clone().sub(src);
       if(toD.length() < 120 && dirL.angleTo(toD.normalize()) < 0.34){
-        S.alarm = Math.min(100, S.alarm + dt*T.alarmRise*(d.hard?2:1));
+        S.alarm = Math.min(100, S.alarm + dt*T.alarmRise*(d.hard?2:1)*EFF.alarm);
       }
     }
   }
@@ -798,16 +1020,21 @@ function missionUpdate(dt){
     const locking = dist < T.lockDist && ang < T.lockAngle;
     const need = d.need + (d.endless ? endlessLvl*0.5 : 0);
     const escD = d.escape || 170;
-    if(locking) S.lockT = Math.min(need, S.lockT + dt);
-    else        S.lockT = Math.max(0, S.lockT - dt*0.8);
+    if(locking){
+      S.lockT = Math.min(need, S.lockT + dt);
+      beepT -= dt;
+      if(beepT <= 0){ tone(760 + 520*(S.lockT/need), 0.06, 'square', 0.14); beepT = 0.42 - 0.3*(S.lockT/need); }
+    }
+    else S.lockT = Math.max(0, S.lockT - dt*0.8);
     S.escapeT = dist > escD ? S.escapeT + dt : 0;
     S._dist = dist; S._locking = locking; S._need = need; S._escD = escD;
     if(S.lockT >= need){
       if(d.endless){
         endlessLvl++; S.score += 800 + endlessLvl*200;
+        snapFrame(`CIBLE ${endlessLvl}`); sfxRing();
         photoMsg = `CIBLE ${endlessLvl} IDENTIFIÉE — SUIVANTE ${(25+endlessLvl*2)*3.6|0} KM/H`; photoMsgT = 3;
         carReset(25 + endlessLvl*2); S.lockT = 0; S.timer = Math.min(d.time, S.timer + 35);
-      } else { win(); return; }
+      } else { snapFrame('IDENTIFICATION'); win(); return; }
     }
     if(S.escapeT > T.escapeTime){ fail('CIBLE PERDUE'); return; }
   }
@@ -821,6 +1048,7 @@ function missionUpdate(dt){
         r.mesh.material.color.setHex(0x33505c);
         ringIdx++;
         S.score += 150;
+        sfxRing();
         photoMsg = `BALISE ${ringIdx}/${rings.length}`; photoMsgT = 1.4;
         if(ringIdx >= rings.length){ win(); return; }
       }
@@ -838,17 +1066,58 @@ const scrStart = document.getElementById('screen-start');
 const scrBrief = document.getElementById('screen-brief');
 const scrFail = document.getElementById('screen-fail');
 const scrWin = document.getElementById('screen-win');
+function starStr(n){
+  return '★'.repeat(n) + `<span class="off">${'★'.repeat(3-n)}</span>`;
+}
 function renderMenu(){
+  document.getElementById('credits-bar').textContent = `◈ ${credits} CRÉDITS`;
   const box = document.getElementById('missions');
   box.innerHTML = '';
   DEFS.forEach((d,i)=>{
     const el = document.createElement('div');
     el.className = 'mcard' + (i > prog ? ' lock' : '') + (i < prog ? ' done' : '');
     el.innerHTML = `<div class="mnum">OP. ${String(i+1).padStart(2,'0')} ${i>prog?'🔒':''}</div>
-      <div class="mti">${d.title}</div><div class="mty">${d.ty} · ${d.tod==='day'?'JOUR':d.tod==='dusk'?'CRÉPUSCULE':'NUIT'}</div>`;
+      <div class="mti">${d.title}</div><div class="mty">${d.ty} · ${d.tod==='day'?'JOUR':d.tod==='dusk'?'CRÉPUSCULE':'NUIT'}</div>
+      ${i < prog || (stars[i]|0) ? `<div class="mstars">${starStr(stars[i]|0)}</div>` : ''}`;
     el.onclick = () => { if(i <= prog) brief(i); };
     box.appendChild(el);
   });
+}
+function renderShop(){
+  document.getElementById('credits-bar2').textContent = `◈ ${credits} CRÉDITS`;
+  const box = document.getElementById('shop-list');
+  box.innerHTML = '';
+  for(const d of DRONES){
+    const owned = shopState.owned.includes(d.id);
+    const eq = shopState.cur === d.id;
+    const el = document.createElement('div');
+    el.className = 'mcard' + (eq ? ' equipped' : '');
+    el.innerHTML = `<div class="mnum">${d.ty}</div><div class="mti">${d.name}</div>
+      <div class="desc">${d.desc}</div>
+      <div class="dprice">${eq ? '✓ ÉQUIPÉ' : owned ? 'CLIQUE POUR ÉQUIPER' : `◈ ${d.price}`}</div>`;
+    el.onclick = () => {
+      if(eq) return;
+      if(owned){ shopState.cur = d.id; }
+      else if(credits >= d.price){ credits -= d.price; shopState.owned.push(d.id); shopState.cur = d.id; sfxBuy(); }
+      else { tone(220, 0.25, 'sawtooth', 0.18); return; }
+      saveShop(); renderShop();
+    };
+    box.appendChild(el);
+  }
+  for(const m of MODS){
+    const owned = shopState.mods.includes(m.id);
+    const el = document.createElement('div');
+    el.className = 'mcard' + (owned ? ' equipped' : '');
+    el.innerHTML = `<div class="mnum">${m.ty}</div><div class="mti">${m.name}</div>
+      <div class="desc">${m.desc}</div>
+      <div class="dprice">${owned ? '✓ INSTALLÉ' : `◈ ${m.price}`}</div>`;
+    el.onclick = () => {
+      if(owned) return;
+      if(credits >= m.price){ credits -= m.price; shopState.mods.push(m.id); sfxBuy(); saveShop(); renderShop(); }
+      else tone(220, 0.25, 'sawtooth', 0.18);
+    };
+    box.appendChild(el);
+  }
 }
 function brief(i){
   cur = i;
@@ -863,6 +1132,8 @@ function launch(){
   scrBrief.style.display = 'none'; scrFail.style.display = 'none'; scrWin.style.display = 'none';
   const d = def();
   endlessLvl = 0;
+  shots = []; beepT = 0;
+  applyEff();
   buildWorld(d);
   car.grp.visible = d.type === 'chase';
   if(d.type === 'chase') carReset(d.carSpd);
@@ -872,19 +1143,36 @@ function launch(){
 }
 function fail(why){
   S.flying = false; document.exitPointerLock && document.exitPointerLock();
+  sfxFail();
   document.getElementById('fail-why').textContent = why;
   document.getElementById('fail-stats').textContent = `OP. ${cur+1} · SCORE ${S.score} · RECORD ${S.best}`;
   scrFail.style.display = 'flex';
 }
 function win(){
   if(!S.flying) return;
+  const d = def();
+  const frac = Math.max(0, S.timer)/d.time;
+  const nStars = d.endless ? (1 + (endlessLvl>=3) + (endlessLvl>=6))
+                           : (1 + (frac > 0.25) + (frac > 0.5));
+  if(nStars > (stars[cur]|0)){ stars[cur] = nStars; localStorage.setItem('ic-stars', JSON.stringify(stars)); }
+  const gain = 250 + nStars*150 + endlessLvl*80;
+  credits += gain; saveShop();
   const bonus = Math.round(Math.max(0,S.timer)*10);
   S.score += 1000 + bonus;
   if(S.score > S.best){ S.best = S.score; localStorage.setItem('ic-best', S.best); }
   if(cur >= prog){ prog = cur+1; localStorage.setItem('ic-prog', prog); }
   S.flying = false; document.exitPointerLock && document.exitPointerLock();
+  sfxWin();
+  document.getElementById('win-stars').innerHTML = starStr(nStars);
+  const sb = document.getElementById('win-shots');
+  sb.innerHTML = '';
+  for(const s of shots.slice(-4)){
+    const f = document.createElement('figure');
+    f.innerHTML = `<img src="${s.url}"><figcaption>${s.label} — ${new Date().toLocaleDateString('fr-FR')}</figcaption>`;
+    sb.appendChild(f);
+  }
   document.getElementById('win-stats').textContent =
-    `OP. ${cur+1} — ${def().title} · +${1000+bonus} PTS · SCORE ${S.score}`;
+    `OP. ${cur+1} — ${d.title} · +${1000+bonus} PTS · +${gain} ◈ · SCORE ${S.score}`;
   document.getElementById('btn-next').style.display = cur+1 < DEFS.length ? '' : 'none';
   scrWin.style.display = 'flex';
 }
@@ -892,11 +1180,14 @@ function grab(){
   const p = document.body.requestPointerLock && document.body.requestPointerLock();
   if(p && p.catch) p.catch(()=>{});
 }
-document.getElementById('btn-go').onclick = e => { e.target.blur(); launch(); };
-document.getElementById('btn-retry').onclick = e => { e.target.blur(); S.score = Math.max(0, S.score-200); launch(); };
+const scrShop = document.getElementById('screen-shop');
+document.getElementById('btn-go').onclick = e => { e.target.blur(); initAudio(); launch(); };
+document.getElementById('btn-retry').onclick = e => { e.target.blur(); initAudio(); S.score = Math.max(0, S.score-200); launch(); };
 document.getElementById('btn-next').onclick = e => { e.target.blur(); brief(Math.min(cur+1, DEFS.length-1)); scrWin.style.display='none'; };
 document.getElementById('btn-menu1').onclick = e => { e.target.blur(); scrFail.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
 document.getElementById('btn-menu2').onclick = e => { e.target.blur(); scrWin.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
+document.getElementById('btn-shop').onclick = e => { e.target.blur(); initAudio(); scrStart.style.display='none'; renderShop(); scrShop.style.display='flex'; };
+document.getElementById('btn-shop-back').onclick = e => { e.target.blur(); scrShop.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
 renderMenu();
 
 /* ================= entrées ================= */
@@ -1063,9 +1354,11 @@ function loop(){
     physics(dt);
     if(S.flying){
       if(def().type === 'chase') carUpdate(dt);
-      missionUpdate(dt);
+      lifeUpdate(dt);
+      if(S.flying) missionUpdate(dt);
     }
   }
+  updateAudio(dt);
   S.zoom += (S.zoomT - S.zoom)*Math.min(1, 10*dt);
   cam.fov = 78 / S.zoom; cam.updateProjectionMatrix();
   cam.position.copy(S.pos);
@@ -1079,14 +1372,18 @@ function loop(){
 loop();
 
 /* ================= hooks de test ================= */
-window.__chase = { state: S, keys, T, car, NODES,
+window.__chase = { state: S, keys, T, car, NODES, EFF, DRONES, MODS,
   get colliders(){ return colliders; },
   get photoTargets(){ return photoTargets; },
   get rings(){ return rings; }, get ringIdx(){ return ringIdx; },
   get searchlights(){ return searchlights; }, get tod(){ return tod; },
+  get traffic(){ return traffic; }, get peds(){ return peds; },
+  get shots(){ return shots; }, get credits(){ return credits; },
+  get shopState(){ return shopState; }, get stars(){ return stars; },
+  addCredits: n => { credits += n; saveShop(); },
   DEFS, get cur(){ return cur; }, get prog(){ return prog; },
   brief, launch, launchMission: i => { cur = i; launch(); },
-  takePhoto, respawn, fail, win, applyTod,
+  takePhoto, respawn, fail, win, applyTod, renderShop,
   setLook: (y,p) => { S.yaw = y; S.pitch = p; },
   setZoom: z => { S.zoomT = z; S.zoom = z; },
   cam, scene, THREE };
