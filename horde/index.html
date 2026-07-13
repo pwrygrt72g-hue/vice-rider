@@ -11,7 +11,7 @@
     -webkit-user-select:none;user-select:none;touch-action:none}
   canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-    background:rgba(20,30,15,.82);z-index:20;text-align:center;padding:16px}
+    background:rgba(16,8,6,.86);z-index:20;text-align:center;padding:16px}
   .screen h1{font-size:min(11vw,58px);margin:0;color:#ffe14d;letter-spacing:2px;
     text-shadow:3px 3px 0 #2a7d2a, 6px 6px 0 rgba(0,0,0,.35);transform:rotate(-2deg)}
   .screen h2{font-size:16px;color:#bde88f;font-weight:normal;margin:6px 0 18px}
@@ -50,7 +50,7 @@
 
 <div class="screen" id="screen-start">
   <h1>ZOMBIE BBQ</h1>
-  <h2>Le barbecue de quartier a mal tourné.</h2>
+  <h2>Le barbecue a VRAIMENT mal tourné.</h2>
   <div class="stat" id="st-best">RECORD : 0</div>
   <div class="stat" id="st-legend" style="color:#e8c3ff"></div>
   <button class="green big" id="btn-go">JOUER</button>
@@ -138,6 +138,7 @@ const S = {
   bobT:0, bobK:0, hitMark:0, _dyaw:0, _lastYaw:0,
 };
 let zombies = [], shots = [], pops = [], coins3d = [], projs = [];
+let smokes = [], debris = [], embers = [];
 let meta; try{ meta = JSON.parse(localStorage.getItem('bbq-meta'))||{}; }catch(e){ meta = {}; }
 meta = Object.assign({best:0, runs:0, maxWave:0, legend:false}, meta);
 function saveMeta(){ localStorage.setItem('bbq-meta', JSON.stringify(meta)); }
@@ -428,7 +429,7 @@ function fire(){
   if(w.id==='pompe') sfxPompe(); else if(w.id==='grenade') tone(240,0.2,'square',0.12,-120); else sfxPew();
   if(w.proj){
     projs.push({x:S.px, z:S.pz, y:1.5,
-      vx:Math.sin(S.yaw)*24, vz:Math.cos(S.yaw)*24, vy:3.2, w});
+      vx:Math.sin(S.yaw)*22, vz:Math.cos(S.yaw)*22, vy:2.0, w});
     return;
   }
   for(let p=0;p<w.pellets;p++){
@@ -483,7 +484,21 @@ function killZombie(z){
 function explodeAt(x, z, r, dmg, hurtsPlayer){
   pops.push({x, z, y:1, t:0, kind:'boom', size:r/2});
   sfxBoom();
-  S.shake = Math.max(S.shake, 0.35);
+  S.shake = Math.max(S.shake, 0.6);
+  S.flash = Math.max(S.flash||0, 0.30);
+  /* débris projetés + fumée + brûlure au sol persistante */
+  for(let i=0;i<14;i++){
+    const a = Math.random()*Math.PI*2, v = 4+Math.random()*9;
+    debris.push({x, z, y:0.6, vx:Math.sin(a)*v, vz:Math.cos(a)*v, vy:5+Math.random()*7,
+      t:0, s:0.14+Math.random()*0.2, hot:Math.random()<0.5});
+  }
+  for(let i=0;i<6;i++){
+    smokes.push({x:x+(Math.random()-0.5)*r*0.8, z:z+(Math.random()-0.5)*r*0.8,
+      y:0.5+Math.random()*1.2, vy:1.6+Math.random(), r:r*0.4, t:0, max:1.4+Math.random()});
+  }
+  DECALS.push({x, z, r:r*0.8, kind:'brulure', life:1});
+  const burns = DECALS.filter(d=>d.kind==='brulure');
+  if(burns.length > 12) DECALS.splice(DECALS.indexOf(burns[0]), 1);
   for(const zb of zombies){
     if(zb.hp<=0) continue;
     const d = Math.hypot(zb.x-x, zb.z-z);
@@ -632,8 +647,8 @@ function update(dt){
     const p = projs[i];
     p.x += p.vx*dt; p.z += p.vz*dt; p.y += p.vy*dt; p.vy -= 9.8*dt;
     let hit = p.y <= 0;
-    for(const z of zombies){
-      if(z.hp>0 && Math.hypot(z.x-p.x, z.z-p.z) < 0.8*z.size && p.y < 2.2*z.size){ hit = true; break; }
+    for(const z of zombies){   // fusée de proximité : détone en passant près d'un zombie
+      if(z.hp>0 && Math.hypot(z.x-p.x, z.z-p.z) < 1.3*z.size && p.y < 2.4*z.size){ hit = true; break; }
     }
     if(hit){ explodeAt(p.x, p.z, p.w.aoe, p.w.dmg*dmgMul(), false); projs.splice(i,1); }
   }
@@ -785,91 +800,243 @@ function drawZombie(z, p){
   ctx.restore();
 }
 
-/* ---------------- décor : clôture + accessoires BBQ ---------------- */
-const PROPS = [];
+/* ---------------- lueurs pré-rendues (perf mobile) ---------------- */
+function mkGlow(r,g,b){
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const gr = x.createRadialGradient(64,64,0,64,64,64);
+  gr.addColorStop(0,`rgba(${r},${g},${b},.85)`);
+  gr.addColorStop(0.4,`rgba(${r},${g},${b},.30)`);
+  gr.addColorStop(1,`rgba(${r},${g},${b},0)`);
+  x.fillStyle = gr; x.fillRect(0,0,128,128);
+  return c;
+}
+const glowFire = mkGlow(255,140,40), glowMuzzle = mkGlow(255,225,130), glowSun = mkGlow(255,90,40);
+function blitGlow(img, x, y, r, a=1){
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(img, x-r, y-r, r*2, r*2);
+  ctx.restore();
+}
+
+/* ---------------- décor : banlieue dévastée ---------------- */
+const rngS = s => { s = Math.sin(s)*43758.5453; return s - Math.floor(s); };
+const PROPS = [], DECALS = [], FIRES = [];
 (function(){
-  for(let i=0;i<40;i++){       // piquets de clôture tout autour de l'arène
-    const a = i/40*Math.PI*2;
-    PROPS.push({kind:'post', x:Math.sin(a)*T.arenaR, z:Math.cos(a)*T.arenaR});
+  for(let i=0;i<26;i++){       // périmètre : murets effondrés et carcasses en barricade
+    const a = i/26*Math.PI*2;
+    const x = Math.sin(a)*T.arenaR, z = Math.cos(a)*T.arenaR;
+    if(i%5===2) PROPS.push({kind:'epave', x, z, v:rngS(i), burn:rngS(i*3)<0.4});
+    else PROPS.push({kind:'muret', x, z, v:rngS(i*7)});
   }
-  const rng = s => { s = Math.sin(s)*43758.5453; return s - Math.floor(s); };
-  for(let i=0;i<9;i++){        // parasols, barbecues, haies dispersés (hors du centre)
-    const a = rng(i*7+1)*Math.PI*2, d = 12 + rng(i*13+2)*(T.arenaR-16);
-    PROPS.push({kind:['parasol','grill','haie'][i%3], x:Math.sin(a)*d, z:Math.cos(a)*d});
+  for(let i=0;i<7;i++){        // carcasses de voitures dans l'arène (certaines en feu)
+    const a = rngS(i*7+1)*Math.PI*2, d = 13 + rngS(i*13+2)*(T.arenaR-19);
+    const burn = i%2===0;
+    const pr = {kind:'epave', x:Math.sin(a)*d, z:Math.cos(a)*d, v:rngS(i*5), burn};
+    PROPS.push(pr);
+    if(burn) FIRES.push({x:pr.x, z:pr.z, y:1.6, s:1.3, t:rngS(i)*7});
   }
-  for(let i=0;i<26;i++){       // touffes d'herbe / fleurs pour le sol
-    const a = rng(i*3+40)*Math.PI*2, d = 4 + rng(i*11+9)*(T.arenaR-6);
-    PROPS.push({kind:'touffe', x:Math.sin(a)*d, z:Math.cos(a)*d, v:rng(i*5+3)});
+  for(let i=0;i<5;i++){        // foyers d'incendie au sol
+    const a = rngS(i*11+30)*Math.PI*2, d = 10 + rngS(i*17+5)*(T.arenaR-14);
+    const f = {x:Math.sin(a)*d, z:Math.cos(a)*d, y:0, s:1, t:rngS(i*3)*7};
+    FIRES.push(f);
+    PROPS.push({kind:'feu', x:f.x, z:f.z, f});
+  }
+  for(let i=0;i<6;i++){        // lampadaires tordus + arbres morts
+    const a = rngS(i*23+9)*Math.PI*2, d = 12 + rngS(i*29+4)*(T.arenaR-16);
+    PROPS.push({kind:i%2 ? 'lampadaire' : 'arbre', x:Math.sin(a)*d, z:Math.cos(a)*d, v:rngS(i*31)});
+  }
+  for(let i=0;i<16;i++){       // gravats épars
+    const a = rngS(i*3+40)*Math.PI*2, d = 5 + rngS(i*11+9)*(T.arenaR-7);
+    PROPS.push({kind:'gravats', x:Math.sin(a)*d, z:Math.cos(a)*d, v:rngS(i*5+3)});
+  }
+  for(let i=0;i<8;i++){        // cratères au sol
+    const a = rngS(i*41+7)*Math.PI*2, d = 8 + rngS(i*43+11)*(T.arenaR-10);
+    DECALS.push({x:Math.sin(a)*d, z:Math.cos(a)*d, r:1.6+rngS(i*13)*2.2, kind:'cratere'});
   }
 })();
+
 function drawProp(pr, p){
   const u = p.k*T.zScale;
   ctx.save();
   ctx.translate(p.sx, p.feet);
   ctx.scale(u, u);
-  if(pr.kind==='post'){
-    ctx.fillStyle = '#8a6a48';
-    ctx.fillRect(-4, -52, 8, 52);
-    ctx.fillStyle = '#75563a';
-    ctx.fillRect(-14, -46, 28, 7);
-    ctx.fillRect(-14, -24, 28, 7);
-  } else if(pr.kind==='parasol'){
-    ctx.strokeStyle = '#c8cdd6'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-78); ctx.stroke();
-    for(let i=0;i<6;i++){
-      ctx.fillStyle = i%2 ? '#ff6b5e' : '#fff4e0';
-      ctx.beginPath(); ctx.moveTo(0,-78);
-      ctx.arc(0,-58, 46, (i/6)*Math.PI+Math.PI, ((i+1)/6)*Math.PI+Math.PI);
+  if(pr.kind==='muret'){               // pan de mur effondré + ferraille
+    ctx.fillStyle = '#4a4442';
+    ctx.beginPath();
+    ctx.moveTo(-34,0); ctx.lineTo(-34,-38); ctx.lineTo(-12,-46); ctx.lineTo(4,-30);
+    ctx.lineTo(18,-40); ctx.lineTo(34,-22); ctx.lineTo(34,0);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#3a3534';
+    ctx.fillRect(-34,-8,68,8);
+    ctx.strokeStyle = '#6b3f2e'; ctx.lineWidth = 2.5;   // fers à béton
+    ctx.beginPath();
+    ctx.moveTo(-12,-46); ctx.lineTo(-16,-62);
+    ctx.moveTo(18,-40); ctx.lineTo(22,-54);
+    ctx.stroke();
+  } else if(pr.kind==='epave'){        // carcasse de voiture calcinée
+    const tilt = (pr.v-0.5)*0.16;
+    ctx.rotate(tilt);
+    ctx.fillStyle = pr.burn ? '#2b2320' : ['#5a4a52','#4a5560','#5d5348'][Math.floor(pr.v*3)];
+    ctx.beginPath();
+    ctx.moveTo(-52,0); ctx.lineTo(-52,-20); ctx.lineTo(-34,-24); ctx.lineTo(-24,-38);
+    ctx.lineTo(20,-38); ctx.lineTo(32,-24); ctx.lineTo(52,-20); ctx.lineTo(52,0);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#15120f';                            // vitres soufflées
+    ctx.fillRect(-20,-35,16,12); ctx.fillRect(2,-35,14,12);
+    ctx.fillStyle = '#1a1714';                            // roues (une manque)
+    ctx.beginPath(); ctx.arc(-30,0,10,0,7); ctx.fill();
+    if(pr.v>0.3){ ctx.beginPath(); ctx.arc(30,0,10,0,7); ctx.fill(); }
+    ctx.strokeStyle = '#15120f'; ctx.lineWidth = 3;       // capot béant
+    ctx.beginPath(); ctx.moveTo(32,-24); ctx.lineTo(46,-34); ctx.stroke();
+  } else if(pr.kind==='feu'){          // foyer : flammes animées
+    const t = S.t*9 + (pr.f?pr.f.t:0)*7;
+    for(let i=0;i<3;i++){
+      const fx = (i-1)*10, fh = 34 + Math.sin(t+i*2.1)*10, fw = 13 + Math.sin(t*1.3+i)*3;
+      ctx.fillStyle = ['#ff5d1e','#ff9d2e','#ffd23e'][i];
+      ctx.beginPath();
+      ctx.moveTo(fx-fw,0);
+      ctx.quadraticCurveTo(fx-fw*0.6, -fh*0.55, fx+Math.sin(t*1.7+i*3)*6, -fh);
+      ctx.quadraticCurveTo(fx+fw*0.6, -fh*0.55, fx+fw, 0);
       ctx.closePath(); ctx.fill();
     }
-  } else if(pr.kind==='grill'){
-    ctx.fillStyle = '#2e2e38';
-    ctx.beginPath(); ctx.ellipse(0, -34, 22, 12, 0, Math.PI, 0); ctx.fill();
-    ctx.fillRect(-22, -36, 44, 6);
-    ctx.strokeStyle = '#2e2e38'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(-12,-30); ctx.lineTo(-16,0); ctx.moveTo(12,-30); ctx.lineTo(16,0); ctx.stroke();
-    ctx.fillStyle = '#ff9d2e';
-    ctx.beginPath(); ctx.arc(-6,-38,4,0,7); ctx.arc(4,-40,5,0,7); ctx.fill();
-  } else if(pr.kind==='haie'){
-    ctx.fillStyle = '#4d7a35';
+    ctx.fillStyle = '#1c1512';
+    ctx.beginPath(); ctx.ellipse(0, 0, 24, 6, 0, 0, 7); ctx.fill();
+  } else if(pr.kind==='lampadaire'){   // lampadaire tordu, lampe qui grésille
+    ctx.strokeStyle = '#3d3f45'; ctx.lineWidth = 5;
     ctx.beginPath();
-    ctx.arc(-18,-14,16,0,7); ctx.arc(0,-20,20,0,7); ctx.arc(18,-13,15,0,7);
-    ctx.fill();
-  } else {   // touffe
-    ctx.strokeStyle = pr.v<0.25 ? '#e8b23d' : '#6d8a4e'; ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(-5,0); ctx.lineTo(-7,-10);
-    ctx.moveTo(0,0); ctx.lineTo(0,-13);
-    ctx.moveTo(5,0); ctx.lineTo(7,-9);
+    ctx.moveTo(0,0); ctx.quadraticCurveTo(4,-70, 30,-84);
     ctx.stroke();
-    if(pr.v<0.25){ ctx.fillStyle = '#ff8ac2'; ctx.beginPath(); ctx.arc(0,-15,4,0,7); ctx.fill(); }
+    const on = Math.sin(S.t*13 + pr.v*40) > -0.2;
+    ctx.fillStyle = on ? '#ffd88f' : '#4a4438';
+    ctx.beginPath(); ctx.ellipse(34,-82, 8, 5, 0.3, 0, 7); ctx.fill();
+    if(on) blitGlowLocal(34,-86, 30, 0.5);
+  } else if(pr.kind==='arbre'){        // arbre mort
+    ctx.strokeStyle = '#241c18'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-3,-52); ctx.stroke();
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-3,-52); ctx.lineTo(-20,-70);
+    ctx.moveTo(-3,-48); ctx.lineTo(16,-64); ctx.lineTo(24,-78);
+    ctx.moveTo(16,-64); ctx.lineTo(30,-66);
+    ctx.stroke();
+  } else {                             // gravats
+    ctx.fillStyle = pr.v<0.5 ? '#4a4442' : '#3c3836';
+    ctx.beginPath();
+    ctx.moveTo(-14,0); ctx.lineTo(-8,-9); ctx.lineTo(0,-5); ctx.lineTo(6,-11); ctx.lineTo(14,0);
+    ctx.closePath(); ctx.fill();
+    if(pr.v<0.3){ ctx.strokeStyle = '#6b3f2e'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(4,-9); ctx.lineTo(9,-18); ctx.stroke(); }
   }
   ctx.restore();
 }
+/* lueur en repère local du prop (annule le scale pour garder un glow doux) */
+function blitGlowLocal(lx, ly, r, a){
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(glowFire, lx-r, ly-r, r*2, r*2);
+  ctx.restore();
+}
 
+/* ---------------- ciel de fin du monde ---------------- */
+function skyX(worldA){                  // azimut monde → x écran
+  let rel = worldA - S.yaw;
+  rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+  if(Math.abs(rel) > 1.5) return null;
+  return W/2 + Math.tan(rel)*focal;
+}
 function drawWorld(){
-  /* ciel joyeux + sol terne (les zombies doivent "pop") */
+  /* ciel : braise à l'horizon, fumée au zénith */
   const sk = ctx.createLinearGradient(0,0,0,horizon);
-  sk.addColorStop(0,'#7ec8f0'); sk.addColorStop(1,'#cfeaf8');
+  sk.addColorStop(0,'#151016'); sk.addColorStop(0.45,'#3d1e1e');
+  sk.addColorStop(0.8,'#8a3520'); sk.addColorStop(1,'#e8722e');
   ctx.fillStyle = sk; ctx.fillRect(0,0,W,horizon);
-  /* nuages pouf */
-  ctx.fillStyle = 'rgba(255,255,255,.85)';
-  for(let i=0;i<4;i++){
-    const cx = ((i*0.27 + 0.06 - (S.yaw/(Math.PI*2))%1 + 2)%1)*W*1.2 - W*0.1;
-    const cy = horizon*0.25 + (i%2)*horizon*0.22;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 26, 0, 7); ctx.arc(cx+24, cy+6, 20, 0, 7); ctx.arc(cx-24, cy+7, 18, 0, 7);
-    ctx.fill();
+  /* soleil malade, bas sur l'horizon */
+  const sx = skyX(2.4);
+  if(sx !== null){
+    blitGlow(glowSun, sx, horizon-30, 170, 0.9);
+    ctx.fillStyle = '#ff8a4d';
+    ctx.beginPath(); ctx.arc(sx, horizon-30, 44, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(61,30,30,.55)';                 // barres de brume devant le disque
+    ctx.fillRect(sx-60, horizon-44, 120, 7);
+    ctx.fillRect(sx-60, horizon-24, 120, 5);
   }
+  /* skyline en ruines sur 360° (seedée, stable) */
+  const NSEC = 44;
+  for(let i=0;i<NSEC;i++){
+    const a = i/NSEC*Math.PI*2;
+    const x = skyX(a);
+    if(x === null) continue;
+    const bw = focal*0.075;
+    const hgt = (rngS(i*13+3)*0.14 + 0.04)*H;
+    ctx.fillStyle = 'rgba(30,18,26,.92)';
+    ctx.fillRect(x-bw/2, horizon-hgt, bw, hgt+2);
+    if(rngS(i*7) < 0.55){                                  // sommet éventré : morsure couleur ciel
+      ctx.fillStyle = i%2 ? '#3d1e1e' : '#552a20';
+      ctx.fillRect(x-bw/2 + rngS(i*17)*bw*0.5, horizon-hgt-1, bw*0.34, hgt*0.25);
+    }
+    if(rngS(i*29) < 0.5){                                  // fenêtres en feu
+      ctx.fillStyle = 'rgba(255,140,50,.85)';
+      for(let wI=0;wI<3;wI++){
+        const wx = x-bw/2 + (0.2+rngS(i*31+wI)*0.6)*bw;
+        const wy = horizon - hgt*(0.15+rngS(i*37+wI)*0.6);
+        ctx.fillRect(wx, wy, Math.max(2,bw*0.06), Math.max(2,bw*0.06));
+      }
+    }
+  }
+  /* colonnes de fumée à l'horizon */
+  for(let c=0;c<3;c++){
+    const x = skyX(1.1 + c*2.0);
+    if(x === null) continue;
+    ctx.fillStyle = 'rgba(20,14,18,.55)';
+    for(let i=0;i<5;i++){
+      const t = S.t*0.4 + c*3;
+      const yy = horizon - 20 - i*34;
+      ctx.beginPath();
+      ctx.arc(x + Math.sin(t+i)*14 + i*7, yy, 20+i*8, 0, 7);
+      ctx.fill();
+    }
+  }
+  /* brume de braise sur l'horizon */
+  const hz = ctx.createLinearGradient(0,horizon-46,0,horizon+10);
+  hz.addColorStop(0,'rgba(232,114,46,0)'); hz.addColorStop(1,'rgba(232,114,46,.35)');
+  ctx.fillStyle = hz; ctx.fillRect(0,horizon-46,W,56);
+  /* sol : bitume brûlé */
   const gd = ctx.createLinearGradient(0,horizon,0,H);
-  gd.addColorStop(0,'#8a9c6b'); gd.addColorStop(1,'#5d7247');
+  gd.addColorStop(0,'#7a6a52'); gd.addColorStop(0.35,'#5d5244'); gd.addColorStop(1,'#3a332c');
   ctx.fillStyle = gd; ctx.fillRect(0,horizon,W,H-horizon);
-  /* bandes d'herbe en perspective (défilement selon position) */
-  ctx.fillStyle = 'rgba(255,255,255,.05)';
-  for(let i=1;i<8;i++){
-    const d = i*5 + ((S.pz+S.px)%5);
+  /* reflet de braise sur le bitume */
+  const rb = ctx.createLinearGradient(0,horizon,0,horizon+H*0.12);
+  rb.addColorStop(0,'rgba(232,114,46,.22)'); rb.addColorStop(1,'rgba(232,114,46,0)');
+  ctx.fillStyle = rb; ctx.fillRect(0,horizon,W,H*0.12);
+  /* fissures / marquage au sol en perspective */
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2;
+  for(let i=1;i<7;i++){
+    const d = i*5.5 + ((S.pz*0.7+S.px*0.3)%5.5);
     const y = horizon + (T.camH*focal)/d;
-    if(y < H) ctx.fillRect(0, y, W, Math.max(1, 26/i));
+    if(y < H){
+      ctx.beginPath();
+      ctx.moveTo(W*0.1, y);
+      for(let sgm=1;sgm<=6;sgm++) ctx.lineTo(W*0.1 + sgm*W*0.8/6, y + Math.sin(i*3+sgm*2)*4);
+      ctx.stroke();
+    }
+  }
+  /* décals au sol : cratères + brûlures d'explosion */
+  for(const dc of DECALS){
+    const p = project(dc.x, dc.z);
+    if(!p || p.d > 45) continue;
+    const rx = dc.r*(focal/Math.max(0.5,p.d)), ry = rx*0.34;
+    if(dc.kind==='cratere'){
+      ctx.fillStyle = 'rgba(12,9,8,.6)';
+      ctx.beginPath(); ctx.ellipse(p.sx, p.feet, rx, ry, 0, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(120,90,60,.35)'; ctx.lineWidth = Math.max(1.5, rx*0.08);
+      ctx.beginPath(); ctx.ellipse(p.sx, p.feet-ry*0.15, rx*0.9, ry*0.8, 0, 0, 7); ctx.stroke();
+    } else {                                              // brûlure
+      ctx.fillStyle = `rgba(10,8,8,${0.55*Math.min(1,dc.life??1)})`;
+      ctx.beginPath(); ctx.ellipse(p.sx, p.feet, rx, ry, 0, 0, 7); ctx.fill();
+    }
   }
 }
 
@@ -878,6 +1045,59 @@ function drawSprites(){
   for(const pr of PROPS){
     const p = project(pr.x, pr.z);
     if(p && p.d < 55) items.push({d:p.d, f:()=>drawProp(pr,p)});
+  }
+  /* feux : lueur pulsante + flammes des carcasses */
+  for(const f of FIRES){
+    const p = project(f.x, f.z);
+    if(!p || p.d > 50) continue;
+    items.push({d:p.d, f:()=>{
+      const rr = (1.4+Math.sin(S.t*11+f.t*9)*0.25)*f.s*(focal/Math.max(0.5,p.d));
+      blitGlow(glowFire, p.sx, p.feet - f.y*(focal/Math.max(0.5,p.d)), rr, 0.75);
+      if(f.y > 0.5){       // flammes au-dessus des épaves
+        const u = p.k*T.zScale;
+        ctx.save();
+        ctx.translate(p.sx, p.feet - f.y*(focal/Math.max(0.5,p.d)));
+        ctx.scale(u*f.s, u*f.s);
+        const t = S.t*10 + f.t*7;
+        for(let i=0;i<3;i++){
+          const fx = (i-1)*9, fh = 26 + Math.sin(t+i*2.1)*8;
+          ctx.fillStyle = ['#ff5d1e','#ff9d2e','#ffd23e'][i];
+          ctx.beginPath();
+          ctx.moveTo(fx-9,0);
+          ctx.quadraticCurveTo(fx-5, -fh*0.5, fx+Math.sin(t*1.6+i*3)*5, -fh);
+          ctx.quadraticCurveTo(fx+5, -fh*0.5, fx+9, 0);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+      }
+    }});
+  }
+  /* fumée */
+  for(const sm of smokes){
+    const p = project(sm.x, sm.z);
+    if(!p) continue;
+    items.push({d:p.d, f:()=>{
+      const k = sm.t/sm.max;
+      const rr = (sm.r + k*1.6)*(focal/Math.max(0.5,p.d));
+      ctx.fillStyle = `rgba(26,20,22,${0.4*(1-k)})`;
+      ctx.beginPath();
+      ctx.arc(p.sx, p.feet - sm.y*(focal/Math.max(0.5,p.d)), rr, 0, 7);
+      ctx.fill();
+    }});
+  }
+  /* débris */
+  for(const db of debris){
+    const p = project(db.x, db.z);
+    if(!p) continue;
+    items.push({d:p.d, f:()=>{
+      const rr = Math.max(2, db.s*(focal/Math.max(0.5,p.d)));
+      ctx.fillStyle = db.hot ? '#ff9d2e' : '#2b2320';
+      ctx.save();
+      ctx.translate(p.sx, p.feet - db.y*(focal/Math.max(0.5,p.d)));
+      ctx.rotate(db.t*9);
+      ctx.fillRect(-rr/2, -rr/2, rr, rr);
+      ctx.restore();
+    }});
   }
   for(const z of zombies){
     const p = project(z.x, z.z);
@@ -932,10 +1152,25 @@ function drawSprites(){
         ctx.textAlign = 'center';
         ctx.fillText('POUF!', p.sx, p.feet - (pop.y+1.4)*(focal/Math.max(0.5,p.d)) - 30*k);
       } else {
-        ctx.fillStyle = `rgba(255,140,40,${0.8*(1-k)})`;
-        ctx.beginPath(); ctx.arc(p.sx, p.feet - 14, (0.4+k)*pop.size*(focal/Math.max(0.5,p.d)), 0, 7); ctx.fill();
-        ctx.fillStyle = `rgba(255,230,120,${0.9*(1-k)})`;
-        ctx.beginPath(); ctx.arc(p.sx, p.feet - 14, (0.2+k*0.6)*pop.size*(focal/Math.max(0.5,p.d)), 0, 7); ctx.fill();
+        /* boule de feu à blobs + onde de choc + lueur */
+        const f = focal/Math.max(0.5,p.d);
+        const cy = p.feet - 0.9*f;
+        const R = (0.5+k*1.5)*pop.size*f;
+        blitGlow(glowFire, p.sx, cy, R*2.4, (1-k));
+        for(let i=0;i<6;i++){
+          const a = i*1.05 + pop.x;
+          const bx2 = p.sx + Math.cos(a)*R*0.45, by2 = cy + Math.sin(a)*R*0.3 - k*R*0.3;
+          ctx.fillStyle = `rgba(255,${90+i*22},30,${0.85*(1-k)})`;
+          ctx.beginPath(); ctx.arc(bx2, by2, R*(0.55-i*0.05), 0, 7); ctx.fill();
+        }
+        ctx.fillStyle = `rgba(255,240,170,${0.95*(1-k*1.4)})`;
+        ctx.beginPath(); ctx.arc(p.sx, cy, R*0.42*(1-k*0.5), 0, 7); ctx.fill();
+        /* onde de choc au sol */
+        ctx.strokeStyle = `rgba(255,200,120,${0.6*(1-k)})`;
+        ctx.lineWidth = Math.max(2, R*0.09*(1-k));
+        ctx.beginPath();
+        ctx.ellipse(p.sx, p.feet, R*1.6*(0.3+k), R*0.5*(0.3+k), 0, 0, 7);
+        ctx.stroke();
       }
     }});
   }
@@ -1019,6 +1254,7 @@ function drawWeapon(){
   ctx.fill();
   /* éclair de bouche au bout du canon */
   if(S.muzzle > 0){
+    blitGlow(glowMuzzle, tx, ty, 150*sc*(0.6+rec), 0.9);   // la nuit, le tir éclaire
     ctx.translate(tx, ty);
     ctx.fillStyle = w.id==='licorne' ? 'rgba(255,170,240,.95)' : 'rgba(255,220,90,.95)';
     ctx.beginPath();
@@ -1161,6 +1397,35 @@ function loop(now){
   last = now;
   if(S._pausedHidden){ S._pausedHidden = false; dt = 0; }
   if(S.scene==='play' && !adOpen) update(dt);
+  /* particules d'ambiance : vivent même dans les menus */
+  S.t += S.scene==='play' ? 0 : dt;
+  for(let i=smokes.length-1;i>=0;i--){
+    const sm = smokes[i];
+    sm.t += dt; sm.y += sm.vy*dt;
+    if(sm.t > sm.max) smokes.splice(i,1);
+  }
+  for(let i=debris.length-1;i>=0;i--){
+    const db = debris[i];
+    db.t += dt;
+    db.x += db.vx*dt; db.z += db.vz*dt; db.y += db.vy*dt; db.vy -= 22*dt;
+    if(db.y <= 0 || db.t > 2) debris.splice(i,1);
+  }
+  /* les feux fument en continu */
+  if(smokes.length < 40 && Math.random() < dt*8){
+    const f = FIRES[Math.floor(Math.random()*FIRES.length)];
+    if(f && Math.hypot(f.x-S.px, f.z-S.pz) < 45)
+      smokes.push({x:f.x, z:f.z, y:f.y+0.8, vy:1.4, r:0.5*f.s, t:0, max:1.8});
+  }
+  /* braises portées par le vent (espace écran) */
+  if(embers.length < 34 && Math.random() < dt*20)
+    embers.push({x:W+20, y:Math.random()*H, vx:-(30+Math.random()*70), vy:(Math.random()-0.3)*24,
+      r:1+Math.random()*2, ph:Math.random()*7, t:0});
+  for(let i=embers.length-1;i>=0;i--){
+    const e = embers[i];
+    e.t += dt;
+    e.x += e.vx*dt; e.y += e.vy*dt + Math.sin(e.t*5+e.ph)*24*dt;
+    if(e.x < -20 || e.y > H+20) embers.splice(i,1);
+  }
   /* rendu */
   ctx.save();
   if(S.shake > 0) ctx.translate((Math.random()-0.5)*S.shake*22, (Math.random()-0.5)*S.shake*22);
@@ -1168,6 +1433,21 @@ function loop(now){
   drawWorld();
   drawSprites();
   ctx.restore();
+  /* braises au vent (par-dessus la scène) */
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for(const e of embers){
+    const fl = 0.5 + 0.5*Math.sin(e.t*9+e.ph);
+    ctx.fillStyle = `rgba(255,${120+fl*90|0},40,${0.35+fl*0.4})`;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+  /* flash d'explosion */
+  if(S.flash > 0){
+    ctx.fillStyle = `rgba(255,190,110,${S.flash})`;
+    ctx.fillRect(0,0,W,H);
+    S.flash -= dt*1.6;
+  }
   if(S.scene==='play') drawHUDPlay();
 }
 requestAnimationFrame(loop);
@@ -1175,6 +1455,7 @@ showMenu();
 
 /* ---------------- hooks de test ---------------- */
 window.__horde = { S, T, get zombies(){ return zombies; }, get coins3d(){ return coins3d; },
+  get projs(){ return projs; }, get debris(){ return debris; }, get pops(){ return pops; }, explodeAt,
   ZTYPES, WEAPONS, BOOSTS, meta,
   newRun, startWave, nextWave, spawnZombie, gameOver, reviveRun, giveBoost, fire, renderShop,
   killAll: ()=>{ spawnQueue.length = 0; for(const z of zombies){ z.hp = 0; killZombie(z); } zombies = []; },
