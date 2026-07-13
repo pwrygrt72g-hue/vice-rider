@@ -94,11 +94,11 @@
 
 /* ---------------- réglages ---------------- */
 const T = {
-  fov: 1.35, camH: 1.6, arenaR: 40,
-  pSpeed: 6.2, pHp: 100, regen: 3, regenDelay: 4,
-  waveBase: 6, wavePer: 3, aliveCap: 34,
+  fov: 1.28, camH: 1.7, arenaR: 34,
+  pSpeed: 6.6, pHp: 100, regen: 3, regenDelay: 4,
+  waveBase: 6, wavePer: 3, aliveCap: 40,
   coinChance: 0.55, autoAimDesk: 0.05, autoAimMob: 0.85,
-  transition: 5,
+  transition: 5, zScale: 0.019,
 };
 
 /* ---------------- armes ---------------- */
@@ -114,17 +114,17 @@ const WEAPONS = [
    Chaque type = silhouette + accessoire du quotidien lisible
    en un quart de seconde (esprit PvZ, zéro gore).            */
 const ZTYPES = {
-  standard: {hp:26,  spd:1.5, dmg:8,  size:1.00, score:10, skin:'#7ec850', cloth:'#4a90d9', accent:'#e5533d',
+  standard: {hp:26,  spd:2.0, dmg:8,  size:1.00, score:10, skin:'#7ec850', cloth:'#4a90d9', accent:'#e5533d',
              acc:'bigoudis'},   // voisin en robe de chambre + bigoudis roses
-  sprint:   {hp:14,  spd:3.6, dmg:6,  size:0.88, score:15, skin:'#8fd85e', cloth:'#ff7bd5', accent:'#fff',
+  sprint:   {hp:14,  spd:4.4, dmg:6,  size:0.88, score:15, skin:'#8fd85e', cloth:'#ff7bd5', accent:'#fff',
              acc:'bandeau'},    // jogger fluo, bandeau éponge, genoux hauts
-  tank:     {hp:150, spd:0.85,dmg:18, size:1.55, score:40, skin:'#6db544', cloth:'#ffd23e', accent:'#ff9d2e',
+  tank:     {hp:150, spd:1.1, dmg:18, size:1.55, score:40, skin:'#6db544', cloth:'#ffd23e', accent:'#ff9d2e',
              acc:'bouee'},      // bouée canard XXL, énorme bedaine
-  boum:     {hp:18,  spd:2.2, dmg:26, size:0.95, score:20, skin:'#ff6b5e', cloth:'#c9372c', accent:'#ffd9d5',
+  boum:     {hp:18,  spd:2.9, dmg:26, size:0.95, score:20, skin:'#ff6b5e', cloth:'#c9372c', accent:'#ffd9d5',
              acc:'ballon', explode:3.0},   // corps-ballon qui gonfle, explose en zone
-  sauteur:  {hp:20,  spd:2.4, dmg:9,  size:0.92, score:20, skin:'#9be86e', cloth:'#3ec6c0', accent:'#fff',
+  sauteur:  {hp:20,  spd:3.1, dmg:9,  size:0.92, score:20, skin:'#9be86e', cloth:'#3ec6c0', accent:'#fff',
              acc:'ressorts', hop:true},    // chaussures-ressorts, saute par-dessus tout
-  invoc:    {hp:60,  spd:1.0, dmg:6,  size:1.10, score:60, skin:'#71c04d', cloth:'#f5f0e6', accent:'#d94f3d',
+  invoc:    {hp:60,  spd:1.3, dmg:6,  size:1.10, score:60, skin:'#71c04d', cloth:'#f5f0e6', accent:'#d94f3d',
              acc:'cloche', summon:true},   // chef cuistot, cloche de service : DING → renforts
 };
 const BOSSES = ['tank','invoc','boum'];   // vagues 5, 10, 15… (cycle)
@@ -135,6 +135,7 @@ const S = {
   px:0, pz:0, yaw:0, hp:T.pHp, hurtT:0, regenT:0,
   weapons:['pistol'], cur:'pistol', fireT:0, firing:false,
   boosts:{}, usedContinue:false, muzzle:0, shake:0, t:0,
+  bobT:0, bobK:0, hitMark:0, _dyaw:0, _lastYaw:0,
 };
 let zombies = [], shots = [], pops = [], coins3d = [], projs = [];
 let meta; try{ meta = JSON.parse(localStorage.getItem('bbq-meta'))||{}; }catch(e){ meta = {}; }
@@ -255,8 +256,9 @@ function startWave(){
 }
 function spawnZombie(tname, boss=false){
   const def = ZTYPES[tname];
-  const a = Math.random()*Math.PI*2;
-  const d = 26 + Math.random()*10;
+  /* spawn PROCHE, surtout sur les flancs et dans le dos : le contact arrive vite */
+  const a = S.yaw + Math.PI + (Math.random()-0.5)*3.4;
+  const d = boss ? 22 : 15 + Math.random()*8;
   const k = boss ? 5.5 : 1;
   zombies.push({
     type:tname, def, boss,
@@ -454,7 +456,13 @@ function fire(){
   }
 }
 function hurtZombie(z, dm){
-  z.hp -= dm; z.hitT = 0.1;
+  z.hp -= dm; z.hitT = 0.14;
+  S.hitMark = 0.12;
+  /* recul : le zombie encaisse physiquement le tir */
+  const dx = z.x-S.px, dz = z.z-S.pz, d = Math.hypot(dx,dz)||1;
+  const kb = Math.min(0.6, dm*0.02)/(z.boss?4:1)/z.size;
+  z.x += dx/d*kb; z.z += dz/d*kb;
+  pops.push({x:z.x, z:z.z, y:1.5*z.size, t:0, kind:'dmg', val:Math.round(dm)});
   if(z.hp <= 0) killZombie(z);
 }
 function killZombie(z){
@@ -506,6 +514,12 @@ function update(dt){
   if(keys['KeyD']) mx += 1;
   if(joy){ mx += joy.dx; mz -= joy.dy; }
   const ml = Math.hypot(mx,mz);
+  /* head-bob : amplitude selon qu'on marche ou pas */
+  const moving = ml > 0.01;
+  S.bobK += ((moving?1:0.12) - S.bobK)*Math.min(1, 8*dt);
+  S.bobT += dt*(moving?1:0.35);
+  S._dyaw += ((S.yaw-S._lastYaw) - S._dyaw)*Math.min(1, 10*dt);
+  S._lastYaw = S.yaw;
   if(ml > 0.01){
     mx/=Math.max(1,ml); mz/=Math.max(1,ml);
     const c = Math.cos(S.yaw), s = Math.sin(S.yaw);
@@ -543,7 +557,7 @@ function update(dt){
   if(spawnQueue.length && zombies.filter(z=>z.hp>0).length < T.aliveCap){
     spawnT -= dt;
     if(spawnT <= 0){
-      spawnT = Math.max(0.25, 1.1 - S.wave*0.05);
+      spawnT = Math.max(0.18, 0.7 - S.wave*0.04);
       const nxt = spawnQueue.shift();
       if(nxt.startsWith('BOSS:')){ spawnZombie(nxt.slice(5), true); sfxDing(); }
       else spawnZombie(nxt);
@@ -641,7 +655,8 @@ function update(dt){
   }
   /* effets */
   for(let i=pops.length-1;i>=0;i--){ pops[i].t += dt; if(pops[i].t > 0.6) pops.splice(i,1); }
-  S.muzzle -= dt; S.hurtT -= dt; S.shake = Math.max(0, S.shake - dt*1.4);
+  S.muzzle -= dt; S.hurtT -= dt; S.hitMark -= dt;
+  S.shake = Math.max(0, S.shake - dt*1.4);
   /* fin de vague */
   if(!spawnQueue.length && zombies.length===0 && S.scene==='play'){
     S.score += S.wave*50;
@@ -676,7 +691,7 @@ function project(x, z){
 
 /* --- dessin d'un zombie cartoon (unités : 1 = ~1 m) --- */
 function drawZombie(z, p){
-  const u = p.k*0.011*z.size;      // échelle px par unité de dessin (croquis ~90 u de haut)
+  const u = p.k*T.zScale*z.size;   // échelle px par unité de dessin (croquis ~90 u de haut)
   const bob = Math.sin(z.ph)*4;
   const tilt = Math.sin(z.ph*0.5)*0.06;
   const gx = p.sx, gy = p.feet;
@@ -684,6 +699,7 @@ function drawZombie(z, p){
   ctx.translate(gx, gy);
   ctx.scale(u, u);
   ctx.rotate(tilt);
+  if(z.hitT > 0) ctx.scale(1.12, 0.9);   // squash comique à l'impact
   const hop = z.def.hop ? Math.abs(Math.sin(z.hopT))*22 : 0;
   ctx.translate(0, -hop);
   const skin = z.hitT>0 ? '#fff' : z.def.skin;
@@ -769,6 +785,68 @@ function drawZombie(z, p){
   ctx.restore();
 }
 
+/* ---------------- décor : clôture + accessoires BBQ ---------------- */
+const PROPS = [];
+(function(){
+  for(let i=0;i<40;i++){       // piquets de clôture tout autour de l'arène
+    const a = i/40*Math.PI*2;
+    PROPS.push({kind:'post', x:Math.sin(a)*T.arenaR, z:Math.cos(a)*T.arenaR});
+  }
+  const rng = s => { s = Math.sin(s)*43758.5453; return s - Math.floor(s); };
+  for(let i=0;i<9;i++){        // parasols, barbecues, haies dispersés (hors du centre)
+    const a = rng(i*7+1)*Math.PI*2, d = 12 + rng(i*13+2)*(T.arenaR-16);
+    PROPS.push({kind:['parasol','grill','haie'][i%3], x:Math.sin(a)*d, z:Math.cos(a)*d});
+  }
+  for(let i=0;i<26;i++){       // touffes d'herbe / fleurs pour le sol
+    const a = rng(i*3+40)*Math.PI*2, d = 4 + rng(i*11+9)*(T.arenaR-6);
+    PROPS.push({kind:'touffe', x:Math.sin(a)*d, z:Math.cos(a)*d, v:rng(i*5+3)});
+  }
+})();
+function drawProp(pr, p){
+  const u = p.k*T.zScale;
+  ctx.save();
+  ctx.translate(p.sx, p.feet);
+  ctx.scale(u, u);
+  if(pr.kind==='post'){
+    ctx.fillStyle = '#8a6a48';
+    ctx.fillRect(-4, -52, 8, 52);
+    ctx.fillStyle = '#75563a';
+    ctx.fillRect(-14, -46, 28, 7);
+    ctx.fillRect(-14, -24, 28, 7);
+  } else if(pr.kind==='parasol'){
+    ctx.strokeStyle = '#c8cdd6'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-78); ctx.stroke();
+    for(let i=0;i<6;i++){
+      ctx.fillStyle = i%2 ? '#ff6b5e' : '#fff4e0';
+      ctx.beginPath(); ctx.moveTo(0,-78);
+      ctx.arc(0,-58, 46, (i/6)*Math.PI+Math.PI, ((i+1)/6)*Math.PI+Math.PI);
+      ctx.closePath(); ctx.fill();
+    }
+  } else if(pr.kind==='grill'){
+    ctx.fillStyle = '#2e2e38';
+    ctx.beginPath(); ctx.ellipse(0, -34, 22, 12, 0, Math.PI, 0); ctx.fill();
+    ctx.fillRect(-22, -36, 44, 6);
+    ctx.strokeStyle = '#2e2e38'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(-12,-30); ctx.lineTo(-16,0); ctx.moveTo(12,-30); ctx.lineTo(16,0); ctx.stroke();
+    ctx.fillStyle = '#ff9d2e';
+    ctx.beginPath(); ctx.arc(-6,-38,4,0,7); ctx.arc(4,-40,5,0,7); ctx.fill();
+  } else if(pr.kind==='haie'){
+    ctx.fillStyle = '#4d7a35';
+    ctx.beginPath();
+    ctx.arc(-18,-14,16,0,7); ctx.arc(0,-20,20,0,7); ctx.arc(18,-13,15,0,7);
+    ctx.fill();
+  } else {   // touffe
+    ctx.strokeStyle = pr.v<0.25 ? '#e8b23d' : '#6d8a4e'; ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(-5,0); ctx.lineTo(-7,-10);
+    ctx.moveTo(0,0); ctx.lineTo(0,-13);
+    ctx.moveTo(5,0); ctx.lineTo(7,-9);
+    ctx.stroke();
+    if(pr.v<0.25){ ctx.fillStyle = '#ff8ac2'; ctx.beginPath(); ctx.arc(0,-15,4,0,7); ctx.fill(); }
+  }
+  ctx.restore();
+}
+
 function drawWorld(){
   /* ciel joyeux + sol terne (les zombies doivent "pop") */
   const sk = ctx.createLinearGradient(0,0,0,horizon);
@@ -797,6 +875,10 @@ function drawWorld(){
 
 function drawSprites(){
   const items = [];
+  for(const pr of PROPS){
+    const p = project(pr.x, pr.z);
+    if(p && p.d < 55) items.push({d:p.d, f:()=>drawProp(pr,p)});
+  }
   for(const z of zombies){
     const p = project(z.x, z.z);
     if(p) items.push({d:p.d, f:()=>drawZombie(z,p)});
@@ -826,7 +908,16 @@ function drawSprites(){
     const p = project(pop.x, pop.z);
     if(p) items.push({d:p.d, f:()=>{
       const k = pop.t/0.6;
-      if(pop.kind==='pouf'){
+      if(pop.kind==='dmg'){
+        ctx.fillStyle = `rgba(255,240,120,${1-k})`;
+        ctx.strokeStyle = `rgba(90,40,0,${0.8*(1-k)})`;
+        ctx.lineWidth = 3;
+        ctx.font = `bold ${Math.max(11, 30*p.k*T.zScale)}px "Trebuchet MS"`;
+        ctx.textAlign = 'center';
+        const y = p.feet - pop.y*(focal/Math.max(0.5,p.d)) - 46*k;
+        ctx.strokeText('-'+pop.val, p.sx, y);
+        ctx.fillText('-'+pop.val, p.sx, y);
+      } else if(pop.kind==='pouf'){
         ctx.fillStyle = `rgba(255,255,255,${0.85*(1-k)})`;
         for(let i=0;i<5;i++){
           const a = i*1.26 + pop.x;
@@ -852,7 +943,107 @@ function drawSprites(){
   for(const it of items) it.f();
 }
 
+/* ---------------- arme à l'écran : vue arrière façon Doom ----------------
+   Crosse en bas (centre-droit), canon en trapèze qui FUIT vers le viseur.
+   C'est la lecture FPS la plus immédiate possible en 2D.               */
+function drawWeapon(){
+  const w = curW();
+  const rec = Math.max(0, S.muzzle)/0.07;          // 1 → 0 : recul
+  const bob = Math.sin(S.bobT*9)*9*S.bobK;
+  const swx = Math.sin(S.bobT*4.5)*7*S.bobK - (S._dyaw||0)*170;
+  const sc = Math.min(W,H)/760;
+  /* base (bas d'écran) et bout du canon (poussé vers le viseur) */
+  const bx = W*0.585 + swx, by = H + 26 + bob + rec*42;
+  const tx = W*0.518 + swx*0.35, ty = H*0.615 + bob*0.45 + rec*36;
+  const col  = {pistol:'#5d6570', pompe:'#8a4a22', mitra:'#33383f', grenade:'#4e6b4a', licorne:'#f3c6ff'}[w.id];
+  const dark = {pistol:'#3c434c', pompe:'#5d3013', mitra:'#20242a', grenade:'#33482f', licorne:'#c88fe0'}[w.id];
+  const bw = (w.id==='grenade' ? 150 : w.id==='pompe' ? 120 : 96)*sc;   // largeur crosse
+  const tw = (w.id==='grenade' ? 62  : w.id==='pompe' ? 44  : 30)*sc;   // largeur bouche
+  /* canon (trapèze) */
+  ctx.save();
+  if(w.id==='licorne'){
+    const rb = ctx.createLinearGradient(bx-bw/2, by, bx+bw/2, by);
+    ['#ff6b9e','#ffd23e','#7ce8a0','#6bb8ff'].forEach((c,i)=>rb.addColorStop(i/3, c));
+    ctx.fillStyle = rb;
+  } else ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(bx-bw/2, by); ctx.lineTo(bx+bw/2, by);
+  ctx.lineTo(tx+tw/2, ty); ctx.lineTo(tx-tw/2, ty);
+  ctx.closePath(); ctx.fill();
+  /* arête gauche plus sombre = volume */
+  ctx.fillStyle = 'rgba(0,0,0,.22)';
+  ctx.beginPath();
+  ctx.moveTo(bx-bw/2, by); ctx.lineTo(bx-bw/2+bw*0.3, by);
+  ctx.lineTo(tx-tw/2+tw*0.3, ty); ctx.lineTo(tx-tw/2, ty);
+  ctx.closePath(); ctx.fill();
+  /* bouche du canon */
+  ctx.fillStyle = dark;
+  if(w.id==='pompe'){        // double canon
+    ctx.beginPath();
+    ctx.ellipse(tx-tw*0.26, ty, tw*0.26, tw*0.20, 0, 0, 7);
+    ctx.ellipse(tx+tw*0.26, ty, tw*0.26, tw*0.20, 0, 0, 7);
+    ctx.fill();
+    ctx.fillStyle = '#c8cdd6';                                  // pompe chromée
+    ctx.fillRect(bx-bw*0.42, by-(by-ty)*0.42 - rec*22*sc, bw*0.84, 26*sc);
+  } else {
+    ctx.beginPath(); ctx.ellipse(tx, ty, tw*0.5, tw*0.38, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.5)';
+    ctx.beginPath(); ctx.ellipse(tx, ty, tw*0.30, tw*0.22, 0, 0, 7); ctx.fill();
+  }
+  if(w.id==='mitra'){        // évents latéraux
+    ctx.strokeStyle = '#4a525c'; ctx.lineWidth = 3*sc;
+    for(let i=1;i<4;i++){
+      const f = i/4;
+      const yy = by + (ty-by)*f, xx = bx + (tx-bx)*f, ww = bw + (tw-bw)*f;
+      ctx.beginPath(); ctx.moveTo(xx-ww*0.62, yy); ctx.lineTo(xx-ww*0.4, yy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xx+ww*0.4, yy); ctx.lineTo(xx+ww*0.62, yy); ctx.stroke();
+    }
+  }
+  if(w.id==='grenade'){      // gueule béante du tromblon
+    ctx.strokeStyle = '#2a3a26'; ctx.lineWidth = 6*sc;
+    ctx.beginPath(); ctx.ellipse(tx, ty, tw*0.5, tw*0.38, 0, 0, 7); ctx.stroke();
+  }
+  if(w.id==='licorne'){      // corne + crinière
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.moveTo(tx-tw*0.1, ty-2); ctx.lineTo(tx+tw*0.45, ty-tw*1.15); ctx.lineTo(tx+tw*0.42, ty);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#ff8ac2';
+    ctx.beginPath(); ctx.arc(bx-bw*0.5, by-30*sc, 16*sc, 0, 7); ctx.arc(bx-bw*0.44, by-58*sc, 12*sc, 0, 7); ctx.fill();
+  }
+  /* mains cartoon sur la crosse */
+  ctx.fillStyle = '#e8b489';
+  ctx.beginPath();
+  ctx.ellipse(bx-bw*0.52, by-26*sc, 26*sc, 20*sc, 0.4, 0, 7);
+  ctx.ellipse(bx+bw*0.54, by-40*sc, 26*sc, 20*sc, -0.4, 0, 7);
+  ctx.fill();
+  /* éclair de bouche au bout du canon */
+  if(S.muzzle > 0){
+    ctx.translate(tx, ty);
+    ctx.fillStyle = w.id==='licorne' ? 'rgba(255,170,240,.95)' : 'rgba(255,220,90,.95)';
+    ctx.beginPath();
+    for(let i=0;i<10;i++){
+      const a = i/10*Math.PI*2 + rec*0.7;
+      const r = (i%2 ? 20 : 52)*sc*(0.7+rec*0.7)*(w.id==='pompe'?1.5:1);
+      ctx.lineTo(Math.cos(a)*r*1.25, Math.sin(a)*r);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.beginPath(); ctx.arc(0, 0, 18*sc*(0.5+rec), 0, 7); ctx.fill();
+    ctx.setTransform(1,0,0,1,0,0);
+    /* rayon licorne : trait continu jusqu'au viseur */
+    if(w.id==='licorne'){
+      const g = ctx.createLinearGradient(tx, ty, W/2, H/2);
+      g.addColorStop(0,'rgba(255,170,240,.9)'); g.addColorStop(1,'rgba(160,230,255,.15)');
+      ctx.strokeStyle = g; ctx.lineWidth = 10*sc;
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(W/2, H/2); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 function drawHUDPlay(){
+  drawWeapon();
   /* viseur */
   ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 2;
   ctx.beginPath();
@@ -861,9 +1052,14 @@ function drawHUDPlay(){
   ctx.moveTo(W/2, H/2-12); ctx.lineTo(W/2, H/2-4);
   ctx.moveTo(W/2, H/2+4); ctx.lineTo(W/2, H/2+12);
   ctx.stroke();
-  if(S.muzzle > 0){
-    ctx.fillStyle = 'rgba(255,220,90,.8)';
-    ctx.beginPath(); ctx.arc(W/2, H/2+18, 14+Math.random()*8, 0, 7); ctx.fill();
+  /* hit-marker : X quand un tir touche */
+  if(S.hitMark > 0){
+    ctx.strokeStyle = `rgba(255,120,90,${S.hitMark/0.12})`; ctx.lineWidth = 3;
+    ctx.beginPath();
+    for(const [a,b,c,d] of [[-1,-1,-2,-2],[1,-1,2,-2],[-1,1,-2,2],[1,1,2,2]]){
+      ctx.moveTo(W/2+a*7, H/2+b*7); ctx.lineTo(W/2+c*7, H/2+d*7);
+    }
+    ctx.stroke();
   }
   /* barre de vie */
   const bw = Math.min(340, W*0.4);
@@ -968,6 +1164,7 @@ function loop(now){
   /* rendu */
   ctx.save();
   if(S.shake > 0) ctx.translate((Math.random()-0.5)*S.shake*22, (Math.random()-0.5)*S.shake*22);
+  ctx.translate(0, Math.sin(S.bobT*9)*4*S.bobK + S.muzzle*40*(S.muzzle>0));   // head-bob + kick vertical au tir
   drawWorld();
   drawSprites();
   ctx.restore();
