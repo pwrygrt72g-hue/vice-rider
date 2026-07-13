@@ -126,35 +126,35 @@ const T = {
 /* ================= missions ================= */
 const DEFS = [
   { type:'chase', title:'LA FUYARDE', ty:'FILATURE', tod:'dusk',
-    brief:"Une berline quitte le quartier des affaires avec des documents volés, à l'heure où le soleil se couche. Prends-la en chasse.",
+    brief:"Une berline quitte le quartier de l'Opéra avec des documents volés, à l'heure où le soleil rase les toits de zinc. Prends-la en chasse dans les vraies rues de Paris.",
     obj:"Maintiens le verrouillage caméra à moins de 24 m pendant 5 s.",
     map:{seed:7}, carSpd:19, need:5, time:100, escape:170 },
   { type:'photo', title:'LES ANTENNES', ty:'RECONNAISSANCE', tod:'day',
-    brief:"Le réseau ennemi communique par trois antennes relais posées sur les toits. Survole la ville en plein jour et repère les feux rouges clignotants.",
+    brief:"Le réseau ennemi a posé trois antennes relais sur les toits d'immeubles haussmanniens. Survole le quartier en plein jour et repère les feux rouges clignotants.",
     obj:"Photographie les 3 antennes (vise + clic).",
     map:{seed:21}, time:150 },
   { type:'race', title:'COULOIR RADAR', ty:'DÉFI', tod:'dusk',
-    brief:"Un corridor de brouillage s'ouvre 55 secondes. L'itinéraire monte sur les toits et redescend au ras du bitume — la moindre erreur coûte le chrono.",
+    brief:"Un corridor de brouillage s'ouvre 55 secondes depuis l'Opéra Garnier. Suis l'itinéraire balisé dans les vraies rues — ça monte au-dessus des toits et ça replonge au ras du pavé.",
     obj:"Passe les 12 balises avant la fin du chrono.",
     map:{seed:12}, time:55 },
-  { type:'infil', title:"L'ENTREPÔT", ty:'INFILTRATION', tod:'night',
-    brief:"Des caisses d'armes transitent par un entrepôt des docks. Un projecteur balaie la zone : reste hors du faisceau.",
+  { type:'infil', title:'LE MARCHÉ', ty:'INFILTRATION', tod:'night',
+    brief:"Des caisses d'armes transitent par un entrepôt monté place du Marché Saint-Honoré. Un projecteur balaie la place : reste hors du faisceau.",
     obj:"Entre par le portail et photographie les caisses. Ne te fais pas repérer.",
-    map:{seed:33, docks:true}, time:150, lights:1 },
+    map:{seed:33}, time:150, lights:1 },
   { type:'chase', title:'LE CONVOYEUR', ty:'FILATURE', tod:'night',
-    brief:"Le convoyeur du cartel roule à 97 km/h, tous feux éteints dans la ville endormie. Il connaît chaque rue. Distance de rupture réduite : 140 m.",
+    brief:"Le convoyeur du cartel roule à 97 km/h dans Paris endormi, tous feux éteints. Il connaît chaque ruelle. Distance de rupture réduite : 140 m.",
     obj:"Verrouillage 8 s — ne le perds jamais des yeux.",
     map:{seed:44}, carSpd:27, need:8, time:100, escape:140 },
-  { type:'photo', title:'LA RÉUNION', ty:'RECONNAISSANCE', tod:'night',
-    brief:"Deux organisations se partagent le territoire cette nuit, dans une cour sous triple surveillance. Il nous faut une preuve nette : utilise le zoom ×2 (double-clic).",
+  { type:'photo', title:'PLACE VENDÔME', ty:'RECONNAISSANCE', tod:'night',
+    brief:"Deux organisations se partagent le territoire cette nuit, en plein cœur de la place Vendôme, sous triple surveillance. Il nous faut une preuve nette : utilise le zoom (double-clic).",
     obj:"Photographie la réunion AU ZOOM, sans toucher les faisceaux.",
     map:{seed:58}, time:150, meeting:true, lights:3 },
   { type:'infil', title:'LA SALLE DES SERVEURS', ty:'INFILTRATION', tod:'night',
-    brief:"Leur salle des serveurs est au fond d'un hangar sous double projecteur rapide. L'alarme monte deux fois plus vite et le chrono est court.",
+    brief:"Leur salle des serveurs est au fond du hangar du Marché Saint-Honoré, sous double projecteur rapide. L'alarme monte deux fois plus vite et le chrono est court.",
     obj:"Photographie les serveurs. Deux projecteurs. Zéro erreur.",
-    map:{seed:71, docks:true}, time:110, lights:2, hard:true },
+    map:{seed:71}, time:110, lights:2, hard:true },
   { type:'chase', title:'SANS LIMITE', ty:'FILATURE ∞', tod:'dusk',
-    brief:"Plus aucune retenue : chaque cible identifiée en appelle une plus rapide. Jusqu'où peux-tu suivre ?",
+    brief:"Plus aucune retenue : chaque cible identifiée en appelle une plus rapide, dans tout le quartier Opéra-Vendôme. Jusqu'où peux-tu suivre ?",
     obj:"Identifie autant de véhicules que possible.",
     map:{seed:90}, carSpd:25, need:6, time:100, escape:160, endless:true },
 ];
@@ -344,41 +344,91 @@ function applyTod(name){
   const m = new THREE.Mesh(new THREE.PlaneGeometry(1600,1600), new THREE.MeshLambertMaterial({map: tex}));
   m.rotation.x = -Math.PI/2; scene.add(m);
 }
-/* routes (grille 5×5) + passages piétons fusionnés */
-const ROAD_XZ = [-160,-80,0,80,160];
-const NODES = [];
-for(const x of ROAD_XZ) for(const z of ROAD_XZ) NODES.push(new THREE.Vector3(x,0,z));
+/* ================= PARIS — quartier Opéra/Vendôme (OpenStreetMap) ================= */
+const PARIS = await fetch('./paris.json').then(r => r.json());
+/* graphe routier réel pour les véhicules */
+const graph = { pts: [], adj: [] };
 {
-  const c = document.createElement('canvas'); c.width = 128; c.height = 512;
-  const g = c.getContext('2d'); g.fillStyle = '#33353a'; g.fillRect(0,0,128,512);
-  g.strokeStyle = 'rgba(225,228,235,.6)'; g.lineWidth = 4; g.setLineDash([26,30]);
-  g.beginPath(); g.moveTo(64,0); g.lineTo(64,512); g.stroke();
-  for(let i=0;i<300;i++){ g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(Math.random()*128, Math.random()*512, 3, 3); }
-  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1,6);
-  const roadMat = new THREE.MeshLambertMaterial({map: t});
-  for(const k of ROAD_XZ){
-    const r1 = new THREE.Mesh(new THREE.PlaneGeometry(11, 340), roadMat);
-    r1.rotation.x = -Math.PI/2; r1.position.set(k, 0.02, 0); scene.add(r1);
-    const r2 = new THREE.Mesh(new THREE.PlaneGeometry(11, 340), roadMat);
-    r2.rotation.x = -Math.PI/2; r2.rotation.z = Math.PI/2; r2.position.set(0, 0.02, k); scene.add(r2);
-  }
-  /* zebra */
-  const zc = document.createElement('canvas'); zc.width = 64; zc.height = 32;
-  const zg = zc.getContext('2d'); zg.fillStyle = '#33353a'; zg.fillRect(0,0,64,32);
-  zg.fillStyle = 'rgba(230,232,238,.85)';
-  for(let x=4; x<64; x+=12) zg.fillRect(x,2,6,28);
-  const zebraTex = new THREE.CanvasTexture(zc);
-  const parts = [];
-  for(const x of ROAD_XZ) for(const z of ROAD_XZ){
-    for(const [ox,oz,rot] of [[0,8.2,0],[0,-8.2,0],[8.2,0,Math.PI/2],[-8.2,0,Math.PI/2]]){
-      const p = new THREE.PlaneGeometry(10.5,3.4);
-      p.rotateX(-Math.PI/2); p.rotateY(rot);
-      p.translate(x+ox, 0.03, z+oz);
-      parts.push(p);
+  const key2i = new Map();
+  const nid = (x,z) => {
+    const k = Math.round(x/2) + '_' + Math.round(z/2);
+    let i = key2i.get(k);
+    if(i === undefined){ i = graph.pts.length; key2i.set(k,i);
+      graph.pts.push(new THREE.Vector3(x,0,z)); graph.adj.push([]); }
+    return i;
+  };
+  for(const r of PARIS.r){
+    if(!r.d) continue;
+    let prev = null;
+    for(let i=0;i<r.p.length;i+=2){
+      const id = nid(r.p[i], r.p[i+1]);
+      if(prev !== null && prev !== id){
+        if(!graph.adj[prev].includes(id)) graph.adj[prev].push(id);
+        if(!graph.adj[id].includes(prev)) graph.adj[id].push(prev);
+      }
+      prev = id;
     }
   }
-  const zebra = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshLambertMaterial({map: zebraTex}));
-  scene.add(zebra);
+}
+function nearestNode(x,z){
+  let bi = 0, bd = 1e12;
+  for(let i=0;i<graph.pts.length;i++){
+    if(!graph.adj[i].length) continue;
+    const p = graph.pts[i], d = (p.x-x)**2 + (p.z-z)**2;
+    if(d < bd){ bd = d; bi = i; }
+  }
+  return bi;
+}
+/* segments routiers (lampadaires, stationnement, piétons) */
+const SEG = [];
+for(const r of PARIS.r){
+  for(let i=0;i<r.p.length-2;i+=2){
+    const ax = r.p[i], az = r.p[i+1], bx = r.p[i+2], bz = r.p[i+3];
+    const len = Math.hypot(bx-ax, bz-az);
+    if(len < 6) continue;
+    SEG.push({ax,az,bx,bz,len,w:r.w,d:r.d,
+      nx:(bz-az)/len, nz:-(bx-ax)/len});   // normale unitaire
+  }
+}
+/* rendu des rues réelles */
+{
+  const mkRoadTex = (dash) => {
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = dash ? '#3a3c41' : '#8d8880'; g.fillRect(0,0,64,64);
+    for(let i=0;i<160;i++){ g.fillStyle = `rgba(0,0,0,${0.08+Math.random()*0.14})`;
+      g.fillRect(Math.random()*64, Math.random()*64, 2, 2); }
+    if(dash){ g.fillStyle = 'rgba(225,228,235,.5)'; g.fillRect(30,6,4,24); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  };
+  const drive = [], ped = [];
+  PARIS.r.forEach((r,ri) => {
+    const y = 0.02 + (ri%7)*0.005;   // anti z-fighting aux croisements
+    for(let i=0;i<r.p.length-2;i+=2){
+      const ax = r.p[i], az = r.p[i+1], bx = r.p[i+2], bz = r.p[i+3];
+      const dx = bx-ax, dz = bz-az, len = Math.hypot(dx,dz);
+      if(len < 0.5) continue;
+      const g = new THREE.PlaneGeometry(r.w, len + r.w*0.7);
+      const uv = g.attributes.uv;
+      for(let k=0;k<uv.count;k++) uv.setY(k, uv.getY(k)*(len/9));
+      g.rotateX(-Math.PI/2);
+      g.rotateY(Math.atan2(-dx,-dz));
+      g.translate((ax+bx)/2, y, (az+bz)/2);
+      (r.d ? drive : ped).push(g);
+    }
+  });
+  scene.add(new THREE.Mesh(mergeGeometries(drive), new THREE.MeshLambertMaterial({map: mkRoadTex(true)})));
+  scene.add(new THREE.Mesh(mergeGeometries(ped), new THREE.MeshLambertMaterial({map: mkRoadTex(false)})));
+  /* dalle urbaine (trottoirs/cours) sous tout le quartier */
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#9a958b'; g.fillRect(0,0,128,128);
+  for(let i=0;i<420;i++){ g.fillStyle = `rgba(${110+Math.random()*30|0},${106+Math.random()*28|0},${96+Math.random()*26|0},.5)`;
+    g.fillRect(Math.random()*128, Math.random()*128, 2, 2); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(90,90);
+  const dalle = new THREE.Mesh(new THREE.PlaneGeometry(1100,1100), new THREE.MeshLambertMaterial({map: t}));
+  dalle.rotation.x = -Math.PI/2; dalle.position.y = 0.008; scene.add(dalle);
 }
 /* halo réutilisable */
 const glowTex = (()=>{
@@ -408,97 +458,150 @@ const isDay = () => tod === 'day';
 function addCollider(x,z,w,d,h,y0=0){
   colliders.push({min: new THREE.Vector3(x-w/2-0.5, y0, z-d/2-0.5), max: new THREE.Vector3(x+w/2+0.5, y0+h+0.5, z+d/2+0.5)});
 }
-/* façade : couleur de murs + fenêtres (allumées la nuit, vitres le jour) */
-function facadeTex(w,h,wall,dark){
-  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+/* ===== façades haussmanniennes (canvas 512² = 4 travées × 4 étages) ===== */
+const PALETTES = [
+  {wall:'#d6c8ae', trim:'#efe8d8'}, {wall:'#cfc0a4', trim:'#e8dfc8'},
+  {wall:'#c9bda6', trim:'#e5dcc6'}, {wall:'#e0d6c0', trim:'#f2ecd9'},
+  {wall:'#bfb49f', trim:'#ddd4bf'}, {wall:'#cdb894', trim:'#e9dbbc'},
+];
+function hausTex(pal){
+  const c = document.createElement('canvas'); c.width = c.height = 512;
   const g = c.getContext('2d');
-  g.fillStyle = wall; g.fillRect(0,0,64,64);
-  const litRate = isDay() ? 0 : (tod==='dusk' ? 0.2 : (dark ? 0.08 : 0.42));
-  for(let y=8;y<60;y+=14) for(let x=6;x<58;x+=12){
-    if(rnd() < litRate){
-      const warm = rnd() < 0.72, a = 0.55 + rnd()*0.45;
-      g.fillStyle = warm ? `rgba(255,${170+rnd()*50|0},${70+rnd()*40|0},${a})`
-                         : `rgba(150,${200+rnd()*40|0},255,${a})`;
-    } else g.fillStyle = isDay() ? 'rgba(52,66,84,.9)' : 'rgba(14,16,22,.95)';
-    g.fillRect(x,y,7,9);
-    g.strokeStyle = 'rgba(0,0,0,.25)'; g.strokeRect(x,y,7,9);
+  g.fillStyle = pal.wall; g.fillRect(0,0,512,512);
+  g.strokeStyle = 'rgba(0,0,0,.07)'; g.lineWidth = 1;           // joints de pierre
+  for(let y=0;y<512;y+=16){ g.beginPath(); g.moveTo(0,y); g.lineTo(512,y); g.stroke(); }
+  g.fillStyle = 'rgba(255,255,255,.12)';                         // bandeaux d'étage
+  for(let f=0;f<4;f++) g.fillRect(0, f*128, 512, 5);
+  for(let f=0;f<4;f++) for(let wq=0; wq<4; wq++){
+    const wx = wq*128+36, wy = f*128+18, ww = 56, wh = 88;
+    const lit = !isDay() && rnd() < (tod==='dusk' ? 0.18 : 0.38);
+    const gr = g.createLinearGradient(0,wy,0,wy+wh);
+    if(lit){ gr.addColorStop(0,'#ffd9a0'); gr.addColorStop(1,'#c98f4e'); }
+    else if(isDay()){ gr.addColorStop(0,'#a9bfd2'); gr.addColorStop(1,'#5f7488'); }
+    else { gr.addColorStop(0,'#1a2028'); gr.addColorStop(1,'#0c1016'); }
+    g.fillStyle = gr; g.fillRect(wx,wy,ww,wh);                   // vitre
+    g.strokeStyle = pal.trim; g.lineWidth = 5;                   // encadrement pierre
+    g.strokeRect(wx-4, wy-4, ww+8, wh+8);
+    g.strokeStyle = lit ? 'rgba(70,40,16,.8)' : 'rgba(232,228,214,.9)';
+    g.lineWidth = 3;                                             // croisillons
+    g.beginPath(); g.moveTo(wx+ww/2,wy); g.lineTo(wx+ww/2,wy+wh);
+    g.moveTo(wx,wy+wh*0.45); g.lineTo(wx+ww,wy+wh*0.45); g.stroke();
+    g.strokeRect(wx,wy,ww,wh);
+    g.strokeStyle = 'rgba(28,30,34,.85)'; g.lineWidth = 2;       // balcon fer forgé
+    g.strokeRect(wx-7, wy+wh-13, ww+14, 13);
+    for(let bx=wx-7; bx<=wx+ww+7; bx+=6){ g.beginPath(); g.moveTo(bx,wy+wh-13); g.lineTo(bx,wy+wh); g.stroke(); }
   }
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(Math.max(1,Math.round(w/12)), Math.max(1,Math.round(h/10)));
   return t;
 }
-function facadeMat(w,h,wall,dark){
-  const t = facadeTex(w,h,wall,dark);
-  const m = new THREE.MeshLambertMaterial({map: t});
-  if(!isDay()){ m.emissive = new THREE.Color(0xffffff); m.emissiveMap = t; m.emissiveIntensity = tod==='dusk'? 0.45 : 0.9; }
-  return m;
-}
-function roofProps(x,z,w,d,h){
-  const grey = new THREE.MeshLambertMaterial({color: 0x8a8d92});
-  const n = 1 + (rnd()*3|0);
-  for(let i=0;i<n;i++){
-    const bw = 1.6+rnd()*2.4, bh = 1+rnd()*1.4;
-    const b = new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bw), grey);
-    b.position.set(x + (rnd()-0.5)*(w-6), h+bh/2, z + (rnd()-0.5)*(d-6));
-    cityGrp.add(b);
+function shopTex(){
+  /* 512×128 = 4 boutiques de ~4,6 m : vitrine + enseigne colorée */
+  const c = document.createElement('canvas'); c.width = 512; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#6a6258'; g.fillRect(0,0,512,128);              // pierre de soubassement
+  const signs = ['#7a2430','#1e4d3a','#22304a','#141414','#5a3a1e','#3a2450'];
+  for(let s=0;s<4;s++){
+    const x0 = s*128;
+    g.fillStyle = signs[(rnd()*signs.length)|0];                 // bandeau d'enseigne
+    g.fillRect(x0+6, 8, 116, 26);
+    g.fillStyle = 'rgba(255,240,210,.75)';                        // lettres suggérées
+    for(let lx=x0+16; lx<x0+110; lx+=10+rnd()*8) g.fillRect(lx, 16, 6+rnd()*4, 9);
+    const lit = !isDay();
+    const gr = g.createLinearGradient(0,40,0,120);               // vitrine
+    if(lit){ gr.addColorStop(0,'#ffe2b0'); gr.addColorStop(1,'#8a5f30'); }
+    else { gr.addColorStop(0,'#9fb4c6'); gr.addColorStop(1,'#4e6274'); }
+    g.fillStyle = gr; g.fillRect(x0+10, 40, 108, 80);
+    g.strokeStyle = '#2a2620'; g.lineWidth = 5;
+    g.strokeRect(x0+10, 40, 108, 80);
+    g.beginPath(); g.moveTo(x0+64, 40); g.lineTo(x0+64, 120); g.stroke();
   }
-  if(rnd()<0.3){   // réservoir d'eau
-    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.3,1.3,2.6,8), new THREE.MeshLambertMaterial({color:0x6a5648}));
-    tank.position.set(x + (rnd()-0.5)*(w-8), h+2.4, z + (rnd()-0.5)*(d-8));
-    cityGrp.add(tank);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+function roofTex(dark){
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = dark ? '#585c63' : '#71757c'; g.fillRect(0,0,64,64);  // zinc
+  g.strokeStyle = 'rgba(0,0,0,.15)';
+  for(let x=0;x<64;x+=8){ g.beginPath(); g.moveTo(x,0); g.lineTo(x,64); g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3,3);
+  return t;
+}
+function buildParisBuildings(){
+  const wallBuckets = PALETTES.map(()=>[]);
+  const shopBucket = [];
+  const roofBuckets = [[],[]];
+  const SHOP_H = 3.8, MOD_W = 12.8, MOD_H = 12.4;
+  PARIS.b.forEach((b, bi) => {
+    const p = b.p, h = b.h;
+    let minx=1e9, maxx=-1e9, minz=1e9, maxz=-1e9, cx=0, cz=0;
+    const n = p.length/2;
+    for(let i=0;i<p.length;i+=2){
+      minx = Math.min(minx,p[i]); maxx = Math.max(maxx,p[i]);
+      minz = Math.min(minz,p[i+1]); maxz = Math.max(maxz,p[i+1]);
+      cx += p[i]/n; cz += p[i+1]/n;
+    }
+    colliders.push({min: new THREE.Vector3(minx-0.4,0,minz-0.4), max: new THREE.Vector3(maxx+0.4,h+0.4,maxz+0.4), poly: p});
+    built.push({x:cx, z:cz, h});
+    const pal = bi % PALETTES.length;
+    const shopH = h > 8 ? SHOP_H : 0;
+    for(let i=0;i<p.length;i+=2){
+      const ax = p[i], az = p[i+1];
+      const bx2 = p[(i+2)%p.length], bz2 = p[(i+3)%p.length];
+      const dx = bx2-ax, dz = bz2-az, len = Math.hypot(dx,dz);
+      if(len < 1.5) continue;
+      const a = Math.atan2(-dz, dx);
+      const mx = (ax+bx2)/2, mz = (az+bz2)/2;
+      const wallH = h - shopH;
+      const gw = new THREE.PlaneGeometry(len, wallH);
+      const uvw = gw.attributes.uv;
+      for(let k=0;k<uvw.count;k++){ uvw.setXY(k, uvw.getX(k)*(len/MOD_W), uvw.getY(k)*(wallH/MOD_H)); }
+      gw.rotateY(a); gw.translate(mx, shopH + wallH/2, mz);
+      wallBuckets[pal].push(gw);
+      if(shopH > 0){
+        const gs = new THREE.PlaneGeometry(len, shopH);
+        const uvs = gs.attributes.uv;
+        for(let k=0;k<uvs.count;k++) uvs.setX(k, uvs.getX(k)*(len/18.4));
+        gs.rotateY(a); gs.translate(mx, shopH/2, mz);
+        shopBucket.push(gs);
+      }
+    }
+    /* toit plat zinc (empreinte réelle) */
+    const shape = new THREE.Shape();
+    shape.moveTo(p[0], -p[1]);
+    for(let i=2;i<p.length;i+=2) shape.lineTo(p[i], -p[i+1]);
+    shape.closePath();
+    const gr = new THREE.ShapeGeometry(shape);
+    gr.rotateX(-Math.PI/2); gr.translate(0, h, 0);
+    roofBuckets[bi%2].push(gr);
+  });
+  const mkMat = (tex, emissive) => {
+    const m = new THREE.MeshLambertMaterial({map: tex, side: THREE.DoubleSide});
+    if(emissive && !isDay()){ m.emissive = new THREE.Color(0xffffff); m.emissiveMap = tex;
+      m.emissiveIntensity = tod==='dusk' ? 0.32 : 0.62; }
+    return m;
+  };
+  wallBuckets.forEach((arr, i) => {
+    if(arr.length) cityGrp.add(new THREE.Mesh(mergeGeometries(arr), mkMat(hausTex(PALETTES[i]), true)));
+  });
+  if(shopBucket.length) cityGrp.add(new THREE.Mesh(mergeGeometries(shopBucket), mkMat(shopTex(), true)));
+  roofBuckets.forEach((arr, i) => {
+    if(arr.length) cityGrp.add(new THREE.Mesh(mergeGeometries(arr), new THREE.MeshLambertMaterial({map: roofTex(i===1)})));
+  });
+  /* feux rouges sur les 6 plus hauts toits, la nuit */
+  if(!isDay()){
+    [...built].sort((a,b)=>b.h-a.h).slice(0,6).forEach(b => blinker(b.x, b.h+1.6, b.z));
   }
 }
-const WALL_MID = ['#b58a72','#cfc4ae','#d8d8d2','#95a2b0','#c2a88c','#a8b0a0','#c8b8b8'];
-const ROOF_MID = [0x5f6266, 0x77706a, 0x555a60, 0x6e6258];
-function buildingMid(x,z,w,d,h,edgeRotY){
-  const wall = WALL_MID[rnd()*WALL_MID.length|0];
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), facadeMat(Math.max(w,d),h,wall,rnd()<0.2));
-  m.position.set(x, h/2, z); if(edgeRotY) m.rotation.y = 0;
-  cityGrp.add(m);
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(w*0.98, 0.5, d*0.98),
-    new THREE.MeshLambertMaterial({color: ROOF_MID[rnd()*ROOF_MID.length|0]}));
-  roof.position.set(x, h+0.25, z); cityGrp.add(roof);
-  addCollider(x,z,w,d,h+0.6);
-  built.push({x,z,w,d,h});
-  roofProps(x,z,w,d,h+0.5);
-  if(!isDay() && rnd() < 0.3 && h > 14){
-    const nw = 4 + rnd()*7, nh = 1.3 + rnd()*1.6, ny = h*(0.4 + rnd()*0.4);
-    const neon = new THREE.Mesh(new THREE.PlaneGeometry(nw, nh),
-      new THREE.MeshBasicMaterial({color: NEON_COLORS[rnd()*NEON_COLORS.length|0]}));
-    const face = rnd()*4|0;
-    if(face===0){ neon.position.set(x + w/2 + 0.25, ny, z); neon.rotation.y = Math.PI/2; }
-    if(face===1){ neon.position.set(x - w/2 - 0.25, ny, z); neon.rotation.y = -Math.PI/2; }
-    if(face===2){ neon.position.set(x, ny, z + d/2 + 0.25); }
-    if(face===3){ neon.position.set(x, ny, z - d/2 - 0.25); neon.rotation.y = Math.PI; }
-    cityGrp.add(neon);
+/* point dans polygone (colliders réels) */
+function pip(poly, x, z){
+  let inside = false;
+  for(let i=0, j=poly.length-2; i<poly.length; j=i, i+=2){
+    const xi = poly[i], zi = poly[i+1], xj = poly[j], zj = poly[j+1];
+    if((zi > z) !== (zj > z) && x < (xj-xi)*(z-zi)/(zj-zi) + xi) inside = !inside;
   }
-}
-function buildingTower(x,z,w,d,h){
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), facadeMat(Math.max(w,d),h,'#8fa4b8',false));
-  m.position.set(x, h/2, z); cityGrp.add(m);
-  addCollider(x,z,w,d,h);
-  built.push({x,z,w,d,h});
-  if(rnd()<0.5){ // couronne en retrait
-    const w2 = w*0.55, h2 = 4+rnd()*7;
-    const m2 = new THREE.Mesh(new THREE.BoxGeometry(w2,h2,d*0.55), facadeMat(w2,h2,'#7d92a6',false));
-    m2.position.set(x, h+h2/2, z); cityGrp.add(m2);
-    addCollider(x,z,w2,d*0.55,h2,h);
-  } else roofProps(x,z,w,d,h);
-  if(isNight() || tod==='dusk') blinker(x, h+(rnd()<0.5?0:6)+1.5, z);
-}
-const WALL_HOUSE = ['#d9cfc0','#cbb8a4','#c2c8cc','#d3c6ab','#c9b8b0','#b9c4b4'];
-const ROOF_HOUSE = [0x8a4a34, 0x74402e, 0x4a4d54, 0x5c4638, 0x93553c];
-function house(x,z){
-  const w = 7+rnd()*3.5, d = 6+rnd()*3, h = 3.6+rnd()*2, ry = rnd()*Math.PI;
-  const wall = WALL_HOUSE[rnd()*WALL_HOUSE.length|0];
-  const body = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), facadeMat(Math.max(w,d),h,wall,rnd()<0.3));
-  body.position.set(x,h/2,z); body.rotation.y = ry; cityGrp.add(body);
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w,d)*0.72, 2.2+rnd()*1.4, 4),
-    new THREE.MeshLambertMaterial({color: ROOF_HOUSE[rnd()*ROOF_HOUSE.length|0], flatShading:true}));
-  roof.position.set(x, h+1.2, z); roof.rotation.y = ry + Math.PI/4;
-  roof.scale.set(1, 1, d/Math.max(w,d));
-  cityGrp.add(roof);
-  addCollider(x,z,Math.max(w,d),Math.max(w,d),h+2.6);
+  return inside;
 }
 function tree(x,z,big){
   const s = big? 1.4 : 1;
@@ -613,131 +716,94 @@ function buildWorld(def){
   built.length = 0;
   seed = (def.map?.seed || 7);
   applyTod(def.tod || 'night');
-  const docks = !!def.map?.docks;
-  const parkBlock = rnd()*16|0;
-  const dockBlock = docks ? ((parkBlock+7)%16) : -1;
-  const wareBlock = (def.type==='infil') ? ((parkBlock+11)%16) : -1;
-  const meetBlock = def.meeting ? ((parkBlock+5)%16) : -1;
 
-  const sideMat = new THREE.MeshLambertMaterial({color: 0x84878c});
-  const yardMat = new THREE.MeshLambertMaterial({color: 0x55703f});
+  /* le vrai quartier Opéra/Vendôme */
+  buildParisBuildings();
 
-  let bi = 0;
-  for(let bx=0; bx<4; bx++) for(let bz=0; bz<4; bz++, bi++){
-    const cx0 = -160 + bx*80, cz0 = -160 + bz*80;   // coin du bloc
-    const cx = cx0 + 40, cz = cz0 + 40;             // centre du bloc
-    /* trottoir du bloc */
-    const sw = new THREE.Mesh(new THREE.PlaneGeometry(62,62), sideMat);
-    sw.rotation.x = -Math.PI/2; sw.position.set(cx, 0.015, cz); cityGrp.add(sw);
-
-    if(bi === parkBlock){
-      const lawn = new THREE.Mesh(new THREE.PlaneGeometry(56,56), yardMat);
-      lawn.rotation.x = -Math.PI/2; lawn.position.set(cx, 0.03, cz); cityGrp.add(lawn);
-      for(let i=0;i<11;i++) tree(cx0 + 16 + rnd()*48, cz0 + 16 + rnd()*48, rnd()<0.4);
-      continue;
-    }
-    if(bi === dockBlock){
-      for(let i=0;i<5;i++) containerStack(cx0 + 18 + rnd()*44, cz0 + 18 + rnd()*44);
-      crane(cx0 + 40, cz0 + 40);
-      continue;
-    }
-    if(bi === wareBlock){
-      warehouse(cx, cz, def.hard ? 'SERVEURS' : "CAISSES D'ARMES");
-      searchlight(cx - 14, cz - 26, 14, true, def.hard ? 0.85 : 0.55);
-      if((def.lights||0) > 1) searchlight(cx + 16, cz - 22, 14, true, 0.7);
-      continue;
-    }
-    if(bi === meetBlock){
-      /* cour de réunion entourée de 3 immeubles */
-      buildingMid(cx-18, cz-14, 22, 13, 14+rnd()*8);
-      buildingMid(cx+18, cz-12, 20, 13, 12+rnd()*8);
-      buildingMid(cx, cz+18, 30, 13, 16+rnd()*8);
-      const yard = new THREE.Mesh(new THREE.PlaneGeometry(30,22), new THREE.MeshLambertMaterial({color:0x3f4247}));
-      yard.rotation.x = -Math.PI/2; yard.position.set(cx, 0.03, cz-2); cityGrp.add(yard);
-      for(const [ox,oz,c] of [[-4,-2,0x14161c],[4,-1,0x23262e]]){
-        const cm = new THREE.Mesh(carGeoShared, new THREE.MeshLambertMaterial({color:c}));
-        cm.position.set(cx+ox, 0.75, cz+oz); cm.rotation.y = rnd(); cityGrp.add(cm);
-        addCollider(cx+ox, cz+oz, 4.6, 4.6, 1.6);
-      }
-      for(let i=0;i<4;i++){
-        const p = new THREE.Mesh(new THREE.BoxGeometry(0.55,1.7,0.4), new THREE.MeshLambertMaterial({color:0x0e1014}));
-        p.position.set(cx + Math.sin(i*1.7)*1.8, 0.85, cz-2 + Math.cos(i*1.7)*1.8); cityGrp.add(p);
-      }
-      const gl = new THREE.Sprite(new THREE.SpriteMaterial({map: glowTex, color:0xffd9a0, blending:THREE.AdditiveBlending, depthWrite:false, transparent:true}));
-      gl.scale.set(10,10,1); gl.position.set(cx, 4, cz-2); cityGrp.add(gl);
-      photoTargets.push({pos: new THREE.Vector3(cx, 1.2, cz-2), label:'LA RÉUNION', done:false, range:60, needZoom:true});
-      searchlight(cx-20, cz-24, 13, true, 0.5);
-      if((def.lights||0) > 1) searchlight(cx+20, cz-22, 13, true, 0.65);
-      if((def.lights||0) > 2) searchlight(cx, cz+26, 13, true, 0.75);
-      continue;
-    }
-
-    const downtown = (bx===1||bx===2) && (bz===1||bz===2);
-    const suburb = (bx===0||bx===3) && (bz===0||bz===3);
-    if(downtown){
-      const n = 2 + (rnd()*2|0);
-      for(let i=0;i<n;i++){
-        const w = 16+rnd()*14, d = 16+rnd()*14, h = 30+rnd()*34;
-        buildingTower(cx0 + 16 + w/2 + rnd()*(80-32-w), cz0 + 16 + d/2 + rnd()*(80-32-d), w, d, h);
-      }
-      for(let i=0;i<3;i++) tree(cx0 + 16 + rnd()*48, cz0 + 16 + rnd()*48, false);
-    } else if(suburb){
-      /* pavillons en grille + jardins */
-      const lawn = new THREE.Mesh(new THREE.PlaneGeometry(56,56), yardMat);
-      lawn.rotation.x = -Math.PI/2; lawn.position.set(cx, 0.025, cz); cityGrp.add(lawn);
-      for(let gx=0; gx<3; gx++) for(let gz=0; gz<3; gz++){
-        if(rnd()<0.15) continue;
-        house(cx0 + 22 + gx*18 + rnd()*4, cz0 + 22 + gz*18 + rnd()*4);
-        if(rnd()<0.7) tree(cx0 + 16 + rnd()*48, cz0 + 16 + rnd()*48, false);
-      }
-    } else {
-      /* bloc urbain : immeubles en périmètre, cour verte au centre */
-      const yard = new THREE.Mesh(new THREE.PlaneGeometry(26,26), yardMat);
-      yard.rotation.x = -Math.PI/2; yard.position.set(cx, 0.03, cz); cityGrp.add(yard);
-      for(let i=0;i<2;i++) tree(cx + (rnd()-0.5)*18, cz + (rnd()-0.5)*18, false);
-      const edges = [
-        [cx - 20 - rnd()*2, cz - 26, 24+rnd()*10, 12],   // nord
-        [cx + 20 + rnd()*2, cz + 26, 24+rnd()*10, 12],   // sud
-        [cx - 26, cz + 18 + rnd()*3, 12, 20+rnd()*8],    // ouest
-        [cx + 26, cz - 18 - rnd()*3, 12, 20+rnd()*8],    // est
-      ];
-      for(const [ex,ez,ew,ed] of edges){
-        if(rnd()<0.12) continue;
-        buildingMid(ex, ez, ew, ed, 10+rnd()*16);
-      }
+  /* mobilier le long des vraies rues : lampadaires, stationnement, arbres */
+  for(const s of SEG){
+    if(!s.d) continue;
+    const nLamp = Math.floor(s.len/34);
+    for(let i=1;i<=nLamp;i++){
+      const t = i/(nLamp+1), side = (i%2? 1 : -1);
+      lamp(s.ax + (s.bx-s.ax)*t + s.nx*side*(s.w/2+1.6),
+           s.az + (s.bz-s.az)*t + s.nz*side*(s.w/2+1.6));
     }
   }
-  /* lampadaires + voitures garées le long des routes */
-  for(const k of ROAD_XZ) for(let a=-140; a<=140; a+=70){ lamp(k+6.2, a); lamp(a, k-6.2); }
-  for(let i=0;i<30;i++){
-    const onX = rnd()<0.5, k = ROAD_XZ[rnd()*5|0];
-    const off = (rnd()<0.5? -4 : 4), along = -150 + rnd()*300;
-    if(Math.abs(along % 80) < 12) continue;   // pas sur les croisements
-    parkedCar(onX? k+off : along, onX? along : k+off, (onX? 0 : Math.PI/2) + (rnd()-0.5)*0.06);
+  let parked = 0;
+  for(let tries=0; parked<34 && tries<200; tries++){
+    const s = SEG[(rnd()*SEG.length)|0];
+    if(!s.d || s.len < 14) continue;
+    const t = 0.15 + rnd()*0.7, side = rnd()<0.5? 1 : -1;
+    const x = s.ax + (s.bx-s.ax)*t + s.nx*side*(s.w/2-1.3);
+    const z = s.az + (s.bz-s.az)*t + s.nz*side*(s.w/2-1.3);
+    if(insideCollider(new THREE.Vector3(x,1,z))) continue;
+    parkedCar(x, z, Math.atan2(s.bx-s.ax, s.bz-s.az) + Math.PI/2 + (rnd()-0.5)*0.05);
+    parked++;
   }
-  /* tour radio */
-  { const tx = docks? -130 : 130, tz = -130;
-    const mat = new THREE.MeshLambertMaterial({color:0x9c3c30});
-    for(let i=0;i<3;i++){
-      const seg = new THREE.Mesh(new THREE.BoxGeometry(3-i*0.8, 22, 3-i*0.8), mat);
-      seg.position.set(tx, 11+i*22, tz); cityGrp.add(seg);
+  let trees = 0;
+  for(let tries=0; trees<26 && tries<220; tries++){
+    const s = SEG[(rnd()*SEG.length)|0];
+    if(s.w < 10 || s.len < 20) continue;
+    const t = 0.1 + rnd()*0.8, side = rnd()<0.5? 1 : -1;
+    const x = s.ax + (s.bx-s.ax)*t + s.nx*side*(s.w/2+3);
+    const z = s.az + (s.bz-s.az)*t + s.nz*side*(s.w/2+3);
+    if(insideCollider(new THREE.Vector3(x,2,z))) continue;
+    tree(x, z, rnd()<0.3);
+    trees++;
+  }
+
+  /* objectifs sur les vrais lieux */
+  const POI = PARIS.poi;
+  if(def.type === 'infil'){
+    const [wx, wz] = POI.marche;   // marché Saint-Honoré
+    warehouse(wx, wz, def.hard ? 'SERVEURS' : "CAISSES D'ARMES");
+    searchlight(wx - 14, wz - 26, 14, true, def.hard ? 0.85 : 0.55);
+    if((def.lights||0) > 1) searchlight(wx + 16, wz - 22, 14, true, 0.7);
+  }
+  if(def.meeting){
+    const [mx, mz] = POI.vendome;  // place Vendôme
+    for(const [ox,oz,c] of [[-4,-2,0x14161c],[4,-1,0x23262e]]){
+      const cm = new THREE.Mesh(carGeoShared, new THREE.MeshLambertMaterial({color:c}));
+      cm.position.set(mx+ox, 0.75, mz+oz); cm.rotation.y = rnd(); cityGrp.add(cm);
+      addCollider(mx+ox, mz+oz, 4.6, 4.6, 1.6);
     }
-    blinker(tx, 67.5, tz); addCollider(tx, tz, 3.4, 3.4, 66);
+    for(let i=0;i<4;i++){
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.55,1.7,0.4), new THREE.MeshLambertMaterial({color:0x0e1014}));
+      p.position.set(mx + Math.sin(i*1.7)*1.8, 0.85, mz + Math.cos(i*1.7)*1.8); cityGrp.add(p);
+    }
+    const gl = new THREE.Sprite(new THREE.SpriteMaterial({map: glowTex, color:0xffd9a0, blending:THREE.AdditiveBlending, depthWrite:false, transparent:true}));
+    gl.scale.set(10,10,1); gl.position.set(mx, 4, mz); cityGrp.add(gl);
+    photoTargets.push({pos: new THREE.Vector3(mx, 1.2, mz), label:'LA RÉUNION', done:false, range:60, needZoom:true});
+    searchlight(mx-20, mz-16, 13, true, 0.5);
+    if((def.lights||0) > 1) searchlight(mx+20, mz+14, 13, true, 0.65);
+    if((def.lights||0) > 2) searchlight(mx, mz-26, 13, true, 0.75);
   }
-  /* objectifs */
   if(def.type === 'photo' && !def.meeting){
-    const tall = [...built].sort((a,b)=>b.h-a.h).slice(0,8);
+    const tall = [...built].sort((a,b)=>b.h-a.h).slice(0,10);
     for(let i=0;i<3;i++){
-      const b = tall[(i*2+1) % tall.length];
+      const b = tall[(i*3+1) % tall.length];
       photoTargets.push({pos: antenna(b.x, b.z, b.h), label: `ANTENNE ${'ABC'[i]}`, done:false, range:65, needZoom:false});
     }
   }
   if(def.type === 'race'){
-    const path = [
-      [-160,5,-120],[-160,6,-40],[-160,10,30],[-120,14,80],[-60,22,80],
-      [0,30,80],[40,20,80],[80,8,60],[80,5,0],[80,6,-60],[40,12,-80],[-20,18,-80]
-    ];
-    for(const [x,y,z] of path) ring(x,y,z);
+    /* itinéraire réel : marche aléatoire sur le graphe depuis l'Opéra */
+    let cur2 = nearestNode(POI.opera[0], POI.opera[1]);
+    let lastPos = graph.pts[cur2];
+    const seen = new Set([cur2]);
+    ring(lastPos.x, 6, lastPos.z);
+    let guard = 0;
+    while(rings.length < 12 && guard++ < 600){
+      const opts = graph.adj[cur2].filter(n => !seen.has(n));
+      cur2 = (opts.length ? opts : graph.adj[cur2])[(rnd()*(opts.length||graph.adj[cur2].length))|0];
+      seen.add(cur2);
+      const p = graph.pts[cur2];
+      if(p.distanceTo(lastPos) > 55){
+        const i = rings.length;
+        ring(p.x, 5 + (i%4)*6 + (i>7? 7:0), p.z);
+        lastPos = p;
+      }
+    }
   }
   spawnLife();
 }
@@ -768,40 +834,20 @@ const car = { grp: new THREE.Group(), pos: new THREE.Vector3(-80,0.65,-80), node
   }
   scene.add(car.grp);
 }
-function nodeIdx(x,z){ return ROAD_XZ.indexOf(x)*5 + ROAD_XZ.indexOf(z); }
-function neighbors(i){
-  const xi = (i/5|0), zi = i%5, out = [];
-  if(xi>0) out.push(i-5); if(xi<4) out.push(i+5);
-  if(zi>0) out.push(i-1); if(zi<4) out.push(i+1);
-  return out;
-}
 function carReset(spd){
-  const starts = [nodeIdx(-80,-80), nodeIdx(80,-80), nodeIdx(-80,80), nodeIdx(80,80), nodeIdx(0,0)];
-  const s = starts[Math.random()*starts.length|0];
-  car.pos.copy(NODES[s]); car.pos.y = 0.65;
-  car.prev = -1; pickNext(s);
+  /* départ sur un carrefour réel proche du centre */
+  const cands = [];
+  for(let i=0;i<graph.pts.length;i++){
+    const p = graph.pts[i];
+    if(graph.adj[i].length >= 2 && Math.abs(p.x) < 260 && Math.abs(p.z) < 260) cands.push(i);
+  }
+  const s = cands[Math.random()*cands.length|0] ?? 0;
+  car.pos.copy(graph.pts[s]); car.pos.y = 0.65;
+  car.prev = -1; vehPick(car, s);
   car.spd = spd;
   car.head.visible = !isDay();
 }
-function pickNext(from){
-  const opts = neighbors(from).filter(n => n !== car.prev);
-  car.node = opts[Math.random()*opts.length|0] ?? neighbors(from)[0];
-  car.prev = from;
-}
-function carUpdate(dt){
-  const tgt = NODES[car.node];
-  const dx = tgt.x - car.pos.x, dz = tgt.z - car.pos.z;
-  if(Math.hypot(dx,dz) < 2){ pickNext(car.node); return; }
-  const want = Math.atan2(dx,dz);
-  let diff = want - car.heading;
-  while(diff > Math.PI) diff -= 2*Math.PI; while(diff < -Math.PI) diff += 2*Math.PI;
-  car.heading += THREE.MathUtils.clamp(diff, -2.2*dt, 2.2*dt);
-  const slow = Math.abs(diff) > 0.4 ? 0.55 : 1;
-  car.pos.x += Math.sin(car.heading)*car.spd*slow*dt;
-  car.pos.z += Math.cos(car.heading)*car.spd*slow*dt;
-  car.grp.position.copy(car.pos);
-  car.grp.rotation.y = car.heading + Math.PI/2;
-}
+function carUpdate(dt){ vehStep(car, dt); }
 
 /* ================= circulation & piétons ================= */
 const traffic = [];
@@ -826,12 +872,14 @@ function mkCivCar(){
   return grp;
 }
 function vehPick(v, from){
-  const opts = neighbors(from).filter(n => n !== v.prev);
-  v.node = opts[Math.random()*opts.length|0] ?? neighbors(from)[0];
+  const adj = graph.adj[from] || [];
+  const opts = adj.filter(n => n !== v.prev);
+  v.node = (opts.length ? opts : adj)[Math.random()*(opts.length||adj.length)|0] ?? from;
   v.prev = from;
 }
 function vehStep(v, dt){
-  const tgt = NODES[v.node];
+  const tgt = graph.pts[v.node];
+  if(!tgt) return;
   const dx = tgt.x - v.pos.x, dz = tgt.z - v.pos.z;
   if(Math.hypot(dx,dz) < 2){ vehPick(v, v.node); return; }
   const want = Math.atan2(dx,dz);
@@ -846,20 +894,21 @@ function vehStep(v, dt){
 }
 function spawnLife(){
   traffic.length = 0; peds.length = 0;
-  for(let i=0;i<6;i++){
-    const start = (rnd()*25)|0;
-    const v = { grp: mkCivCar(), pos: NODES[start].clone(), prev:-1, node:0, heading: rnd()*6.28, spd: 8+rnd()*6 };
+  for(let i=0;i<8;i++){
+    const start = (rnd()*graph.pts.length)|0;
+    if(!graph.adj[start] || !graph.adj[start].length) continue;
+    const v = { grp: mkCivCar(), pos: graph.pts[start].clone(), prev:-1, node:0, heading: rnd()*6.28, spd: 7+rnd()*6 };
     v.pos.y = 0; vehPick(v, start);
     traffic.push(v);
   }
   const pgeo = new THREE.BoxGeometry(0.5,1.7,0.4);
   const pcols = [0x5a4a3a, 0x3a4a5a, 0x4a3a4a, 0x2f3f34, 0x6a5a40];
-  for(let i=0;i<10;i++){
-    const m = new THREE.Mesh(pgeo, new THREE.MeshLambertMaterial({color: pcols[i%5]}));
-    const k = ROAD_XZ[rnd()*5|0];
-    const onX = rnd()<0.5, off = rnd()<0.5? -7.6 : 7.6;
-    const p = { m, onX, k: k+off, a: -140+rnd()*280, dir: rnd()<0.5? 1:-1, spd: 1+rnd()*0.8 };
-    m.position.set(onX? p.k : p.a, 0.85, onX? p.a : p.k);
+  for(let tries=0; peds.length<12 && tries<80; tries++){
+    const s = SEG[(rnd()*SEG.length)|0];
+    if(s.len < 20) continue;
+    const m = new THREE.Mesh(pgeo, new THREE.MeshLambertMaterial({color: pcols[peds.length%5]}));
+    const side = rnd()<0.5? 1 : -1;
+    const p = { m, s, side, t: rnd(), dir: rnd()<0.5? 1:-1, spd: (1+rnd()*0.8)/s.len };
     cityGrp.add(m);
     peds.push(p);
   }
@@ -867,10 +916,13 @@ function spawnLife(){
 function lifeUpdate(dt){
   for(const v of traffic) vehStep(v, dt);
   for(const p of peds){
-    p.a += p.dir*p.spd*dt;
-    if(p.a > 148 || p.a < -148) p.dir *= -1;
-    p.m.position.set(p.onX? p.k : p.a, 0.85, p.onX? p.a : p.k);
-    p.m.rotation.y = p.onX ? (p.dir>0?0:Math.PI) : (p.dir>0? Math.PI/2 : -Math.PI/2);
+    p.t += p.dir*p.spd*dt;
+    if(p.t > 1 || p.t < 0){ p.dir *= -1; p.t = THREE.MathUtils.clamp(p.t, 0, 1); }
+    const s = p.s;
+    p.m.position.set(
+      s.ax + (s.bx-s.ax)*p.t + s.nx*p.side*(s.w/2+1.2), 0.85,
+      s.az + (s.bz-s.az)*p.t + s.nz*p.side*(s.w/2+1.2));
+    p.m.rotation.y = Math.atan2((s.bx-s.ax)*p.dir, (s.bz-s.az)*p.dir);
   }
   /* collision drone / circulation (au ras du sol seulement) */
   if(S.flying && S.pos.y < 2.3 && S.vel.length() > 6){
@@ -885,8 +937,11 @@ function lookDir(){
   return new THREE.Vector3(-Math.sin(S.yaw)*Math.cos(S.pitch), Math.sin(S.pitch), -Math.cos(S.yaw)*Math.cos(S.pitch));
 }
 function insideCollider(p){
-  for(const c of colliders)
-    if(p.x>c.min.x && p.x<c.max.x && p.y>c.min.y && p.y<c.max.y && p.z>c.min.z && p.z<c.max.z) return true;
+  for(const c of colliders){
+    if(p.x>c.min.x && p.x<c.max.x && p.y>c.min.y && p.y<c.max.y && p.z>c.min.z && p.z<c.max.z){
+      if(!c.poly || pip(c.poly, p.x, p.z)) return true;   // empreinte réelle si dispo
+    }
+  }
   return false;
 }
 function respawn(def){
@@ -895,7 +950,7 @@ function respawn(def){
   } else if(def.type === 'race'){
     S.pos.copy(rings[0].pos).add(new THREE.Vector3(0, 2, 42));
   } else {
-    S.pos.set(0, 26, 152);
+    S.pos.set(0, 36, 420);   // décollage au sud du quartier
   }
   while(insideCollider(S.pos)) S.pos.y += 8;
   S.vel.set(0,0,0);
@@ -1372,7 +1427,7 @@ function loop(){
 loop();
 
 /* ================= hooks de test ================= */
-window.__chase = { state: S, keys, T, car, NODES, EFF, DRONES, MODS,
+window.__chase = { state: S, keys, T, car, graph, PARIS, EFF, DRONES, MODS,
   get colliders(){ return colliders; },
   get photoTargets(){ return photoTargets; },
   get rings(){ return rings; }, get ringIdx(){ return ringIdx; },
