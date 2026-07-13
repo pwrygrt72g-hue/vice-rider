@@ -130,7 +130,7 @@ const DEFS = [
   { type:'chase', title:'LA FUYARDE', ty:'FILATURE', tod:'dusk',
     brief:"Une berline quitte le quartier de l'Opéra avec des documents volés, à l'heure où le soleil rase les toits de zinc. Prends-la en chasse dans les vraies rues de Paris.",
     obj:"Maintiens le verrouillage caméra à moins de 24 m pendant 5 s.",
-    map:{seed:7}, carSpd:21, need:6, time:100, escape:170 },
+    map:{seed:7}, carSpd:21, need:6, time:100, escape:170, zr:300 },
   { type:'photo', title:'LES ANTENNES', ty:'RECONNAISSANCE', tod:'day',
     brief:"Le réseau ennemi a posé trois antennes relais sur les toits d'immeubles haussmanniens. Survole le quartier en plein jour et repère les feux rouges clignotants.",
     obj:"Photographie les 3 antennes (vise + clic). Un intercepteur patrouille.",
@@ -142,23 +142,23 @@ const DEFS = [
   { type:'infil', title:'LE MARCHÉ', ty:'INFILTRATION', tod:'night',
     brief:"Des caisses d'armes transitent par un entrepôt monté place du Marché Saint-Honoré. Un projecteur balaie la place : reste hors du faisceau.",
     obj:"Entre par le portail et photographie les caisses. Ne te fais pas repérer.",
-    map:{seed:33}, time:150, lights:1 },
+    map:{seed:33}, time:150, lights:1, zr:230 },
   { type:'chase', title:'LE CONVOYEUR', ty:'FILATURE', tod:'night',
     brief:"Le convoyeur du cartel roule à 97 km/h dans Paris endormi, tous feux éteints. Il connaît chaque ruelle. Distance de rupture réduite : 140 m.",
     obj:"Verrouillage 8 s — un intercepteur escorte le convoyeur.",
-    map:{seed:44}, carSpd:27, need:8, time:100, escape:130, hunt:1 },
+    map:{seed:44}, carSpd:27, need:8, time:100, escape:130, hunt:1, zr:300 },
   { type:'photo', title:'PLACE VENDÔME', ty:'RECONNAISSANCE', tod:'night',
     brief:"Deux organisations se partagent le territoire cette nuit, en plein cœur de la place Vendôme, sous triple surveillance. Il nous faut une preuve nette : utilise le zoom (double-clic).",
     obj:"Photographie la réunion AU ZOOM. Trois faisceaux, deux intercepteurs.",
-    map:{seed:58}, time:150, meeting:true, lights:3, hunt:2 },
+    map:{seed:58}, time:150, meeting:true, lights:3, hunt:2, zr:230 },
   { type:'infil', title:'LA SALLE DES SERVEURS', ty:'INFILTRATION', tod:'night',
     brief:"Leur salle des serveurs est au fond du hangar du Marché Saint-Honoré, sous double projecteur rapide. L'alarme monte deux fois plus vite et le chrono est court.",
     obj:"Photographie les serveurs. Deux projecteurs, deux intercepteurs. Zéro erreur.",
-    map:{seed:71}, time:110, lights:2, hunt:2, hard:true },
+    map:{seed:71}, time:110, lights:2, hunt:2, hard:true, zr:230 },
   { type:'chase', title:'SANS LIMITE', ty:'FILATURE ∞', tod:'dusk',
     brief:"Plus aucune retenue : chaque cible identifiée en appelle une plus rapide, dans tout le quartier Opéra-Vendôme. Jusqu'où peux-tu suivre ?",
     obj:"Identifie autant de véhicules que possible. Les renforts arrivent vite.",
-    map:{seed:90}, carSpd:25, need:6, time:100, escape:160, endless:true, hunt:1 },
+    map:{seed:90}, carSpd:25, need:6, time:100, escape:160, endless:true, hunt:1, zr:360 },
 ];
 let prog = +(localStorage.getItem('ic-prog') || 0);
 let cur = 0;
@@ -481,6 +481,26 @@ const glowTex = (()=>{
   g.fillStyle = grad; g.fillRect(0,0,64,64);
   return new THREE.CanvasTexture(c);
 })();
+
+/* ================= zone d'opération ================= */
+const OPZONE = { c: new THREE.Vector3(), r: 260, wall: null };
+function setZone(cx, cz, r){
+  OPZONE.c.set(cx, 0, cz); OPZONE.r = r;
+  if(OPZONE.wall) cityGrp.remove(OPZONE.wall);
+  const grp = new THREE.Group();
+  const geo = new THREE.CylinderGeometry(r, r, 140, 56, 1, true);
+  const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    color: 0x2f9fd8, transparent: true, opacity: 0.05, side: THREE.DoubleSide,
+    depthWrite: false, blending: THREE.AdditiveBlending }));
+  const wire = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    color: 0x54c8ff, transparent: true, opacity: 0.10, wireframe: true,
+    depthWrite: false, blending: THREE.AdditiveBlending }));
+  grp.add(fill, wire);
+  grp.position.set(cx, 70, cz);
+  cityGrp.add(grp);
+  OPZONE.wall = grp;
+}
+const inZone = (x,z) => Math.hypot(x-OPZONE.c.x, z-OPZONE.c.z) < OPZONE.r;
 
 /* ================= monde reconstructible ================= */
 let colliders = [];
@@ -833,8 +853,12 @@ function buildWorld(def){
     if((def.lights||0) > 2) searchlight(mx, mz-26, 13, true, 0.75);
   }
   if(def.type === 'photo' && !def.meeting){
-    const tall = [...built].sort((a,b)=>b.h-a.h).slice(0,10);
-    for(let i=0;i<3;i++){
+    /* antennes dans le périmètre d'opération (autour de l'Opéra) */
+    const [ox, oz] = PARIS.poi.opera;
+    const zr = (def.zr || 260)*0.8;
+    const near = built.filter(b => Math.hypot(b.x-ox, b.z-oz) < zr);
+    const tall = near.sort((a,b)=>b.h-a.h).slice(0,10);
+    for(let i=0;i<3 && tall.length;i++){
       const b = tall[(i*3+1) % tall.length];
       photoTargets.push({pos: antenna(b.x, b.z, b.h), label: `ANTENNE ${'ABC'[i]}`, done:false, range:65, needZoom:false});
     }
@@ -871,7 +895,7 @@ function buildWorld(def){
     else { hx = rnd()*300-150; hz = rnd()*300-150; }
     mkHunter(hx, 16 + rnd()*14, hz);
   }
-  spawnLife();
+  /* spawnLife() est appelé par launch() une fois la zone d'opération fixée */
 }
 
 /* ================= voiture cible ================= */
@@ -939,7 +963,10 @@ function mkCivCar(){
 }
 function vehPick(v, from){
   const adj = graph.adj[from] || [];
-  const opts = adj.filter(n => n !== v.prev);
+  let opts = adj.filter(n => n !== v.prev);
+  /* reste dans le périmètre d'opération (l'action ne se disperse pas) */
+  const zoned = opts.filter(n => inZone(graph.pts[n].x, graph.pts[n].z));
+  if(zoned.length) opts = zoned;
   v.node = (opts.length ? opts : adj)[Math.random()*(opts.length||adj.length)|0] ?? from;
   v.prev = from;
 }
@@ -978,9 +1005,12 @@ function mkBus(){
 }
 function spawnLife(){
   traffic.length = 0; peds.length = 0;
-  for(let i=0;i<40;i++){
-    const start = (rnd()*graph.pts.length)|0;
-    if(!graph.adj[start] || !graph.adj[start].length) continue;
+  /* toute la vie se concentre dans le périmètre d'opération */
+  const zNodes = [];
+  for(let i=0;i<graph.pts.length;i++)
+    if(graph.adj[i].length && inZone(graph.pts[i].x, graph.pts[i].z)) zNodes.push(i);
+  for(let i=0;i<36 && zNodes.length;i++){
+    const start = zNodes[(rnd()*zNodes.length)|0];
     const bus = i%7===0;
     const v = { grp: bus ? mkBus() : mkCivCar(), pos: graph.pts[start].clone(), prev:-1, node:0,
       heading: rnd()*6.28, spd: bus ? 7+rnd()*3 : 9+rnd()*7, r: bus ? 5.2 : 2.6 };
@@ -989,9 +1019,9 @@ function spawnLife(){
   }
   const pgeo = new THREE.BoxGeometry(0.5,1.7,0.4);
   const pcols = [0x5a4a3a, 0x3a4a5a, 0x4a3a4a, 0x2f3f34, 0x6a5a40];
-  for(let tries=0; peds.length<12 && tries<80; tries++){
+  for(let tries=0; peds.length<14 && tries<160; tries++){
     const s = SEG[(rnd()*SEG.length)|0];
-    if(s.len < 20) continue;
+    if(s.len < 20 || !inZone((s.ax+s.bx)/2, (s.az+s.bz)/2)) continue;
     const m = new THREE.Mesh(pgeo, new THREE.MeshLambertMaterial({color: pcols[peds.length%5]}));
     const side = rnd()<0.5? 1 : -1;
     const p = { m, s, side, t: rnd(), dir: rnd()<0.5? 1:-1, spd: (1+rnd()*0.8)/s.len };
@@ -1166,7 +1196,8 @@ function respawn(def){
   } else if(def.type === 'race'){
     S.pos.copy(rings[0].pos).add(new THREE.Vector3(0, 2, 42));
   } else {
-    S.pos.set(0, 36, 420);   // décollage au sud du quartier
+    /* décollage au bord de la zone d'opération, face à l'objectif */
+    S.pos.set(OPZONE.c.x, 38, OPZONE.c.z + OPZONE.r*0.8);
   }
   while(insideCollider(S.pos)) S.pos.y += 8;
   S.vel.set(0,0,0);
@@ -1338,6 +1369,12 @@ function missionUpdate(dt){
       }
     }
   }
+  /* périmètre d'opération : dehors = brouillage */
+  if(!inZone(S.pos.x, S.pos.z)){
+    S.outT = (S.outT||0) + dt;
+    if(S.outT > 6){ fail('HORS ZONE — LIAISON PERDUE'); return; }
+  } else S.outT = 0;
+
   if(S.timer <= 0){ fail(d.type==='race' ? 'CHRONO ÉCOULÉ' : 'TEMPS ÉCOULÉ'); return; }
   if(S.batt <= 0){
     S.vel.y = Math.min(S.vel.y, -6);
@@ -1421,7 +1458,24 @@ function launch(){
   buildWorld(d);
   car.grp.visible = d.type === 'chase';
   if(d.type === 'chase') carReset(d.carSpd);
+  /* périmètre d'opération : centré sur l'objectif */
+  let zc;
+  if(d.type === 'chase') zc = [car.pos.x, car.pos.z];
+  else if(d.type === 'infil') zc = PARIS.poi.marche;
+  else if(d.meeting) zc = PARIS.poi.vendome;
+  else if(d.type === 'race' && rings.length){
+    let sx = 0, sz = 0;
+    for(const r of rings){ sx += r.pos.x/rings.length; sz += r.pos.z/rings.length; }
+    zc = [sx, sz];
+  }
+  else zc = PARIS.poi.opera;
+  let zr = d.zr || 260;
+  if(d.type === 'race') for(const r of rings)
+    zr = Math.max(zr, Math.hypot(r.pos.x-zc[0], r.pos.z-zc[1]) + 70);
+  setZone(zc[0], zc[1], zr);
+  spawnLife();
   respawn(d);
+  S.outT = 0;
   S.flying = true;
   grab();
 }
@@ -1641,6 +1695,17 @@ function drawHUD(){
   if(d.type === 'race' && rings[ringIdx])
     marker(g, rings[ringIdx].pos, `BALISE ${ringIdx+1}`, '#27e8ff', w, h, cx, cy, true);
 
+  /* sortie de zone : avertissement + brouillage croissant */
+  const zd = Math.hypot(S.pos.x-OPZONE.c.x, S.pos.z-OPZONE.c.z);
+  if(zd > OPZONE.r){
+    g.fillStyle = RED; g.textAlign = 'center'; g.font = 'bold 18px "Courier New",monospace';
+    g.fillText(`⚠ HORS ZONE — LIAISON PERDUE DANS ${Math.max(0, 6-(S.outT||0)).toFixed(1)} s`, cx, cy - 170);
+    g.fillStyle = `rgba(120,180,220,${Math.min(0.5, (S.outT||0)*0.09)})`;
+    for(let k=0;k<26;k++) g.fillRect(Math.random()*w, Math.random()*h, 60+Math.random()*160, 1.5);
+  } else if(zd > OPZONE.r - 45){
+    g.fillStyle = AMB; g.textAlign = 'center'; g.font = '13px "Courier New",monospace';
+    g.fillText(`LIMITE DE ZONE ${(OPZONE.r-zd).toFixed(0)} m`, cx, cy - 170);
+  }
   if(photoMsgT > 0){
     g.fillStyle = photoMsg.includes('VALIDÉ') || photoMsg.includes('IDENTIFIÉE') || photoMsg.includes('BALISE') ? AMB : RED;
     g.textAlign = 'center'; g.font = 'bold 16px "Courier New",monospace';
