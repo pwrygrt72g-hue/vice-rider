@@ -4,26 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>INTERCEPT FPV</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060a08'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%237dffb0' stroke-width='2'/%3E%3Cpath d='M16 3v7M16 22v7M3 16h7M22 16h7' stroke='%237dffb0' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060a10'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%236fd0ff' stroke-width='2'/%3E%3Cpath d='M16 3v7M16 22v7M3 16h7M22 16h7' stroke='%236fd0ff' stroke-width='2'/%3E%3C/svg%3E">
 <style>
   html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#05070a;
-    font-family:"Courier New",monospace;color:#b8ffd0;cursor:crosshair}
+    font-family:"Courier New",monospace;color:#b9e2ff;cursor:crosshair}
   canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   #fx-scan{position:absolute;inset:0;pointer-events:none;opacity:.13;
     background:repeating-linear-gradient(0deg,rgba(0,0,0,.6) 0 1px,transparent 1px 3px)}
   #fx-vig{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 180px 60px rgba(0,0,0,.75)}
   .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
     background:rgba(3,6,5,.86);z-index:10;text-align:center;padding:20px}
-  .screen h1{font-size:52px;letter-spacing:14px;margin:0 0 6px;color:#eafff2;
-    text-shadow:0 0 24px rgba(90,255,150,.6)}
-  .screen h1 span{color:#7dffb0}
-  .screen h2{font-size:22px;letter-spacing:8px;margin:0 0 26px;color:#7dffb0;font-weight:normal}
-  .screen p{max-width:560px;line-height:1.7;letter-spacing:1px;font-size:14px;color:#9adbb4;margin:6px 0}
-  .screen .ctl{margin:18px 0;font-size:13px;line-height:2;color:#c9ffd9}
-  .screen .ctl b{display:inline-block;min-width:110px;color:#7dffb0}
-  button{background:none;border:1px solid #7dffb0;color:#c9ffd9;font-family:inherit;font-size:17px;
+  .screen h1{font-size:52px;letter-spacing:14px;margin:0 0 6px;color:#eef7ff;
+    text-shadow:0 0 24px rgba(90,180,255,.65)}
+  .screen h1 span{color:#6fd0ff}
+  .screen h2{font-size:22px;letter-spacing:8px;margin:0 0 26px;color:#6fd0ff;font-weight:normal}
+  .screen p{max-width:560px;line-height:1.7;letter-spacing:1px;font-size:14px;color:#92b8d6;margin:6px 0}
+  .screen .ctl{margin:18px 0;font-size:13px;line-height:2;color:#cfe9ff}
+  .screen .ctl b{display:inline-block;min-width:110px;color:#6fd0ff}
+  button{background:none;border:1px solid #6fd0ff;color:#cfe9ff;font-family:inherit;font-size:17px;
     letter-spacing:6px;padding:14px 44px;margin-top:18px;cursor:pointer;text-transform:uppercase}
-  button:hover{background:rgba(125,255,176,.12);box-shadow:0 0 24px rgba(90,255,150,.35)}
+  button:hover{background:rgba(111,208,255,.12);box-shadow:0 0 24px rgba(90,180,255,.4)}
   .fail h1{color:#ff8177;text-shadow:0 0 24px rgba(255,80,60,.6)}
   .fail h1 span{color:#ffb3ac}
   #screen-fail,#screen-win{display:none}
@@ -38,7 +38,7 @@
 
 <div class="screen" id="screen-start">
   <h1>INTERCEPT <span>FPV</span></h1>
-  <h2>UNITÉ DE POURSUITE AÉRIENNE</h2>
+  <h2>UNITÉ NOCTURNE DE POURSUITE</h2>
   <p>Des véhicules non identifiés fuient à travers la zone d'exclusion.
      Prends-les en chasse, reste au contact et maintiens le verrouillage caméra
      jusqu'à identification complète — avant qu'ils te sèment ou que ta batterie meure.</p>
@@ -94,13 +94,15 @@ const keys = {};
 const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('c3d'), antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x8a8f86, 90, 560);
+scene.fog = new THREE.Fog(0x0a0e16, 60, 430);
 const cam = new THREE.PerspectiveCamera(78, 1, 0.1, 1200);
 
-const sun = new THREE.DirectionalLight(0xffe8c8, 2.4); sun.position.set(-160, 190, 90); scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xbcc8c4, 0x3a3630, 0.9));
+/* nuit : lune froide + halo urbain */
+const moon = new THREE.DirectionalLight(0x8fb4ff, 0.85); moon.position.set(-160, 190, 90); scene.add(moon);
+scene.add(new THREE.HemisphereLight(0x1c2a44, 0x05060a, 0.7));
+scene.add(new THREE.AmbientLight(0x2a2018, 0.5));
 
-/* ciel */
+/* ciel nocturne : gradient + halo orange de la ville + étoiles */
 {
   const geo = new THREE.SphereGeometry(900, 24, 16);
   const mat = new THREE.ShaderMaterial({
@@ -108,21 +110,25 @@ scene.add(new THREE.HemisphereLight(0xbcc8c4, 0x3a3630, 0.9));
     vertexShader: `varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
     fragmentShader: `varying vec3 vP;
       void main(){
-        float h = normalize(vP).y;
-        vec3 top = vec3(0.35,0.42,0.47), mid = vec3(0.72,0.72,0.66), low = vec3(0.85,0.78,0.62);
-        vec3 c = h > 0.25 ? mix(mid, top, (h-0.25)/0.75) : mix(low, mid, max(h,0.)/0.25);
+        vec3 n = normalize(vP);
+        float h = n.y;
+        vec3 top = vec3(0.012,0.02,0.045), mid = vec3(0.05,0.07,0.13), low = vec3(0.38,0.19,0.09);
+        vec3 c = h > 0.2 ? mix(mid, top, (h-0.2)/0.8) : mix(low, mid, clamp(h,0.,0.2)/0.2);
+        vec3 f = floor(n*300.);
+        float hsh = fract(sin(dot(f, vec3(12.9898,78.233,37.719)))*43758.5453);
+        if(h > 0.08 && hsh > 0.996) c += vec3(0.9,0.95,1.0)*(hsh-0.996)/0.004*0.85;
         gl_FragColor = vec4(c,1.);
       }`
   });
   scene.add(new THREE.Mesh(geo, mat));
 }
 
-/* sol */
+/* sol : asphalte sombre */
 {
   const cnv = document.createElement('canvas'); cnv.width = cnv.height = 256;
   const g = cnv.getContext('2d');
-  g.fillStyle = '#6d6a58'; g.fillRect(0,0,256,256);
-  for(let i=0;i<900;i++){ g.fillStyle = `rgba(${40+Math.random()*40|0},${38+Math.random()*36|0},${30+Math.random()*30|0},.35)`;
+  g.fillStyle = '#141619'; g.fillRect(0,0,256,256);
+  for(let i=0;i<900;i++){ g.fillStyle = `rgba(${16+Math.random()*26|0},${18+Math.random()*26|0},${22+Math.random()*28|0},.4)`;
     g.fillRect(Math.random()*256, Math.random()*256, 2+Math.random()*4, 2+Math.random()*4); }
   const tex = new THREE.CanvasTexture(cnv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(60,60);
   const m = new THREE.Mesh(new THREE.PlaneGeometry(1600,1600), new THREE.MeshLambertMaterial({map: tex}));
@@ -134,10 +140,10 @@ const NODES = [];
 const ROAD_XZ = [-160,-80,0,80,160];
 for(const x of ROAD_XZ) for(const z of ROAD_XZ) NODES.push(new THREE.Vector3(x,0,z));
 const roadMat = (()=>{ const c = document.createElement('canvas'); c.width = 128; c.height = 512;
-  const g = c.getContext('2d'); g.fillStyle = '#3c3c40'; g.fillRect(0,0,128,512);
-  g.strokeStyle = 'rgba(200,200,190,.5)'; g.lineWidth = 4; g.setLineDash([26,30]);
+  const g = c.getContext('2d'); g.fillStyle = '#1b1c21'; g.fillRect(0,0,128,512);
+  g.strokeStyle = 'rgba(215,222,235,.55)'; g.lineWidth = 4; g.setLineDash([26,30]);
   g.beginPath(); g.moveTo(64,0); g.lineTo(64,512); g.stroke();
-  for(let i=0;i<300;i++){ g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(Math.random()*128, Math.random()*512, 3, 3); }
+  for(let i=0;i<300;i++){ g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(Math.random()*128, Math.random()*512, 3, 3); }
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1,6);
   return new THREE.MeshLambertMaterial({map: t}); })();
 for(const k of ROAD_XZ){
@@ -149,23 +155,44 @@ for(const k of ROAD_XZ){
 
 /* immeubles : blocs entre les routes, colliders AABB */
 const colliders = [];   // {min:Vector3, max:Vector3}
-function winTex(w,h,burn){
+const NEON_COLORS = [0xff2d78, 0x27e8ff, 0xffb020, 0x8f4dff, 0x35ff9a];
+function winTex(w,h,dark){
+  /* façade nocturne : murs quasi noirs, fenêtres allumées (chaud/froid) */
   const c = document.createElement('canvas'); c.width = 64; c.height = 64;
   const g = c.getContext('2d');
-  g.fillStyle = burn ? '#2a2622' : `hsl(${28+Math.random()*22|0},${12+Math.random()*14|0}%,${30+Math.random()*16|0}%)`;
-  g.fillRect(0,0,64,64);
-  g.fillStyle = 'rgba(12,14,18,.9)';
-  for(let y=8;y<60;y+=14) for(let x=6;x<58;x+=12)
-    if(Math.random()>0.14) g.fillRect(x,y,7,9);
+  g.fillStyle = '#0d0f13'; g.fillRect(0,0,64,64);
+  const litRate = dark ? 0.08 : 0.42;
+  for(let y=8;y<60;y+=14) for(let x=6;x<58;x+=12){
+    if(Math.random() < litRate){
+      const warm = Math.random() < 0.72;
+      const a = 0.5 + Math.random()*0.5;
+      g.fillStyle = warm ? `rgba(255,${170+Math.random()*50|0},${70+Math.random()*40|0},${a})`
+                         : `rgba(150,${200+Math.random()*40|0},255,${a})`;
+    } else g.fillStyle = 'rgba(16,18,24,.95)';
+    g.fillRect(x,y,7,9);
+  }
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(Math.max(1,Math.round(w/14)), Math.max(1,Math.round(h/11)));
   return t;
 }
-function building(x,z,w,d,h,burn){
+function building(x,z,w,d,h,dark){
+  const tex = winTex(Math.max(w,d), h, dark);
   const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
-    new THREE.MeshLambertMaterial({map: winTex(Math.max(w,d),h,burn), color: burn? 0x555049 : 0xffffff}));
+    new THREE.MeshLambertMaterial({map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.9}));
   m.position.set(x, h/2, z); scene.add(m);
   colliders.push({min: new THREE.Vector3(x-w/2-0.5, 0, z-d/2-0.5), max: new THREE.Vector3(x+w/2+0.5, h+0.5, z+d/2+0.5)});
+  /* enseigne néon sur ~1 immeuble sur 3 */
+  if(rnd() < 0.34 && h > 16){
+    const nw = 5 + rnd()*8, nh = 1.4 + rnd()*1.8, ny = h*(0.45 + rnd()*0.35);
+    const neon = new THREE.Mesh(new THREE.PlaneGeometry(nw, nh),
+      new THREE.MeshBasicMaterial({color: NEON_COLORS[rnd()*NEON_COLORS.length|0]}));
+    const face = rnd()*4|0;
+    if(face===0){ neon.position.set(x + w/2 + 0.25, ny, z); neon.rotation.y = Math.PI/2; }
+    if(face===1){ neon.position.set(x - w/2 - 0.25, ny, z); neon.rotation.y = -Math.PI/2; }
+    if(face===2){ neon.position.set(x, ny, z + d/2 + 0.25); }
+    if(face===3){ neon.position.set(x, ny, z - d/2 - 0.25); neon.rotation.y = Math.PI; }
+    scene.add(neon);
+  }
 }
 let seed = 7;
 const rnd = () => (seed = (seed*16807)%2147483647) / 2147483647;
@@ -194,12 +221,34 @@ for(let bx=0; bx<4; bx++) for(let bz=0; bz<4; bz++){
   }
 }
 
+/* lampadaires : poteau + halo sprite additif (pas de vraie lumière = perf) */
+{
+  const glowC = document.createElement('canvas'); glowC.width = glowC.height = 64;
+  const gg = glowC.getContext('2d');
+  const grad = gg.createRadialGradient(32,32,2, 32,32,30);
+  grad.addColorStop(0,'rgba(255,205,130,.95)'); grad.addColorStop(0.35,'rgba(255,170,80,.4)'); grad.addColorStop(1,'rgba(255,150,60,0)');
+  gg.fillStyle = grad; gg.fillRect(0,0,64,64);
+  const glowTex = new THREE.CanvasTexture(glowC);
+  const poleGeo = new THREE.CylinderGeometry(0.12,0.16,7,6);
+  const poleMat = new THREE.MeshLambertMaterial({color: 0x14161a});
+  for(const k of ROAD_XZ){
+    for(let a=-140; a<=140; a+=70){
+      for(const [px,pz,side] of [[k+6,a,1],[a,k-6,2]]){
+        const pole = new THREE.Mesh(poleGeo, poleMat);
+        pole.position.set(px, 3.5, pz); scene.add(pole);
+        const spr = new THREE.Sprite(new THREE.SpriteMaterial({map: glowTex, blending: THREE.AdditiveBlending, depthWrite:false, transparent:true}));
+        spr.scale.set(6,6,1); spr.position.set(px, 7.1, pz); scene.add(spr);
+      }
+    }
+  }
+}
+
 /* ---------- cible : voiture en fuite ---------- */
 const car = { grp: new THREE.Group(), pos: new THREE.Vector3(-160,0.65,-160), node: 0, prev: -1, heading: 0, spd: 20 };
 {
-  const body = new THREE.Mesh(new THREE.BoxGeometry(4.4,1.1,2), new THREE.MeshLambertMaterial({color: 0x8a1f1f}));
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.4,1.1,2), new THREE.MeshLambertMaterial({color: 0xb8bec8}));
   body.position.y = 0.55;
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.85,1.8), new THREE.MeshLambertMaterial({color: 0x1a1c20}));
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.85,1.8), new THREE.MeshLambertMaterial({color: 0x14161c}));
   cab.position.set(-0.2, 1.45, 0);
   const wgeo = new THREE.CylinderGeometry(0.42,0.42,0.32,10); wgeo.rotateX(Math.PI/2);
   const wmat = new THREE.MeshLambertMaterial({color: 0x0c0c0c});
@@ -207,6 +256,17 @@ const car = { grp: new THREE.Group(), pos: new THREE.Vector3(-160,0.65,-160), no
     const w = new THREE.Mesh(wgeo, wmat); w.position.set(wx, 0.42, wz); car.grp.add(w);
   }
   car.grp.add(body, cab);
+  /* le nez de la voiture est en -x local : phares avant + feux arrière */
+  const head = new THREE.SpotLight(0xf2f6ff, 220, 70, 0.42, 0.5, 1.6);
+  head.position.set(-2, 1, 0);
+  const headTgt = new THREE.Object3D(); headTgt.position.set(-20, 0, 0);
+  head.target = headTgt; car.grp.add(head, headTgt);
+  const lampGeo = new THREE.PlaneGeometry(0.32,0.22);
+  for(const [lx,lz,col] of [[-2.22,0.62,0xfff4d8],[-2.22,-0.62,0xfff4d8],[2.22,0.62,0xff2626],[2.22,-0.62,0xff2626]]){
+    const l = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({color: col}));
+    l.position.set(lx, 0.62, lz); l.rotation.y = lx<0 ? -Math.PI/2 : Math.PI/2;
+    car.grp.add(l);
+  }
   scene.add(car.grp);
 }
 function nodeIdx(x,z){ return ROAD_XZ.indexOf(x)*5 + ROAD_XZ.indexOf(z); }
@@ -246,9 +306,14 @@ function carUpdate(dt){
 
 /* ---------- drone ---------- */
 function respawn(){
-  S.pos.set(car.pos.x + 40, 26, car.pos.z + 40);
+  // 30 m derrière la voiture, au-dessus de la route (jamais dans un immeuble)
+  S.pos.set(car.pos.x - Math.sin(car.heading)*30, 24, car.pos.z - Math.cos(car.heading)*30);
+  for(const c of colliders){
+    if(S.pos.x>c.min.x && S.pos.x<c.max.x && S.pos.y<c.max.y && S.pos.z>c.min.z && S.pos.z<c.max.z)
+      S.pos.y = c.max.y + 6;
+  }
   S.vel.set(0,0,0);
-  S.yaw = Math.atan2(car.pos.x - S.pos.x, car.pos.z - S.pos.z) + Math.PI;
+  S.yaw = Math.atan2(-(car.pos.x - S.pos.x), -(car.pos.z - S.pos.z));
   S.pitch = -0.2;
   S.batt = 100; S.timer = T.missionTime; S.lockT = 0; S.escapeT = 0;
   S.crashed = false;
@@ -344,9 +409,10 @@ function launch(){
   S.flying = true;
   grab();
 }
-document.getElementById('btn-start').onclick = launch;
-document.getElementById('btn-retry').onclick = () => { S.score = Math.max(0, S.score - 200); launch(); };
-document.getElementById('btn-next').onclick = () => { S.mission++; launch(); };
+/* blur() sinon Espace (boost) re-déclenche le bouton resté focus → restart */
+document.getElementById('btn-start').onclick = e => { e.target.blur(); launch(); };
+document.getElementById('btn-retry').onclick = e => { e.target.blur(); S.score = Math.max(0, S.score - 200); launch(); };
+document.getElementById('btn-next').onclick = e => { e.target.blur(); S.mission++; launch(); };
 
 /* ---------- entrées ---------- */
 addEventListener('keydown', e => { keys[e.code] = true; if(e.code==='Space') e.preventDefault(); });
@@ -374,7 +440,7 @@ function drawHUD(dt){
   if(!S.flying) return;
   g.font = '13px "Courier New",monospace';
   g.textBaseline = 'middle';
-  const GRN = '#9dffc0', DIM = 'rgba(157,255,192,.55)', RED = '#ff7a6e', AMB = '#ffd27a';
+  const GRN = '#8fd8ff', DIM = 'rgba(143,216,255,.55)', RED = '#ff7a6e', AMB = '#ffd27a';
   g.strokeStyle = GRN; g.fillStyle = GRN; g.lineWidth = 1.2;
   const cx = w/2, cy = h/2;
 
