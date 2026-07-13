@@ -76,6 +76,7 @@
   .mcard.equipped{border-color:#7dffb0;box-shadow:0 0 14px rgba(90,255,150,.25)}
   .mcard .desc{font-size:11px;color:#7fa3c0;line-height:1.5;margin-top:4px;letter-spacing:1px}
 </style>
+<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
 </head>
 <body>
 <canvas id="c3d"></canvas>
@@ -105,6 +106,7 @@
   <div id="hangar-right">
     <div id="credits-bar2">◈ 0 CRÉDITS</div>
     <div id="hangar-cards"></div>
+    <button id="btn-cash" style="margin:10px 0 0;width:100%;border-color:#ffd076;color:#ffe2a8">📺 +300 ◈ crédits</button>
     <button id="btn-shop-back" style="margin:10px 0 4px;width:100%">Retour</button>
   </div>
 </div>
@@ -121,7 +123,8 @@
 <div class="screen fail" id="screen-fail">
   <h1>ÉCHEC <span id="fail-why">—</span></h1>
   <div class="stat" id="fail-stats"></div>
-  <button id="btn-retry">Redécoller</button>
+  <button id="btn-revive" style="border-color:#ffd076;color:#ffe2a8">📺 Redécoller sur place</button>
+  <button id="btn-retry">Recommencer</button>
   <button id="btn-menu1" style="border-color:#557;color:#9ab">Quartier général</button>
 </div>
 
@@ -130,6 +133,7 @@
   <div class="stars-big" id="win-stars">★★★</div>
   <div class="shots" id="win-shots"></div>
   <div class="stat" id="win-stats"></div>
+  <button id="btn-double" style="border-color:#ffd076;color:#ffe2a8">📺 Prime ×2</button>
   <button id="btn-next">Mission suivante</button>
   <button id="btn-menu2" style="border-color:#557;color:#9ab">Quartier général</button>
 </div>
@@ -138,6 +142,66 @@
 <script type="module">
 import * as THREE from 'three';
 import { mergeGeometries } from '../vendor/jsm/utils/BufferGeometryUtils.js';
+
+/* ============================================================
+   CRAZYGAMES SDK (v3) — pubs récompensées + interstitiel
+   env 'crazygames' = prod, 'local' = pubs simulées (dev),
+   'disabled' (ex. GitHub Pages) = récompenses directes sans pub
+   ============================================================ */
+const CG = { sdk:null, env:'disabled', ready:false, lastMid:-999, playing:false };
+let adPaused = false;
+(async ()=>{
+  try{
+    if(window.CrazyGames?.SDK){
+      await window.CrazyGames.SDK.init();
+      CG.sdk = window.CrazyGames.SDK;
+      CG.env = CG.sdk.environment;
+      CG.ready = CG.env !== 'disabled';
+      if(CG.ready){
+        try{ CG.sdk.game.loadingStart(); }catch(e){}
+        requestAnimationFrame(()=>{ try{ CG.sdk.game.loadingStop(); }catch(e){} });
+      }
+    }
+  }catch(e){ CG.ready = false; }
+})();
+function cgGameplay(on){
+  if(!CG.ready || CG.playing === on) return;
+  CG.playing = on;
+  try{ on ? CG.sdk.game.gameplayStart() : CG.sdk.game.gameplayStop(); }catch(e){}
+}
+function cgHappy(){ if(CG.ready){ try{ CG.sdk.game.happytime(); }catch(e){} } }
+function adUX(on){                       // pendant une pub : jeu figé + muet + souris libérée
+  adPaused = on;
+  if(AU.master) AU.master.gain.value = on ? 0 : 0.5;
+  if(on) document.exitPointerLock?.();
+}
+function cgRewarded(onReward){
+  if(!CG.ready){ onReward(); return; }   // hors CrazyGames : récompense directe
+  const was = CG.playing;                // on restaure l'état gameplay d'avant-pub
+  try{
+    cgGameplay(false); adUX(true);
+    CG.sdk.ad.requestAd('rewarded', {
+      adStarted:  ()=>{},
+      adFinished: ()=>{ adUX(false); cgGameplay(was); onReward(); },
+      adError:    ()=>{ adUX(false); cgGameplay(was); },   // pas vue = pas de récompense
+    });
+  }catch(e){ adUX(false); onReward(); }
+}
+function cgMidgame(){
+  if(!CG.ready) return;
+  const now = performance.now()/1000;
+  if(now - CG.lastMid < 120) return;     // cooldown 2 min
+  CG.lastMid = now;
+  const was = CG.playing;
+  try{
+    cgGameplay(false); adUX(true);
+    CG.sdk.ad.requestAd('midgame', {
+      adStarted:  ()=>{},
+      adFinished: ()=>{ adUX(false); cgGameplay(was); },
+      adError:    ()=>{ adUX(false); cgGameplay(was); },
+    });
+  }catch(e){ adUX(false); }
+}
 
 /* ================= réglages ================= */
 const T = {
@@ -1745,10 +1809,33 @@ function launch(){
   respawn(d);
   S.outT = 0;
   S.flying = true;
+  cgGameplay(true);
+  grab();
+}
+/* reprise après pub récompensée : on repart sur place, monde intact */
+function revive(){
+  scrFail.style.display = 'none';
+  S.hp = EFF.hpMax; S.batt = 100;
+  S.emp = EFF.empMax; S.empCd = 0;
+  S.alarm = Math.min(S.alarm, 40);
+  S.timer = Math.max(S.timer, 30);
+  S.escapeT = 0; S.outT = 0; S.crashed = false;
+  /* si on est sorti du périmètre, on est ramené vers le centre */
+  const dx = S.pos.x - OPZONE.c.x, dz = S.pos.z - OPZONE.c.z, d = Math.hypot(dx, dz);
+  if(d > OPZONE.r*0.95){
+    S.pos.x = OPZONE.c.x + dx/d*OPZONE.r*0.7;
+    S.pos.z = OPZONE.c.z + dz/d*OPZONE.r*0.7;
+  }
+  S.pos.y = Math.max(S.pos.y, 18);
+  while(insideCollider(S.pos)) S.pos.y += 8;
+  S.vel.set(0,0,0);
+  S.flying = true;
+  cgGameplay(true);
   grab();
 }
 function fail(why){
   S.flying = false; document.exitPointerLock && document.exitPointerLock();
+  cgGameplay(false);
   sfxFail();
   document.getElementById('fail-why').textContent = why;
   document.getElementById('fail-stats').textContent = `OP. ${cur+1} · SCORE ${S.score} · RECORD ${S.best}`;
@@ -1763,11 +1850,14 @@ function win(){
   if(nStars > (stars[cur]|0)){ stars[cur] = nStars; localStorage.setItem('ic-stars', JSON.stringify(stars)); }
   const gain = 250 + nStars*150 + endlessLvl*80;
   credits += gain; saveShop();
+  S._lastGain = gain;
+  document.getElementById('btn-double').style.display = '';
   const bonus = Math.round(Math.max(0,S.timer)*10);
   S.score += 1000 + bonus;
   if(S.score > S.best){ S.best = S.score; localStorage.setItem('ic-best', S.best); }
   if(cur >= prog){ prog = cur+1; localStorage.setItem('ic-prog', prog); }
   S.flying = false; document.exitPointerLock && document.exitPointerLock();
+  cgGameplay(false); cgHappy();
   sfxWin();
   document.getElementById('win-stars').innerHTML = starStr(nStars);
   const sb = document.getElementById('win-shots');
@@ -1789,9 +1879,18 @@ function grab(){
 const scrShop = document.getElementById('screen-shop');
 document.getElementById('btn-go').onclick = e => { e.target.blur(); initAudio(); launch(); };
 document.getElementById('btn-retry').onclick = e => { e.target.blur(); initAudio(); S.score = Math.max(0, S.score-200); launch(); };
-document.getElementById('btn-next').onclick = e => { e.target.blur(); brief(Math.min(cur+1, DEFS.length-1)); scrWin.style.display='none'; };
-document.getElementById('btn-menu1').onclick = e => { e.target.blur(); scrFail.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
-document.getElementById('btn-menu2').onclick = e => { e.target.blur(); scrWin.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
+document.getElementById('btn-revive').onclick = e => { e.target.blur(); initAudio(); cgRewarded(revive); };
+document.getElementById('btn-double').onclick = e => { e.target.blur(); cgRewarded(()=>{
+  credits += S._lastGain || 0; saveShop();
+  document.getElementById('btn-double').style.display = 'none';
+  document.getElementById('win-stats').textContent += ` · PRIME ×2 (+${S._lastGain} ◈)`;
+}); };
+document.getElementById('btn-next').onclick = e => { e.target.blur(); brief(Math.min(cur+1, DEFS.length-1)); scrWin.style.display='none'; cgMidgame(); };
+document.getElementById('btn-menu1').onclick = e => { e.target.blur(); scrFail.style.display='none'; renderMenu(); scrStart.style.display='flex'; cgMidgame(); };
+document.getElementById('btn-menu2').onclick = e => { e.target.blur(); scrWin.style.display='none'; renderMenu(); scrStart.style.display='flex'; cgMidgame(); };
+document.getElementById('btn-cash').onclick = e => { e.target.blur(); cgRewarded(()=>{
+  credits += 300; saveShop(); renderHangar();
+}); };
 document.getElementById('btn-shop').onclick = e => { e.target.blur(); initAudio(); scrStart.style.display='none'; hangarMode = true; buildHangarDrone(); renderHangar(); scrShop.style.display='flex'; };
 document.getElementById('btn-shop-back').onclick = e => { e.target.blur(); hangarMode = false; scrShop.style.display='none'; renderMenu(); scrStart.style.display='flex'; };
 renderMenu();
@@ -2129,7 +2228,7 @@ function loop(){
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = performance.now()/1000;
   for(const b of blinkers) b.mat.visible = Math.sin(t*3.4 + b.ph) > 0;
-  if(S.flying && !S.crashed){
+  if(S.flying && !S.crashed && !adPaused){
     physics(dt);
     if(S.flying){
       if(def().type === 'chase') carUpdate(dt);
@@ -2194,7 +2293,7 @@ window.__chase = { state: S, keys, T, car, graph, PARIS, EFF, UPG,
   addCredits: n => { credits += n; saveShop(); },
   DEFS, get cur(){ return cur; }, get prog(){ return prog; },
   brief, launch, launchMission: i => { cur = i; launch(); },
-  takePhoto, respawn, fail, win, applyTod, renderHangar, buildHangarDrone,
+  takePhoto, respawn, fail, win, revive, CG, applyTod, renderHangar, buildHangarDrone,
   setLook: (y,p) => { S.yaw = y; S.pitch = p; },
   setZoom: z => { S.zoomT = z; S.zoom = z; },
   cam, scene, THREE };
