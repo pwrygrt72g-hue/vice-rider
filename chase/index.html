@@ -72,7 +72,7 @@
   <button id="btn-shop" style="margin-top:8px">Hangar</button>
   <div class="ctl-mini">
     <b>ZQSD</b> déplacer (le drone suit la caméra) · <b>A/E</b> monter/descendre · <b>SOURIS</b> caméra ·
-    <b>DOUBLE-CLIC</b> zoom · <b>CLIC</b> photo · <b>ESPACE</b> boost
+    <b>DOUBLE-CLIC</b> zoom · <b>CLIC</b> photo · <b>ESPACE</b> boost · <b>F</b> charge IEM
   </div>
 </div>
 
@@ -167,32 +167,39 @@ let endlessLvl = 0;
 /* ================= hangar : drones & crédits ================= */
 const DRONES = [
   { id:'vector', name:'VECTOR', ty:'STANDARD', price:0,
-    desc:"Le drone d'entraînement de la division. Fiable, sans plus.",
-    spd:1, drain:1, alarm:1 },
-  { id:'onyx', name:'ONYX', ty:'FURTIF', price:1500,
-    desc:"Revêtement absorbant : l'alarme des projecteurs monte 45 % moins vite.",
-    spd:1, drain:1, alarm:0.55 },
-  { id:'atlas', name:'ATLAS', ty:'ENDURANCE', price:2200,
-    desc:"Double accu : la batterie tient 80 % plus longtemps. Un peu lourd.",
-    spd:0.95, drain:0.55, alarm:1 },
+    desc:"Le drone d'entraînement de la division. Aucun bonus, aucune excuse.",
+    spd:1, drain:1, alarm:1, see:1, boostDrain:1, hp:0 },
+  { id:'onyx', name:'ONYX', ty:'FURTIF', price:1600,
+    desc:"Revêtement absorbant : alarme des projecteurs -45 %, et les intercepteurs ne te repèrent qu'à 50 m au lieu de 70.",
+    spd:1, drain:1, alarm:0.55, see:0.72, boostDrain:1, hp:0 },
+  { id:'atlas', name:'ATLAS', ty:'BLINDÉ', price:2400,
+    desc:"Cellule renforcée : +30 d'intégrité et batterie +80 %. Légèrement plus lent.",
+    spd:0.95, drain:0.55, alarm:1, see:1, boostDrain:1, hp:30 },
   { id:'strix', name:'STRIX', ty:'COURSE', price:2800,
-    desc:"Moteurs brushless suralimentés : +20 % de vitesse et de boost.",
-    spd:1.2, drain:1.25, alarm:1 },
+    desc:"+20 % de vitesse et un boost qui consomme 35 % de batterie en moins. Pour semer, pas pour encaisser.",
+    spd:1.2, drain:1.1, alarm:1, see:1, boostDrain:0.65, hp:0 },
 ];
 const MODS = [
   { id:'zoom4', name:'OPTIQUE ×4', ty:'MODULE', price:1200,
-    desc:"Objectif longue portée : le double-clic enchaîne ×2 puis ×4." },
+    desc:"Le double-clic enchaîne ×2 puis ×4 : photographie sans t'approcher des faisceaux." },
+  { id:'emp2', name:'CONDENSATEUR IEM', ty:'MODULE', price:1800,
+    desc:"Une 3e charge IEM par mission. Un intercepteur au sol, c'est 9 secondes de tranquillité." },
+  { id:'plating', name:'BLINDAGE COMPOSITE', ty:'MODULE', price:1600,
+    desc:"+30 d'intégrité, cumulable avec l'ATLAS. Survivre à un impact de plus change une mission." },
 ];
 let shopState = { owned:['vector'], cur:'vector', mods:[] };
 try{ shopState = Object.assign(shopState, JSON.parse(localStorage.getItem('ic-shop')||'{}')); }catch(e){}
 let credits = +(localStorage.getItem('ic-credits') || 0);
 let stars = [];
 try{ stars = JSON.parse(localStorage.getItem('ic-stars')||'[]'); }catch(e){}
-const EFF = { spd:1, drain:1, alarm:1, zoomMax:2 };
+const EFF = { spd:1, drain:1, alarm:1, see:1, boostDrain:1, zoomMax:2, hpMax:100, empMax:2 };
 function applyEff(){
   const d = DRONES.find(x=>x.id===shopState.cur) || DRONES[0];
   EFF.spd = d.spd; EFF.drain = d.drain; EFF.alarm = d.alarm;
+  EFF.see = d.see; EFF.boostDrain = d.boostDrain;
   EFF.zoomMax = shopState.mods.includes('zoom4') ? 4 : 2;
+  EFF.hpMax = 100 + d.hp + (shopState.mods.includes('plating') ? 30 : 0);
+  EFF.empMax = 2 + (shopState.mods.includes('emp2') ? 1 : 0);
 }
 function saveShop(){
   localStorage.setItem('ic-shop', JSON.stringify(shopState));
@@ -270,6 +277,22 @@ function updateAudio(dt){
   const a = S.flying ? S.alarm/100 : 0;
   AU.aGain.gain.value = a > 0.02 ? 0.04 + a*0.11 : 0;
   if(a > 0.02) AU.aOsc.frequency.value = 480 + 280*(0.5+0.5*Math.sin(performance.now()/110));
+  /* cœur qui bat : chassé, repéré ou blessé */
+  const chased = hunters.some(x=>x.state==='chase');
+  const menace = S.flying ? Math.max(chased?0.65:0, a*0.9, S.hp < 35 ? 0.55 : 0) : 0;
+  if(menace > 0.2){
+    AU.beatT = (AU.beatT||0) - dt;
+    if(AU.beatT <= 0){
+      AU.beatT = 1.05 - menace*0.6;
+      tone(58, 0.15, 'sine', 0.5);
+      setTimeout(()=>tone(50, 0.1, 'sine', 0.3), 120);
+    }
+  }
+  /* batterie faible */
+  if(S.flying && S.batt < 20 && S.batt > 0){
+    AU.battT = (AU.battT||0) - dt;
+    if(AU.battT <= 0){ AU.battT = 2.2; tone(920, 0.09, 'square', 0.14); tone(920, 0.09, 'square', 0.14); }
+  }
 }
 
 /* ================= état ================= */
@@ -277,7 +300,7 @@ const S = {
   pos: new THREE.Vector3(0,22,150), vel: new THREE.Vector3(),
   yaw: 0, pitch: -0.12,
   flying: false, crashed: false,
-  batt: 100, timer: 100, hp: 100, shakeT: 0,
+  batt: 100, timer: 100, hp: 100, shakeT: 0, emp: 2, empCd: 0,
   lockT: 0, escapeT: 0, alarm: 0,
   zoom: 1, zoomT: 1, photoCd: 0,
   score: 0, best: +(localStorage.getItem('ic-best')||0),
@@ -288,23 +311,31 @@ const keys = {};
 /* ================= scène & éclairages par heure ================= */
 const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('c3d'), antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x0a0e16, 60, 430);
 const cam = new THREE.PerspectiveCamera(78, 1, 0.1, 1500);
 
 const sun = new THREE.DirectionalLight(0xffe8c8, 2.2); sun.position.set(-160, 190, 90); scene.add(sun);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, {left:-480, right:480, top:480, bottom:-480, near:40, far:900});
+sun.shadow.bias = -0.0006;
+scene.add(sun.target);
 const hemi = new THREE.HemisphereLight(0xbdd7f0, 0x8a8578, 1.0); scene.add(hemi);
 const amb = new THREE.AmbientLight(0x2a2018, 0.4); scene.add(amb);
 
 const TOD = {
   day:  { fog:0xb9c8d2, near:120, far:760, sunC:0xfff2dd, sunI:2.6, sunPos:[120,220,60],
-          hemiS:0xbdd7f0, hemiG:0x8a8578, hemiI:1.05, ambI:0.25,
+          hemiS:0xbdd7f0, hemiG:0x8a8578, hemiI:1.05, ambI:0.25, expo:1.05,
           top:[0.42,0.62,0.85], mid:[0.66,0.78,0.90], low:[0.82,0.87,0.92], stars:0 },
   dusk: { fog:0x9c8496, near:90, far:600, sunC:0xffa562, sunI:1.9, sunPos:[-220,60,140],
-          hemiS:0x8878a0, hemiG:0x54483e, hemiI:0.8, ambI:0.4,
+          hemiS:0x8878a0, hemiG:0x54483e, hemiI:0.8, ambI:0.4, expo:1.0,
           top:[0.16,0.20,0.38], mid:[0.72,0.45,0.38], low:[0.95,0.66,0.38], stars:0.3 },
   night:{ fog:0x0a0e16, near:60, far:430, sunC:0x8fb4ff, sunI:0.85, sunPos:[-160,190,90],
-          hemiS:0x1c2a44, hemiG:0x05060a, hemiI:0.7, ambI:0.5,
+          hemiS:0x1c2a44, hemiG:0x05060a, hemiI:0.7, ambI:0.5, expo:1.18,
           top:[0.012,0.02,0.045], mid:[0.05,0.07,0.13], low:[0.38,0.19,0.09], stars:1 },
 };
 let tod = 'night';
@@ -338,6 +369,7 @@ function applyTod(name){
   sun.color.setHex(p.sunC); sun.intensity = p.sunI; sun.position.set(...p.sunPos);
   hemi.color.setHex(p.hemiS); hemi.groundColor.setHex(p.hemiG); hemi.intensity = p.hemiI;
   amb.intensity = p.ambI;
+  renderer.toneMappingExposure = p.expo;
   skyU.uTop.value.set(...p.top); skyU.uMid.value.set(...p.mid); skyU.uLow.value.set(...p.low);
   skyU.uStars.value = p.stars;
 }
@@ -436,7 +468,9 @@ for(const r of PARIS.r){
     g.fillRect(Math.random()*128, Math.random()*128, 2, 2); }
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(90,90);
   const dalle = new THREE.Mesh(new THREE.PlaneGeometry(1100,1100), new THREE.MeshLambertMaterial({map: t}));
-  dalle.rotation.x = -Math.PI/2; dalle.position.y = 0.008; scene.add(dalle);
+  dalle.rotation.x = -Math.PI/2; dalle.position.y = 0.008;
+  dalle.receiveShadow = true;
+  scene.add(dalle);
 }
 /* halo réutilisable */
 const glowTex = (()=>{
@@ -591,11 +625,21 @@ function buildParisBuildings(){
     return m;
   };
   wallBuckets.forEach((arr, i) => {
-    if(arr.length) cityGrp.add(new THREE.Mesh(mergeGeometries(arr), mkMat(hausTex(PALETTES[i]), true)));
+    if(!arr.length) return;
+    const m = new THREE.Mesh(mergeGeometries(arr), mkMat(hausTex(PALETTES[i]), true));
+    m.castShadow = m.receiveShadow = true;
+    cityGrp.add(m);
   });
-  if(shopBucket.length) cityGrp.add(new THREE.Mesh(mergeGeometries(shopBucket), mkMat(shopTex(), true)));
+  if(shopBucket.length){
+    const m = new THREE.Mesh(mergeGeometries(shopBucket), mkMat(shopTex(), true));
+    m.receiveShadow = true;
+    cityGrp.add(m);
+  }
   roofBuckets.forEach((arr, i) => {
-    if(arr.length) cityGrp.add(new THREE.Mesh(mergeGeometries(arr), new THREE.MeshLambertMaterial({map: roofTex(i===1)})));
+    if(!arr.length) return;
+    const m = new THREE.Mesh(mergeGeometries(arr), new THREE.MeshLambertMaterial({map: roofTex(i===1)}));
+    m.castShadow = m.receiveShadow = true;
+    cityGrp.add(m);
   });
   /* feux rouges sur les 6 plus hauts toits, la nuit */
   if(!isDay()){
@@ -998,6 +1042,31 @@ function damage(n, why){
   }
   if(S.hp <= 0) fail(why || 'DRONE DÉTRUIT');
 }
+/* ---- charge IEM : désactive intercepteurs et projecteurs ---- */
+const empFx = [];
+function fireEmp(){
+  if(!S.flying || S.emp <= 0 || S.empCd > 0) return;
+  S.emp--; S.empCd = 3;
+  S.batt = Math.max(0, S.batt - 7);
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 22, 14),
+    new THREE.MeshBasicMaterial({color:0x7fd4ff, transparent:true, opacity:0.55, wireframe:true}));
+  m.position.copy(S.pos); cityGrp.add(m);
+  empFx.push({m, t:0});
+  flash.style.background = '#8fc8ff'; flash.style.opacity = 0.5;
+  setTimeout(()=>{ flash.style.opacity = 0; flash.style.background = '#fff'; }, 130);
+  tone(1400, 0.5, 'sawtooth', 0.28, 80);
+  tone(220, 0.8, 'sine', 0.3, 36);
+  let got = 0;
+  for(const h of hunters){
+    if(h.pos.distanceTo(S.pos) < 30 && h.state !== 'down'){
+      h.state = 'down'; h.downT = 9; h.vel.set(0,0,0); got++;
+    }
+  }
+  for(const L of searchlights){
+    if(new THREE.Vector3(L.x, L.h, L.z).distanceTo(S.pos) < 34) L.offT = 8;
+  }
+  if(got){ photoMsg = `⚡ ${got} INTERCEPTEUR${got>1?'S':''} NEUTRALISÉ${got>1?'S':''} (9 s)`; photoMsgT = 2.5; }
+}
 const hunters = [];
 function mkHunter(x,y,z){
   const grp = new THREE.Group();
@@ -1027,12 +1096,23 @@ function huntersUpdate(dt){
     h.fireCd = Math.max(0, h.fireCd - dt);
     const toP = S.pos.clone().sub(h.pos);
     const dist = toP.length();
+    if(h.state === 'down'){
+      /* neutralisé par IEM : chute et redémarrage */
+      h.downT -= dt;
+      h.vel.y = Math.max(h.vel.y - 26*dt, -16);
+      h.pos.addScaledVector(h.vel, dt);
+      if(h.pos.y < 1.6){ h.pos.y = 1.6; h.vel.set(0,0,0); }
+      h.grp.rotation.z = Math.min(h.grp.rotation.z + dt*2.4, 0.7);
+      h.eye.material.color.setHex(0x333333);
+      if(h.downT <= 0){ h.state = 'patrol'; h.grp.rotation.z = 0; }
+      continue;
+    }
     if(h.state === 'patrol'){
       h.ph += dt*0.5;
       const tx = h.anchor.x + Math.sin(h.ph)*24, tz = h.anchor.z + Math.cos(h.ph)*24;
       const tv = new THREE.Vector3(tx-h.pos.x, (h.anchor.y-h.pos.y)*0.5, tz-h.pos.z).clampLength(0, 9);
       h.vel.lerp(tv, Math.min(1, 2*dt));
-      if(dist < T.huntSee && S.flying) h.state = 'chase';
+      if(dist < T.huntSee*EFF.see && S.flying) h.state = 'chase';
     } else {
       const lead = S.pos.clone().addScaledVector(S.vel, 0.25);
       const tv = lead.sub(h.pos).normalize().multiplyScalar(T.maxSpd*EFF.spd*T.huntSpd);
@@ -1096,7 +1176,8 @@ function respawn(def){
   S.yaw = Math.atan2(-(aim.x - S.pos.x), -(aim.z - S.pos.z));
   S.pitch = -0.15;
   S.batt = 100; S.timer = def.time; S.lockT = 0; S.escapeT = 0; S.alarm = 0;
-  S.hp = 100; S.shakeT = 0; S._reinforced = false;
+  S.hp = EFF.hpMax; S.shakeT = 0; S._reinforced = false;
+  S.emp = EFF.empMax; S.empCd = 0;
   S.zoom = 1; S.zoomT = 1; S.crashed = false; S.briefT = 7;
 }
 function physics(dt){
@@ -1117,7 +1198,8 @@ function physics(dt){
   S.vel.x += (tv.x - S.vel.x)*k;
   S.vel.y += (tv.y - S.vel.y)*Math.min(1, k*1.2);
   S.vel.z += (tv.z - S.vel.z)*k;
-  S.batt = Math.max(0, S.batt - dt*(T.battDrain + (S.boost? T.battBoost : 0))*EFF.drain);
+  S.batt = Math.max(0, S.batt - dt*(T.battDrain + (S.boost? T.battBoost*EFF.boostDrain : 0))*EFF.drain);
+  S.empCd = Math.max(0, S.empCd - dt);
   const step = S.vel.length()*dt;
   const n = THREE.MathUtils.clamp(Math.ceil(step/0.4), 1, 10);
   for(let i=0;i<n;i++){
@@ -1195,6 +1277,9 @@ function missionUpdate(dt){
   if(S.briefT > 0) S.briefT -= dt;
 
   for(const L of searchlights){
+    L.offT = Math.max(0, (L.offT||0) - dt);
+    if(L.offT > 0){ L.spot.visible = false; continue; }   // grillé par l'IEM
+    L.spot.visible = true;
     L.ph += dt*L.spd;
     const tx = L.x + Math.sin(L.ph)*L.r, tz = L.z + Math.cos(L.ph*0.83)*L.r;
     L.tgt.position.set(tx, 0, tz);
@@ -1390,7 +1475,11 @@ document.getElementById('btn-shop-back').onclick = e => { e.target.blur(); scrSh
 renderMenu();
 
 /* ================= entrées ================= */
-addEventListener('keydown', e => { keys[e.code] = true; if(e.code==='Space') e.preventDefault(); });
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if(e.code==='Space') e.preventDefault();
+  if(e.code==='KeyF' && !e.repeat) fireEmp();
+});
 addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('mousemove', e => {
   if(!S.flying || !document.pointerLockElement) return;
@@ -1495,9 +1584,21 @@ function drawHUD(){
   if(S.boost){ g.fillStyle = AMB; g.fillText('BOOST', 160, h-40); }
   /* intégrité */
   g.fillStyle = S.hp < 35 ? RED : CYN;
-  g.fillText(`INT ${S.hp.toFixed(0)}%`, 24, h-70);
+  g.fillText(`INT ${S.hp.toFixed(0)}/${EFF.hpMax}`, 24, h-70);
   g.strokeStyle = g.fillStyle; g.strokeRect(24, h-60, 120, 10);
-  g.fillRect(26, h-58, 116*(S.hp/100), 6);
+  g.fillRect(26, h-58, 116*(S.hp/EFF.hpMax), 6);
+  /* charges IEM */
+  g.fillStyle = S.empCd > 0 ? DIM : '#9fe8ff';
+  g.font = '14px "Courier New",monospace';
+  g.fillText(`IEM [F] ${'◆'.repeat(S.emp)}${'◇'.repeat(Math.max(0, EFF.empMax - S.emp))}`, 24, h-96);
+  /* glitchs quand le drone est amoché */
+  if(S.hp < 40 && Math.random() < 0.3){
+    g.fillStyle = 'rgba(255,60,40,.10)';
+    for(let k=0;k<3;k++){
+      const gy = Math.random()*h;
+      g.fillRect(0, gy, w, 2 + Math.random()*9);
+    }
+  }
   /* intercepteurs hostiles */
   for(const hh of hunters){
     if(hh.state !== 'chase') continue;
@@ -1570,6 +1671,13 @@ function loop(){
   }
   updateAudio(dt);
   if(S.shakeT > 0) S.shakeT -= dt;
+  for(let i=empFx.length-1;i>=0;i--){
+    const f = empFx[i];
+    f.t += dt;
+    f.m.scale.setScalar(1 + f.t*52);
+    f.m.material.opacity = 0.55*(1 - f.t/0.8);
+    if(f.t > 0.8){ cityGrp.remove(f.m); empFx.splice(i,1); }
+  }
   S.zoom += (S.zoomT - S.zoom)*Math.min(1, 10*dt);
   cam.fov = 78 / S.zoom; cam.updateProjectionMatrix();
   cam.position.copy(S.pos);
