@@ -772,6 +772,91 @@ function ring(x,y,z){
   m.position.set(x,y,z); cityGrp.add(m);
   rings.push({pos: new THREE.Vector3(x,y,z), mesh: m});
 }
+
+/* ===== obstacles de parkour urbain ===== */
+function slabCollider(cx, cy, cz, ux, uz, len, wid, th){
+  /* approxime une planche orientée par une rangée de petits AABB */
+  const n = Math.max(1, Math.round(len/3.4));
+  for(let i=0;i<n;i++){
+    const t = (i+0.5)/n - 0.5;
+    addCollider(cx + ux*len*t, cz + uz*len*t, Math.max(wid,3), Math.max(wid,3), th, cy - th/2);
+  }
+}
+const woodMat = new THREE.MeshLambertMaterial({color: 0x8a6a42});
+const steelMat = new THREE.MeshLambertMaterial({color: 0x3a3f46});
+function scaffold(s, t, side){
+  /* tour d'échafaudage contre une façade : voler ENTRE les étages */
+  const L = 14, D = 4.2, H = 18.5;
+  const px = s.ax + (s.bx-s.ax)*t + s.nx*side*(s.w/2+2.6);
+  const pz = s.az + (s.bz-s.az)*t + s.nz*side*(s.w/2+2.6);
+  const ux = (s.bx-s.ax)/s.len, uz = (s.bz-s.az)/s.len;
+  const ry = Math.atan2(ux, uz);
+  for(const dl of [-L/2, 0, L/2]) for(const dd of [-D/2, D/2]){
+    const x = px + ux*dl + s.nx*side*dd, z = pz + uz*dl + s.nz*side*dd;
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.14,H,6), steelMat);
+    p.position.set(x, H/2, z); cityGrp.add(p);
+    addCollider(x, z, 0.5, 0.5, H);
+  }
+  for(let lvl=1; lvl<=4; lvl++){
+    if(rnd() < 0.28) continue;                        // plancher manquant = passage
+    const y = lvl*3.9;
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(L, 0.22, D), woodMat);
+    slab.position.set(px, y, pz); slab.rotation.y = ry;
+    slab.castShadow = true; cityGrp.add(slab);
+    slabCollider(px, y, pz, ux, uz, L, D, 0.5);
+  }
+}
+function gantry(s, t){
+  /* portique publicitaire au-dessus de la rue : passer dessous ou au ras */
+  const px = s.ax + (s.bx-s.ax)*t, pz = s.az + (s.bz-s.az)*t;
+  const span = s.w + 3.5, y = 7.4;
+  const ry = Math.atan2(s.nx, s.nz);
+  for(const side of [-1, 1]){
+    const x = px + s.nx*side*span/2, z = pz + s.nz*side*span/2;
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.6, y+1.2, 0.6), steelMat);
+    p.position.set(x, (y+1.2)/2, z); cityGrp.add(p);
+    addCollider(x, z, 0.9, 0.9, y+1.2);
+  }
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.0, span), steelMat);
+  beam.position.set(px, y+0.6, pz); beam.rotation.y = ry;
+  beam.castShadow = true; cityGrp.add(beam);
+  slabCollider(px, y+0.6, pz, s.nx, s.nz, span, 1.2, 1.2);
+  const ad = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 2.6),
+    new THREE.MeshBasicMaterial({color: NEON_COLORS[rnd()*NEON_COLORS.length|0], side: THREE.DoubleSide,
+      transparent:true, opacity: isDay()? 0.85 : 1}));
+  ad.position.set(px, y+2.6, pz); ad.rotation.y = ry + Math.PI/2;
+  cityGrp.add(ad);
+  slabCollider(px, y+2.6, pz, s.nx, s.nz, 6.5, 0.6, 2.6);
+}
+function wireline(s, t){
+  /* câble à fanions tendu entre les façades : à esquiver */
+  const px = s.ax + (s.bx-s.ax)*t, pz = s.az + (s.bz-s.az)*t;
+  const span = s.w + 4, y = 8.5 + rnd()*4;
+  const ry = Math.atan2(s.nx, s.nz);
+  const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,span,4), steelMat);
+  wire.rotation.z = Math.PI/2; wire.rotation.y = ry;
+  wire.position.set(px, y, pz); cityGrp.add(wire);
+  const cols = [0xe84c4c, 0x4c9be8, 0xf0d04a, 0x58c47a, 0xffffff];
+  for(let i=1;i<7;i++){
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.9),
+      new THREE.MeshBasicMaterial({color: cols[i%5], side: THREE.DoubleSide}));
+    const tt = i/7 - 0.5;
+    f.position.set(px + s.nx*span*tt, y - 0.5, pz + s.nz*span*tt);
+    f.rotation.y = ry + Math.PI/2;
+    cityGrp.add(f);
+  }
+  slabCollider(px, y - 0.4, pz, s.nx, s.nz, span, 0.7, 1.4);
+}
+function spawnObstacles(def){
+  const cand = SEG.filter(s => s.d && s.len >= 26 && s.w >= 8 &&
+    inZone((s.ax+s.bx)/2, (s.az+s.bz)/2));
+  if(!cand.length) return;
+  const pick = () => cand[(rnd()*cand.length)|0];
+  const nArc = def.type === 'race' ? 6 : 4;
+  for(let i=0;i<nArc;i++){ const s = pick(); gantry(s, 0.3 + rnd()*0.4); }
+  for(let i=0;i<3;i++){ const s = pick(); scaffold(s, 0.25 + rnd()*0.5, rnd()<0.5? 1 : -1); }
+  for(let i=0;i<6;i++){ const s = pick(); wireline(s, 0.2 + rnd()*0.6); }
+}
 const CAR_COLORS = [0xc23b2e, 0x2e5fc2, 0xd8d9dd, 0xd9b12e, 0x8a929c, 0x2f8f52, 0x14161c];
 function parkedCar(x,z,ry){
   const m = new THREE.Mesh(carGeoShared, new THREE.MeshLambertMaterial({color: CAR_COLORS[rnd()*CAR_COLORS.length|0]}));
@@ -1473,6 +1558,7 @@ function launch(){
   if(d.type === 'race') for(const r of rings)
     zr = Math.max(zr, Math.hypot(r.pos.x-zc[0], r.pos.z-zc[1]) + 70);
   setZone(zc[0], zc[1], zr);
+  spawnObstacles(d);
   spawnLife();
   respawn(d);
   S.outT = 0;
