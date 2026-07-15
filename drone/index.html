@@ -395,45 +395,29 @@ const camera = new THREE.PerspectiveCamera(T.fovBase, innerWidth/innerHeight, 0.
 /* ---------- post-traitement : bloom cinématique (halo sur soleil, feux, néons, émissifs) ---------- */
 const MAXA = renderer.capabilities.getMaxAnisotropy();   // filtrage anisotrope max (netteté au rasant)
 let composer=null, bloomPass=null, USE_POST = false;
-/* étalonnage final : contraste filmique + saturation + réchauffement + vignette douce */
-const GradeShader = {
-  uniforms: { tDiffuse:{value:null}, uContrast:{value:1.03}, uSat:{value:1.12}, uWarm:{value:0.014}, uVig:{value:0.07}, uLift:{value:0.015} },
+/* passe finale combinée : god-rays (radial blur vers le soleil) + étalonnage — 1 seul ping-pong */
+const PostShader = {
+  uniforms: { tDiffuse:{value:null}, uSun:{value:new THREE.Vector2(0.5,0.9)}, uStrength:{value:0.0},
+    uContrast:{value:1.03}, uSat:{value:1.12}, uWarm:{value:0.014}, uVig:{value:0.07}, uLift:{value:0.015} },
   vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
   fragmentShader: `
-    varying vec2 vUv; uniform sampler2D tDiffuse;
-    uniform float uContrast, uSat, uWarm, uVig, uLift;
+    varying vec2 vUv; uniform sampler2D tDiffuse; uniform vec2 uSun;
+    uniform float uStrength, uContrast, uSat, uWarm, uVig, uLift;
     void main(){
       vec3 c = texture2D(tDiffuse, vUv).rgb;
-      c = c*(1.0-uLift) + uLift;                            // lift : remonte les noirs (ombres débouchées)
-      c = (c-0.5)*uContrast + 0.5;                          // contraste autour du gris moyen
-      float l = dot(c, vec3(0.299,0.587,0.114));
-      c = mix(vec3(l), c, uSat);                             // saturation
-      c += vec3(uWarm, uWarm*0.35, -uWarm*0.55);             // léger réchauffement ambre
-      vec2 d = vUv-0.5; c *= clamp(1.0 - dot(d,d)*uVig*2.2, 0.0, 1.0);  // vignette
-      gl_FragColor = vec4(max(c,0.0), 1.0);
-    }`
-};
-/* god-rays : radial blur screen-space vers le soleil, masqué sur les zones lumineuses */
-const GodRayShader = {
-  uniforms: { tDiffuse:{value:null}, uSun:{value:new THREE.Vector2(0.5,0.9)}, uStrength:{value:0.0} },
-  vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-  fragmentShader: `
-    varying vec2 vUv; uniform sampler2D tDiffuse; uniform vec2 uSun; uniform float uStrength;
-    void main(){
-      vec3 base = texture2D(tDiffuse, vUv).rgb;
-      if(uStrength <= 0.001){ gl_FragColor = vec4(base,1.0); return; }
-      vec2 delta = (uSun - vUv) * 0.92 / 28.0;
-      vec2 uv = vUv; float decay = 1.0; vec3 shafts = vec3(0.0);
-      for(int i=0;i<28;i++){
-        uv += delta;
-        vec3 s = texture2D(tDiffuse, clamp(uv,0.0,1.0)).rgb;
-        float l = max(0.0, dot(s, vec3(0.299,0.587,0.114)) - 0.62);   // seule la lumière vive rayonne
-        shafts += s * l * decay;
-        decay *= 0.93;
+      if(uStrength > 0.001){                                   // rayons crépusculaires
+        vec2 delta = (uSun - vUv) * 0.92 / 20.0;
+        vec2 uv = vUv; float decay = 1.0; vec3 shafts = vec3(0.0);
+        for(int i=0;i<20;i++){ uv += delta; vec3 s = texture2D(tDiffuse, clamp(uv,0.0,1.0)).rgb;
+          float l = max(0.0, dot(s, vec3(0.299,0.587,0.114)) - 0.62); shafts += s * l * decay; decay *= 0.90; }
+        c += shafts * (uStrength/20.0*2.8) * vec3(1.05,0.92,0.72);
       }
-      shafts *= uStrength / 28.0 * 2.6;
-      shafts *= vec3(1.05, 0.92, 0.72);                                // teinte chaude
-      gl_FragColor = vec4(base + shafts, 1.0);
+      c = c*(1.0-uLift) + uLift;                               // lift
+      c = (c-0.5)*uContrast + 0.5;                             // contraste
+      float l = dot(c, vec3(0.299,0.587,0.114)); c = mix(vec3(l), c, uSat);   // saturation
+      c += vec3(uWarm, uWarm*0.35, -uWarm*0.55);               // réchauffement
+      vec2 d = vUv-0.5; c *= clamp(1.0 - dot(d,d)*uVig*2.2, 0.0, 1.0);        // vignette
+      gl_FragColor = vec4(max(c,0.0), 1.0);
     }`
 };
 let godrayPass=null;
@@ -443,11 +427,9 @@ function buildComposer(){
   // (strength, radius, threshold) : seuil haut → seules les zones lumineuses "débordent"
   bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.5, 0.55, 0.82);
   composer.addPass(bloomPass);
-  godrayPass = new ShaderPass(GodRayShader);
+  godrayPass = new ShaderPass(PostShader);      // god-rays + grade fusionnés
   composer.addPass(godrayPass);
-  const grade = new ShaderPass(GradeShader);
-  composer.addPass(grade);
-  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.setPixelRatio(Math.min(renderer.getPixelRatio(), 1.25));  // post-process en résolution modérée (fill divisé)
   composer.setSize(innerWidth, innerHeight);
 }
 
@@ -2216,23 +2198,35 @@ function updateCrows(t){
 
 /* --- fumées, feux, cendres --- */
 const smokeSprite = (()=>{
-  const cv=document.createElement('canvas'); cv.width=cv.height=64;
+  const cv=document.createElement('canvas'); cv.width=cv.height=128;
   const g=cv.getContext('2d');
-  const gr=g.createRadialGradient(32,32,2,32,32,30);
-  gr.addColorStop(0,'rgba(200,195,185,.55)'); gr.addColorStop(1,'rgba(200,195,185,0)');
-  g.fillStyle=gr; g.fillRect(0,0,64,64);
-  return new THREE.CanvasTexture(cv);
+  const gr=g.createRadialGradient(64,64,2,64,64,62);
+  gr.addColorStop(0,'rgba(210,205,196,.6)'); gr.addColorStop(0.5,'rgba(200,195,185,.28)'); gr.addColorStop(1,'rgba(200,195,185,0)');
+  g.fillStyle=gr; g.fillRect(0,0,128,128);
+  for(let i=0;i<26;i++){ g.globalAlpha=0.05+Math.random()*0.09;   // volutes irrégulières
+    g.beginPath(); g.arc(20+Math.random()*88, 20+Math.random()*88, 8+Math.random()*22, 0, 7); g.fill(); }
+  g.globalAlpha=1; return new THREE.CanvasTexture(cv);
 })();
 const smokes=[];
 function smokePlume(x, y0, z, scale, tint){
-  const N=46, pos=new Float32Array(N*3), age=new Float32Array(N);
+  const N=52, pos=new Float32Array(N*3), age=new Float32Array(N), ageAttr=new Float32Array(N);
   for(let i=0;i<N;i++){ age[i]=rnd(); }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-  const p=new THREE.Points(geo, new THREE.PointsMaterial({map:smokeSprite, color:tint,
-    size:10*scale, transparent:true, opacity:.34, depthWrite:false, sizeAttenuation:true}));
+  geo.setAttribute('aAge', new THREE.BufferAttribute(ageAttr,1));
+  const mat=new THREE.ShaderMaterial({
+    uniforms:{ uTex:{value:smokeSprite}, uColor:{value:new THREE.Color(tint)}, uSize:{value:11*scale} },
+    transparent:true, depthWrite:false,
+    vertexShader:`attribute float aAge; uniform float uSize; varying float vAge;
+      void main(){ vAge=aAge; vec4 mv=modelViewMatrix*vec4(position,1.0);
+        gl_PointSize=min(uSize*(0.4+aAge*1.6)*(210.0/max(1.0,-mv.z)), 46.0); gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`uniform sampler2D uTex; uniform vec3 uColor; varying float vAge;
+      void main(){ vec4 t=texture2D(uTex, gl_PointCoord); float alpha=t.a*(1.0-vAge)*0.42;
+        vec3 col=mix(uColor*0.4, uColor, vAge); gl_FragColor=vec4(col, alpha); }`,
+  });
+  const p=new THREE.Points(geo, mat);
   p.frustumCulled=false; scene.add(p);
-  smokes.push({pos, age, x, y0, z, scale, geo, H:52*scale});
+  smokes.push({pos, age, ageAttr, x, y0, z, scale, geo, H:58*scale});
   return p;
 }
 smokePlume( 175, 12, -55, 1.0, 0x8a8580);
@@ -2241,6 +2235,7 @@ smokePlume( 390,  0, -310, 3.2, 0x9a938a);
 smokePlume( 172, 22, 118, 1.1, 0x817c76);   // tour du quartier est
 smokePlume(-232,  8,  62, 0.9, 0x6f6a64);   // immeuble brûlé ouest
 smokePlume( 122, 14,-172, 1.2, 0x8a8078);   // quartier sud
+smokePlume(-250,  1,-150, 1.4, 0x7a746c);   // avion crashé
 const fireLights=[];
 for(const [x,z] of [[-112,-71],[175,-55]]){
   const f=new THREE.PointLight(0xff7a2a, 60, 40, 1.9);
@@ -3571,7 +3566,7 @@ function applySettings(){
   sun.castShadow = SETTINGS.q >= 1;
   sun.shadow.mapSize.set(SETTINGS.q>=2?2048:1024, SETTINGS.q>=2?2048:1024);
   USE_POST = SETTINGS.q >= 1;                 // bloom dès la qualité moyenne
-  if(USE_POST){ if(!composer) buildComposer(); composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
+  if(USE_POST){ if(!composer) buildComposer(); composer.setPixelRatio(Math.min(pr,1.25)); composer.setSize(innerWidth, innerHeight); }
   localStorage.setItem('bs-settings', JSON.stringify(SETTINGS));
 }
 elSens.value = SETTINGS.sens*100; elVol.value = SETTINGS.vol*100; elQ.value = SETTINGS.q;
@@ -4476,14 +4471,16 @@ function loop(now){
   // colonnes de fumée
   for(const s of smokes){
     for(let i=0;i<s.age.length;i++){
-      s.age[i]+=dt*(0.05+0.03*Math.sin(i));
+      s.age[i]+=dt*(0.045+0.025*Math.sin(i));
       if(s.age[i]>1) s.age[i]-=1;
-      const a=s.age[i], spread=(0.8+a*9)*s.scale;
-      s.pos[i*3]  = s.x + Math.sin(i*37.7)*spread + a*a*26*s.scale;   // dérive du vent +x
+      const a=s.age[i], spread=(0.8+a*10)*s.scale;
+      s.pos[i*3]  = s.x + Math.sin(i*37.7)*spread + a*a*28*s.scale;   // dérive du vent +x
       s.pos[i*3+1]= s.y0 + a*s.H;
       s.pos[i*3+2]= s.z + Math.cos(i*51.3)*spread + a*7*s.scale;
+      s.ageAttr[i]= a;
     }
     s.geo.attributes.position.needsUpdate=true;
+    s.geo.attributes.aAge.needsUpdate=true;
   }
   // feux qui crépitent
   fireLights.forEach((f,i)=>{
