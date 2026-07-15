@@ -1835,6 +1835,34 @@ vehicle(-120,-160, 0.0,'van');     vehicle( 250, 210, 0.3,'truck');
     sm.castShadow=false; scene.add(sm); }
 }
 
+/* --- végétation qui reprend ses droits : broussailles + herbes folles (instancié) --- */
+(function(){
+  // broussaille : amas d'icosaèdres sombres
+  const bushParts=[];
+  for(let i=0;i<7;i++){ const s=0.5+rnd()*0.7;
+    bushParts.push(new THREE.IcosahedronGeometry(s,0).translate((rnd()-.5)*1.4, 0.4+rnd()*0.9, (rnd()-.5)*1.4)); }
+  const bushGeo=mergeGeometries(bushParts);
+  const bushMat=new THREE.MeshStandardMaterial({color:0x3f4a2c, roughness:1});
+  // touffe d'herbe : lames fines croisées
+  const bladeParts=[];
+  for(let i=0;i<5;i++){ const b=new THREE.BoxGeometry(0.06,0.7+rnd()*0.5,0.06);
+    b.translate(0,0.4,0); b.rotateZ((rnd()-.5)*0.5); b.rotateY(rnd()*3.14); b.translate((rnd()-.5)*0.4,0,(rnd()-.5)*0.4); bladeParts.push(b); }
+  const grassGeo=mergeGeometries(bladeParts);
+  const grassMat=new THREE.MeshStandardMaterial({color:0x5a5a30, roughness:1});
+  const bushes=[], grasses=[], dmy=new THREE.Object3D();
+  const roadZone=(x,z)=> (Math.abs(z-32)<7)||(Math.abs(x-78)<7)||(Math.abs(z-100)<7)||(Math.abs(z+160)<7)||(Math.abs(x-150)<7)||(Math.abs(x+210)<7);
+  for(let i=0;i<340;i++){
+    const a=rnd()*6.28, r=30+rnd()*250, x=Math.cos(a)*r, z=Math.sin(a)*r;
+    if(Math.abs(x)<24 && Math.abs(z)<38) continue;      // hall de départ
+    if(roadZone(x,z)) continue;                          // pas sur les routes
+    (rnd()<0.4 ? bushes : grasses).push([x,z, rnd()*6.28, 0.7+rnd()*0.8]);
+  }
+  const mk=(geo,mat,arr)=>{ if(!arr.length) return; const im=new THREE.InstancedMesh(geo,mat,arr.length);
+    arr.forEach((p,i)=>{ dmy.position.set(p[0],0,p[1]); dmy.rotation.set(0,p[2],0); dmy.scale.setScalar(p[3]); dmy.updateMatrix(); im.setMatrixAt(i,dmy.matrix); });
+    im.castShadow=true; im.receiveShadow=true; scene.add(im); };
+  mk(bushGeo,bushMat,bushes); mk(grassGeo,grassMat,grasses);
+})();
+
 /* ============================================================
    POLISH SOL & ATMOSPHÈRE — décals, cratères, marquages, corbeaux,
    pont autoroutier effondré. Brise le sol plat + donne de la vie.
