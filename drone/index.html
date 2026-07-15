@@ -517,6 +517,15 @@ const sky = new THREE.Mesh(
 sky.frustumCulled = false; sky.renderOrder = -1;
 scene.add(sky);
 
+/* environnement IBL : reflets réalistes (verre / métal / véhicules) captés depuis le ciel */
+{
+  const envScene = new THREE.Scene();
+  envScene.add(new THREE.Mesh(sky.geometry, sky.material));
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(envScene, 0, 0.1, 3000).texture;
+  pmrem.dispose();
+}
+
 /* ---------- lumières ---------- */
 const hemi = new THREE.HemisphereLight(0xbfae97, 0x4c4437, 1.0);
 scene.add(hemi);
