@@ -356,7 +356,7 @@ function startRun(mode){
   S.shieldRegen=0;
   S.dashCharges=0; S.dashCd=0; S.dashT=0; S.iFrame=0;
   S.revived=false; S.x2done=false; S.over=false; S.slow=1;
-  S.trailPts=[];
+  S.trailPts=[]; S.recPassed=false; S.recordFlash=0;
   spawnWX = innerWidth + 200;
   genGroup._lastOrb = 0;
   for(let i=0;i<10;i++) genGroup();
@@ -541,9 +541,15 @@ function update(dt){
     }
   }
 
-  // traînée
-  S.trailPts.push({x:sx, y:S.y});
-  if(S.trailPts.length>26) S.trailPts.shift();
+  // traînée (en coords MONDE → fuit derrière comme une comète)
+  S.trailPts.push({wx:S.camX+sx, y:S.y});
+  if(S.trailPts.length>34) S.trailPts.shift();
+
+  // marqueur record
+  const distM = Math.floor(S.dist/T.m2px);
+  const rec = S.mode==='daily' ? (SV.daily[todayKey()]||0) : SV.best;
+  if(!S.recPassed && rec>0 && distM>rec){ S.recPassed=true; S.recordFlash=1.7; sfxOrb(); S.flash=Math.max(S.flash,0.18); }
+  if(S.recordFlash>0) S.recordFlash=Math.max(0,S.recordFlash-dt);
 
   // particules
   for(let i=parts.length-1;i>=0;i--){ const p=parts[i]; p.life-=dt;
@@ -656,7 +662,7 @@ function draw(){
     fx.save(); fx.lineCap='round'; fx.lineJoin='round';
     for(let pass=0;pass<2;pass++){
       fx.beginPath();
-      for(let i=0;i<S.trailPts.length;i++){ const p=S.trailPts[i]; i?fx.lineTo(p.x,p.y):fx.moveTo(p.x,p.y); }
+      for(let i=0;i<S.trailPts.length;i++){ const p=S.trailPts[i], px=p.wx-S.camX; i?fx.lineTo(px,p.y):fx.moveTo(px,p.y); }
       if(tcol==='rainbow'){ const grd=fx.createLinearGradient(sx-120,0,sx,0);
         grd.addColorStop(0,'#ff3caa'); grd.addColorStop(0.33,'#ffe14d'); grd.addColorStop(0.66,'#8dff57'); grd.addColorStop(1,'#57e8ff');
         fx.strokeStyle=grd; } else fx.strokeStyle=tcol;
@@ -695,6 +701,12 @@ function draw(){
   fx.restore();
 
   drawHUD();
+
+  // marqueur RECORD !
+  if(S.recordFlash>0){ const a=Math.min(1,S.recordFlash);
+    fx.save(); fx.globalAlpha=a; fx.textAlign='center'; fx.font='900 italic 34px Trebuchet MS';
+    fx.fillStyle='#ffe14d'; fx.shadowColor='#ff3caa'; fx.shadowBlur=22;
+    fx.fillText('RECORD !', W/2, T.padTop+52 - (1-a)*20); fx.restore(); }
 
   // flash
   if(S.flash>0){ fx.fillStyle=`rgba(255,255,255,${S.flash})`; fx.fillRect(0,0,W,H); }
@@ -776,11 +788,11 @@ function renderCos(){
 
 /* ---------- entrées ---------- */
 const isTouch = matchMedia('(pointer: coarse)').matches;
-let holdT=0, holding=false;
-function press(e){ if(S.scene!=='play') return; initAudio(); holding=true; holdT=0; }
+let holdT=0, holding=false, holdDashed=false;
+function press(e){ if(S.scene!=='play') return; initAudio(); holding=true; holdT=0; holdDashed=false; }
 function release(){ if(!holding) return; holding=false;
-  // tap court = flip ; maintien = dash
-  if(holdT < 0.18) flip();
+  // tap court = flip ; maintien = dash (déjà déclenché pendant l'appui)
+  if(!holdDashed && holdT < 0.18) flip();
 }
 addEventListener('keydown', e=>{
   if(e.code==='Space'||e.code==='ArrowUp'){ e.preventDefault(); if(S.scene==='play'){ initAudio(); flip(); } }
@@ -819,6 +831,8 @@ function loop(now){
   requestAnimationFrame(loop);
   let dt=Math.min(0.033,(now-last)/1000); last=now;
   if(S._pausedHidden){ S._pausedHidden=false; dt=0; }
+  // maintien de l'appui = dash (souris + tactile), au-delà de 0.18 s
+  if(holding){ holdT+=dt; if(!holdDashed && holdT>=0.18){ holdDashed=true; dash(); } }
   musicTick(dt);
   if(S.running && !adOpen && !S.god_pause){ update(dt); }
   else if(S.scene==='play' && S.god_pause){ /* pause pour tests */ }
