@@ -385,7 +385,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.24;   // lift : compense le contraste du grade, décor bien lisible
+renderer.toneMappingExposure = 1.36;   // jour plus lumineux, décor bien lisible même à l'ombre
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0xb1a087, 0.0016);
@@ -397,13 +397,14 @@ const MAXA = renderer.capabilities.getMaxAnisotropy();   // filtrage anisotrope 
 let composer=null, bloomPass=null, USE_POST = false;
 /* étalonnage final : contraste filmique + saturation + réchauffement + vignette douce */
 const GradeShader = {
-  uniforms: { tDiffuse:{value:null}, uContrast:{value:1.045}, uSat:{value:1.13}, uWarm:{value:0.016}, uVig:{value:0.12} },
+  uniforms: { tDiffuse:{value:null}, uContrast:{value:1.03}, uSat:{value:1.12}, uWarm:{value:0.014}, uVig:{value:0.07}, uLift:{value:0.015} },
   vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
   fragmentShader: `
     varying vec2 vUv; uniform sampler2D tDiffuse;
-    uniform float uContrast, uSat, uWarm, uVig;
+    uniform float uContrast, uSat, uWarm, uVig, uLift;
     void main(){
       vec3 c = texture2D(tDiffuse, vUv).rgb;
+      c = c*(1.0-uLift) + uLift;                            // lift : remonte les noirs (ombres débouchées)
       c = (c-0.5)*uContrast + 0.5;                          // contraste autour du gris moyen
       float l = dot(c, vec3(0.299,0.587,0.114));
       c = mix(vec3(l), c, uSat);                             // saturation
@@ -416,7 +417,7 @@ function buildComposer(){
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   // (strength, radius, threshold) : seuil haut → seules les zones lumineuses "débordent"
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.62, 0.55, 0.80);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.5, 0.55, 0.82);
   composer.addPass(bloomPass);
   const grade = new ShaderPass(GradeShader);
   composer.addPass(grade);
@@ -425,7 +426,7 @@ function buildComposer(){
 }
 
 /* ---------- ciel atmosphérique (shader : diffusion, soleil bas, nuages FBM) ---------- */
-const SUN_DIR = new THREE.Vector3(-0.62, 0.21, -0.42).normalize();  // fin d'après-midi, soleil bas
+const SUN_DIR = new THREE.Vector3(-0.52, 0.5, -0.4).normalize();  // milieu d'après-midi, soleil plus haut → jour lumineux
 const skyUni = { uSun:{value:SUN_DIR}, uT:{value:0}, uNight:{value:0}, uWx:{value:0}, uFlash:{value:0} };
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(1400, 40, 24),
@@ -3854,12 +3855,12 @@ function loop(now){
   S.nightT += clamp(nTgt-S.nightT, -dt*0.7, dt*0.7);
   skyUni.uNight.value = S.nightT;
   const fl = skyUni.uFlash.value;
-  sun.intensity  = lerp(2.9, 0.10, S.nightT) * (1 - WX.dark*0.72) + fl*3;
+  sun.intensity  = lerp(3.25, 0.10, S.nightT) * (1 - WX.dark*0.72) + fl*3;
   sun.color.lerpColors(C_SUN_DAY, C_SUN_NIGHT, S.nightT);
-  hemi.intensity = lerp(1.0, 0.13, S.nightT) * (1 - WX.dark*0.45) + fl*1.5;
+  hemi.intensity = lerp(2.3, 0.13, S.nightT) * (1 - WX.dark*0.45) + fl*1.5;   // ambiant jour ↑↑ (débouche les ombres)
   scene.fog.color.lerpColors(C_FOG_DAY, C_FOG_NIGHT, S.nightT);
   scene.fog.density = lerp(0.0016, 0.0022, S.nightT) * WX.fogMul;
-  fillIn.intensity = lerp(55, 14, S.nightT);
+  fillIn.intensity = lerp(82, 14, S.nightT);
   const nvOn = S.mode===2;
   nvAmb.intensity += clamp((nvOn?3.0:0)-nvAmb.intensity, -dt*9, dt*9);
   if(canvas.classList.contains('nv') !== nvOn) canvas.classList.toggle('nv', nvOn);
