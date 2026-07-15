@@ -1413,9 +1413,15 @@ for(const [bx,bz,ry] of [[74,32,0.2],[-80,-158,1.8]]){
    MAISONS PÉNÉTRABLES — le drone entre par la porte / le toit crevé
    ============================================================ */
 const houseZones = [];
+/* matériaux de maison : brique, béton, ou crépi coloré (pavillon) */
+const stuccoMats = [0x9c8f78, 0xa9a08c, 0x8f9a86, 0xb0a48e, 0x87796a].map(c=>
+  new THREE.MeshStandardMaterial({color:c, roughness:.95}));
 function house(hx, hz, opt={}){
   const W = opt.w||10, D = opt.d||9, wallH = opt.h||4.3;
-  const wallMat = rnd()<.5 ? M.brick : M.concrete;
+  // style : 0 brique, 1 béton, 2 pavillon crépi (avec toit pentu)
+  const style = opt.style!=null ? opt.style : (rnd()*3|0);
+  const wallMat = style===0 ? M.brick : style===1 ? M.concrete : stuccoMats[(rnd()*stuccoMats.length)|0];
+  const pitched = style===2 || rnd()<0.35;     // toit à deux pans
   const t = 0.35;
   // sol intérieur
   const fl = new THREE.Mesh(new THREE.BoxGeometry(W,0.2,D), M.floor);
@@ -1429,14 +1435,33 @@ function house(hx, hz, opt={}){
   addBox(seg, wallH, t, hx-(doorW/2+seg/2), wallH/2, hz+D/2, wallMat);
   addBox(seg, wallH, t, hx+(doorW/2+seg/2), wallH/2, hz+D/2, wallMat);
   addBox(doorW, wallH-2.7, t, hx, wallH-(wallH-2.7)/2, hz+D/2, wallMat);
+  // auvent / véranda sur pilotis au-dessus de la porte (pavillon)
+  if(style===2 || rnd()<0.3){
+    const aw = addBox(doorW+1.6, 0.16, 1.8, hx, wallH-0.4, hz+D/2+0.9, M.rust, {collide:false});
+    aw.rotation.x = 0.12;
+    addBox(0.18,wallH-0.6,0.18, hx-(doorW/2+0.6), (wallH-0.6)/2, hz+D/2+1.6, M.darkSteel);
+    addBox(0.18,wallH-0.6,0.18, hx+(doorW/2+0.6), (wallH-0.6)/2, hz+D/2+1.6, M.darkSteel);
+  }
+  // cheminée (pavillon / brique)
+  if(style!==1 && rnd()<0.6) addBox(0.7,1.6,0.7, hx+W/2-1, wallH+0.9, hz-D/2+1.2, M.brick);
   // vitres cassées visuelles sur les côtés
   for(const s of [-1,1]){
     const gl = new THREE.Mesh(new THREE.PlaneGeometry(1.4,1.1), M.glassBroken);
     gl.position.set(hx+s*(W/2-0.02), 2.1, hz+(rnd()-.5)*D*0.4);
     gl.rotation.y = Math.PI/2; scene.add(gl);
   }
-  // toit : partiellement effondré → on peut plonger dedans par le trou
-  if(rnd()<0.8){
+  // TOIT
+  if(pitched){                                   // deux pans qui se rejoignent en faîtage (avec une brèche)
+    const roofMat = style===0 ? M.rust : M.concrete, rise = 1.9, sl = Math.hypot(D/2, rise)+0.2;
+    for(const s of [-1,1]){
+      if(s<0 && rnd()<0.4) continue;            // un pan effondré : ouverture par le toit
+      const pan = new THREE.Mesh(new THREE.BoxGeometry(W+0.5, 0.2, sl), roofMat);
+      pan.position.set(hx, wallH+rise/2, hz + s*D/4);
+      pan.rotation.x = s*Math.atan2(rise, D/2);
+      pan.castShadow=pan.receiveShadow=true; scene.add(pan);
+    }
+    addBox(0.3, 0.5, D, hx, wallH+rise, hz, roofMat, {collide:false});   // faîtière
+  } else if(rnd()<0.8){                          // toit plat partiellement effondré
     const rw = W*0.52;
     const roof = addBox(rw, 0.3, D, hx-(W-rw)/2, wallH+0.15, hz, M.concrete);
     roof.rotation.x = (rnd()-.5)*0.08;
@@ -1463,8 +1488,94 @@ function house(hx, hz, opt={}){
   loot.position.set(hx,0.45,hz); loot.castShadow=true; scene.add(loot);
   houseZones.push({x:hx, z:hz, hw:W/2-0.5, hd:D/2-0.5, top:wallH-0.3, visited:false, loot});
 }
-[ [44,58],[-52,60],[96,-40],[-116,-16],[150,44],[-158,-72],[34,152] ]
-  .forEach(([x,z])=> house(x,z, {w:9+((rnd()*3)|0), d:8+((rnd()*3)|0)}));
+// pavillons & maisons répartis dans TOUS les secteurs (centre + périphérie)
+[ // proche centre
+  [44,58],[-52,60],[96,-40],[-116,-16],[150,44],[-158,-72],[34,152],
+  // quartier est
+  [230,-40],[268,50],[300,140],[210,88],
+  // quartier ouest
+  [-236,-30],[-288,60],[-250,175],[-200,-90],
+  // quartier sud
+  [70,-210],[-40,-250],[150,-240],[-150,-220],[20,-300],
+  // nord / lointain
+  [-30,240],[120,290],[-120,285],[250,230],[-280,150],
+  // coins
+  [300,-220],[-300,-200],[300,300],[-300,290]
+].forEach(([x,z])=> house(x,z, {w:9+((rnd()*4)|0), d:8+((rnd()*3)|0)}));
+
+/* ============================================================
+   TYPES DE BÂTIMENTS VARIÉS — hangar, tour de bureaux, parking
+   ============================================================ */
+/* hangar / entrepôt : grande halle en tôle, façade ouverte (le drone entre) */
+function hangar(x, z, w, d, ry=0){
+  const h = 7.5;
+  const grp = new THREE.Group();
+  const wall = (ww,hh,dd,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(ww,hh,dd), M.metal);
+    m.position.set(px,py,pz); m.castShadow=m.receiveShadow=true; grp.add(m); };
+  wall(w, h, 0.4, 0, h/2, -d/2);                       // fond
+  wall(0.4, h, d, -w/2, h/2, 0); wall(0.4, h, d, w/2, h/2, 0);  // côtés
+  wall(w*0.28, h, 0.4, -w*0.36, h/2, d/2); wall(w*0.28, h, 0.4, w*0.36, h/2, d/2); // façade : grande ouverture centrale
+  // toit à double pente (tôle)
+  const rise=2.2, sl=Math.hypot(d/2,rise)+0.3;
+  for(const s of [-1,1]){
+    const pan=new THREE.Mesh(new THREE.BoxGeometry(w+0.5,0.25,sl), M.metal);
+    pan.position.set(0, h+rise/2, s*d/4); pan.rotation.x=s*Math.atan2(rise,d/2);
+    pan.castShadow=true; grp.add(pan);
+  }
+  grp.position.set(x,0,z); grp.rotation.y=ry; scene.add(grp);
+  // colliders alignés (approximation AABB : mur du fond + 2 côtés + toit)
+  const c=Math.cos(ry), s2=Math.sin(ry), rot=(lx,lz)=>[x+lx*c - lz*s2, z+lx*s2 + lz*c];
+  const seg=(lx,lz,hw,hd)=>{ const [wx,wz]=rot(lx,lz);
+    boxColliders.push({min:new THREE.Vector3(wx-hw,0,wz-hd), max:new THREE.Vector3(wx+hw,h,wz+hd)}); };
+  seg(0,-d/2, w/2,0.3); seg(-w/2,0, 0.3,d/2); seg(w/2,0, 0.3,d/2);
+  boxColliders.push({min:new THREE.Vector3(x-w/2,h,z-d/2), max:new THREE.Vector3(x+w/2,h+rise+0.3,z+d/2)}); // toit
+  // intérieur : caisses + un véhicule
+  for(let i=0;i<5;i++){ const bx=(rnd()-.5)*(w-3), bz=(rnd()-.5)*(d-3), [wx,wz]=rot(bx,bz);
+    const cr=addBox(1.2,1.2,1.2, wx, 0.6+ (rnd()<.4?1.2:0), wz, M.rust, {collide:false}); cr.rotation.y=rnd(); }
+}
+/* tour de bureaux : bandeaux vitrés horizontaux + édicule de toit */
+function officeTower(x, z, w, d, fl){
+  const h = fl*3.3;
+  const body = new THREE.Mesh(facadeGeo(w,h,d), M.concrete.clone());
+  body.material.color.setHSL(0.58, 0.04, 0.42+rnd()*0.1);
+  body.position.set(x, h/2, z); body.castShadow=body.receiveShadow=true; scene.add(body);
+  boxColliders.push({min:new THREE.Vector3(x-w/2,0,z-d/2), max:new THREE.Vector3(x+w/2,h,z+d/2)});
+  // bandeaux vitrés (verre sombre réfléchissant) tous les étages
+  const glass = new THREE.MeshStandardMaterial({color:0x2b3a44, roughness:.15, metalness:.55, emissive:0x0a1620, emissiveIntensity:.4});
+  for(let i=1;i<fl;i++){
+    for(const [sx,sz,sw,sd] of [[0,d/2+0.02,w*0.92,0],[0,-d/2-0.02,w*0.92,0],[w/2+0.02,0,0,d*0.92],[-w/2-0.02,0,0,d*0.92]]){
+      const band=new THREE.Mesh(new THREE.PlaneGeometry(sw||sd,2.0), glass);
+      band.position.set(x+sx, i*3.3+1.65, z+sz); if(sw===0) band.rotation.y=Math.PI/2; scene.add(band);
+    }
+  }
+  // édicule technique + antenne sur le toit
+  addBox(w*0.4, 2.4, d*0.4, x-(rnd()-.5)*w*0.2, h+1.2, z, M.concrete);
+  addBox(0.14,6,0.14, x+w*0.25, h+3, z+d*0.2, M.darkSteel, {collide:false});
+}
+/* parking à étages : dalles ouvertes sur poteaux (le drone traverse les niveaux) */
+function parkingGarage(x, z, w, d, fl){
+  const fh=3.0;
+  for(let i=0;i<=fl;i++){                               // dalles
+    addBox(w, 0.3, d, x, i*fh, z, M.concrete);
+    if(i>0) addBox(w, 0.6, 0.25, x, i*fh-0.7, z+d/2, M.concrete, {collide:false});  // bandeau de rive (façade)
+    if(i>0) addBox(w, 0.6, 0.25, x, i*fh-0.7, z-d/2, M.concrete, {collide:false});
+  }
+  for(const px of [-w/2+1.2, 0, w/2-1.2]) for(const pz of [-d/2+1.2, 0, d/2-1.2]){  // poteaux
+    addBox(0.6, fl*fh, 0.6, x+px, fl*fh/2, z+pz, M.concrete);
+  }
+  // quelques voitures garées (émissif éteint) sur les niveaux
+  for(let i=0;i<fl;i++) for(let k=0;k<2;k++){
+    const cx=x+(rnd()-.5)*(w-3), cz=z+(rnd()-.5)*(d-3);
+    const car=addBox(3.6,1.3,1.7, cx, i*fh+0.85, cz, M.darkSteel, {collide:false}); car.rotation.y=rnd()*3;
+  }
+}
+// placements répartis dans les quartiers
+hangar(-120, 40, 26, 18, 0.2);      hangar(210, -120, 30, 20, 1.57);
+hangar(60, 210, 24, 16, 0);         hangar(-240, -110, 28, 18, 0.1);
+officeTower(250, 40, 20, 20, 11);    officeTower(-210, 150, 18, 18, 13);
+officeTower(140, -190, 22, 18, 9);   officeTower(300, 180, 20, 20, 12);
+parkingGarage(-60, 120, 22, 18, 4);  parkingGarage(190, 150, 24, 20, 5);
+parkingGarage(-180, -40, 20, 16, 4);
 
 /* ============================================================
    ÉPAVES DÉTAILLÉES — carcasses froissées, retournées, empilées
@@ -1518,6 +1629,60 @@ wreck(-206, 40, 1.6, 1);  wreck(-214, 58, 1.4, 0);   // pile ouest
 wreck( 150, -30, 1.7, 3);  wreck( 148, -18, 1.5, 2);
 wreck( -60,-158, 0.3, 1);  wreck( 12,-166, 0.1, 0);
 wreck(-120, 100, 0.9, 2);  wreck(  80, -70, 2.1, 3);
+
+/* --- variété de véhicules : van, camion, pick-up, taxi (répartis) --- */
+const _wheelGeoV = new THREE.CylinderGeometry(0.44,0.44,0.34,12).rotateX(Math.PI/2);
+const _wheelMatV = new THREE.MeshStandardMaterial({color:0x18181a, roughness:.95});
+function addWheels(g, spots, r){ for(const [wx,wz] of spots){ const wm=new THREE.Mesh(_wheelGeoV,_wheelMatV); wm.position.set(wx,r,wz); wm.castShadow=true; g.add(wm); } }
+function vMat(colr){ return new THREE.MeshStandardMaterial({map:texRust, normalMap:M.rust.normalMap, color:colr, roughness:.8, metalness:.35}); }
+function buildVan(colr){
+  const g=new THREE.Group();
+  const b=new THREE.Mesh(mergeGeometries([
+    new THREE.BoxGeometry(4.6,2.0,2.1).translate(-0.4,1.25,0),   // caisse
+    new THREE.BoxGeometry(1.7,1.35,2.0).translate(2.1,0.95,0),   // cabine
+  ]), vMat(colr)); b.castShadow=b.receiveShadow=true; g.add(b);
+  const ws=new THREE.Mesh(new THREE.PlaneGeometry(1.9,1.0), M.glassBroken); ws.position.set(3.0,1.15,0); ws.rotation.y=Math.PI/2; g.add(ws);
+  addWheels(g, [[1.8,1.02],[1.8,-1.02],[-1.6,1.02],[-1.6,-1.02]], 0.46); return g;
+}
+function buildTruck(colr){
+  const g=new THREE.Group();
+  const cab=new THREE.Mesh(new THREE.BoxGeometry(2.2,2.4,2.4), vMat(colr)); cab.position.set(2.7,1.5,0); cab.castShadow=true; g.add(cab);
+  const box=new THREE.Mesh(new THREE.BoxGeometry(5.6,2.9,2.5), M.metal); box.position.set(-1.5,1.75,0); box.castShadow=box.receiveShadow=true; g.add(box);
+  addWheels(g, [[2.7,1.25],[2.7,-1.25],[-1.4,1.25],[-1.4,-1.25],[-3.0,1.25],[-3.0,-1.25]], 0.55); return g;
+}
+function buildPickup(colr){
+  const g=new THREE.Group();
+  const b=new THREE.Mesh(mergeGeometries([
+    new THREE.BoxGeometry(4.7,0.8,1.95).translate(0,0.62,0),
+    new THREE.BoxGeometry(1.8,0.95,1.85).translate(0.85,1.3,0),   // cabine
+    new THREE.BoxGeometry(0.12,0.7,1.9).translate(-2.3,1.05,0),   // ridelle arrière de benne
+  ]), vMat(colr)); b.castShadow=b.receiveShadow=true; g.add(b);
+  const ws=new THREE.Mesh(new THREE.PlaneGeometry(1.5,0.85), M.glassBroken); ws.position.set(1.7,1.55,0); ws.rotation.y=Math.PI/2; ws.rotation.z=-0.45; g.add(ws);
+  addWheels(g, [[1.5,1.0],[1.5,-1.0],[-1.4,1.0],[-1.4,-1.0]], 0.46); return g;
+}
+const vanCols=[0x8a5a33,0x556070,0x6a6256,0x7a4030], truckCols=[0x5a5240,0x464646,0x603828], pickCols=[0x6a3a30,0x3a4a58,0x554a38];
+function vehicle(x, z, ry, type, tilt){
+  let g;
+  if(type==='taxi')       g=buildCar(0xc9a41c);
+  else if(type==='van')   g=buildVan(vanCols[(rnd()*vanCols.length)|0]);
+  else if(type==='truck') g=buildTruck(truckCols[(rnd()*truckCols.length)|0]);
+  else if(type==='pickup')g=buildPickup(pickCols[(rnd()*pickCols.length)|0]);
+  else                    g=buildCar(wreckShades[(rnd()*wreckShades.length)|0]);
+  g.position.set(x,0,z); g.rotation.y=ry; g.rotation.z=(tilt||0)+(rnd()-.5)*0.14; scene.add(g);
+  const stain=new THREE.Mesh(new THREE.CircleGeometry(2.2+rnd(),16), new THREE.MeshBasicMaterial({color:0x0b0a09, transparent:true, opacity:.45}));
+  stain.rotation.x=-Math.PI/2; stain.position.set(x+(rnd()-.5)*2,0.05,z+(rnd()-.5)*2); scene.add(stain);
+  const L = type==='truck'?4.4 : type==='van'?2.9 : 2.4, Wd=1.35, H = type==='truck'?3.2 : type==='van'?2.4 : 2.0;
+  const ex=Math.abs(Math.cos(ry))*L+Math.abs(Math.sin(ry))*Wd, ez=Math.abs(Math.sin(ry))*L+Math.abs(Math.cos(ry))*Wd;
+  boxColliders.push({min:new THREE.Vector3(x-ex,0,z-ez), max:new THREE.Vector3(x+ex,H,z+ez)});
+}
+// le long des routes / carrefours, dans tous les secteurs
+vehicle( 100, 96, 0.1, 'truck');   vehicle( 172, 100, 1.6,'van');
+vehicle( 148, 60, 1.55,'taxi');    vehicle( 150, -95, 1.5,'pickup');
+vehicle( -70, 100, 0.2,'van');     vehicle(-160, 32, 1.6,'truck', 0.5);
+vehicle( -30,-160, 0.1,'pickup');  vehicle(  40,-160, 3.0,'taxi');
+vehicle(-210, 92, 1.57,'van');     vehicle( 230, 128, 0.6,'truck');
+vehicle( 78,-40, 1.57,'taxi');     vehicle( 205, -60, 1.7,'pickup', 0.4);
+vehicle(-120,-160, 0.0,'van');     vehicle( 250, 210, 0.3,'truck');
 
 /* --- hélicoptère abattu (pièce maîtresse) --- */
 {
