@@ -1863,6 +1863,18 @@ vehicle(-120,-160, 0.0,'van');     vehicle( 250, 210, 0.3,'truck');
   mk(bushGeo,bushMat,bushes); mk(grassGeo,grassMat,grasses);
 })();
 
+/* --- flaques réfléchissantes : quasi-miroir (reflète le ciel via l'IBL), n'apparaissent que sous la pluie --- */
+const puddleMat = new THREE.MeshStandardMaterial({color:0x0a0e12, roughness:0.05, metalness:0.0, transparent:true, opacity:0, depthWrite:false});
+let puddles=null;
+{
+  const spots=[], dmy=new THREE.Object3D();
+  for(let i=0;i<66;i++){ const a=rnd()*6.28, r=24+rnd()*252, x=Math.cos(a)*r, z=Math.sin(a)*r;
+    if(Math.abs(x)<22 && Math.abs(z)<36) continue; spots.push([x,z, 1.6+rnd()*4.2, rnd()*6.28, 0.55+rnd()*0.6]); }
+  puddles=new THREE.InstancedMesh(new THREE.CircleGeometry(1,18), puddleMat, spots.length);
+  spots.forEach(([x,z,s,rot,ry],i)=>{ dmy.position.set(x,0.045,z); dmy.rotation.set(-Math.PI/2,0,rot); dmy.scale.set(s, s*ry, 1); dmy.updateMatrix(); puddles.setMatrixAt(i,dmy.matrix); });
+  puddles.renderOrder=2; puddles.visible=false; scene.add(puddles);
+}
+
 /* ============================================================
    POLISH SOL & ATMOSPHÈRE — décals, cratères, marquages, corbeaux,
    pont autoroutier effondré. Brise le sol plat + donne de la vie.
@@ -4113,6 +4125,7 @@ function loop(now){
   }
   rain.visible = WX.rain > 0.03;
   rain.material.opacity = WX.rain*0.55;
+  if(puddles){ const po=clamp(WX.rain*1.5,0,0.9); puddleMat.opacity=po; puddles.visible=po>0.02; }
   if(rain.visible){
     const rp = rain.geometry.attributes.position.array, c=camera.position;
     for(let i=0;i<rp.length/3;i++){
