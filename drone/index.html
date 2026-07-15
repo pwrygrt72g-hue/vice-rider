@@ -64,24 +64,12 @@
 <div id="screen-start" class="screen">
   <h1>BLACKSITE FPV</h1>
   <h2>UAV-07 // ZONE D'EXCLUSION — SECTEUR K</h2>
-  <div class="ctl">
-    <b>Z / S</b><span>avancer / reculer</span>
-    <b>Q / D</b><span>gauche / droite</span>
-    <b>A / E</b><span>monter / descendre</span>
-    <b>SOURIS</b><span>viser — le drone tire là où tu regardes</span>
-    <b>CLIC</b><span>tir (maintenir = rafale continue)</span>
-    <b>1 — 4</b><span>armes — débloquées par les châssis de la boutique</span>
-    <b>CLIC DROIT</b><span>zoom (maintenir) — molette : x2 / x4 / x6</span>
-    <b>MAJ</b><span>boost</span>
-    <b>ESPACE</b><span>frein</span>
-    <b>F</b><span>recharger</span>
-    <b>N</b><span>jour → nuit → NVG → thermique</span>
-    <b>L</b><span>projecteur de bord</span>
-    <b>R</b><span>reprendre au point de départ</span>
-    <b>M</b><span>son on/off</span>
+  <div style="font-size:15px;letter-spacing:.14em;color:#9df59d;margin:-4px 0 26px;">Drone armé · horde infinie · survis le plus longtemps possible</div>
+  <div class="go" style="font-size:25px;">▶ CLIQUER POUR DÉCOLLER</div>
+  <div style="font-size:13px;letter-spacing:.11em;color:#6cb277;margin-top:16px;line-height:1.9;">
+    <b style="color:#c8ffc8;">SOURIS</b> viser&nbsp;·&nbsp;<b style="color:#c8ffc8;">CLIC</b> tirer&nbsp;·&nbsp;<b style="color:#c8ffc8;">ZQSD</b> voler&nbsp;·&nbsp;<b style="color:#c8ffc8;">MAJ</b> boost&nbsp;·&nbsp;<b style="color:#c8ffc8;">ESPACE</b> frein&nbsp;·&nbsp;<b style="color:#c8ffc8;">N</b> vision nocturne
   </div>
-  <div class="go">CLIQUER POUR DÉCOLLER</div>
-  <div class="go2" id="btn-shop-start">🛒 BOUTIQUE</div>
+  <div class="go2" id="btn-shop-start" style="margin-top:18px;">🛒 BOUTIQUE</div>
   <div id="daily-box" class="ctl-mini" style="grid-template-columns:auto auto;margin-top:20px;"></div>
   <small>FLUX VIDÉO 5.8 GHz — CANAL R7 — CRYPTAGE AES</small>
 </div>
@@ -379,7 +367,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.02;
+renderer.toneMappingExposure = 1.14;   // léger lift : moins de zones bouchées, décor plus lisible
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0xb1a087, 0.0016);
@@ -1609,14 +1597,15 @@ function hitTarget(tg){
 
 /* --- zombies (4 types) --- */
 const zombies = [];
-const zSkin   = new THREE.MeshStandardMaterial({color:0x8a9678, roughness:.95});
-const zSkinR  = new THREE.MeshStandardMaterial({color:0x9a6a58, roughness:.95});  // coureur
-const zSkinB  = new THREE.MeshStandardMaterial({color:0x5f6a52, roughness:.95});  // colosse
-const zSkinS  = new THREE.MeshStandardMaterial({color:0x74a066, roughness:.9});   // cracheur
-const zCloth  = new THREE.MeshStandardMaterial({color:0x3c3a33, roughness:1});
-const zCloth2 = new THREE.MeshStandardMaterial({color:0x4a3630, roughness:1});
-const zEye    = new THREE.MeshBasicMaterial({color:0xff4020});
-const zEyeS   = new THREE.MeshBasicMaterial({color:0x66ff40});
+/* peaux : légère auto-illumination → silhouette lisible même dans la pénombre (ressort aussi en NVG) */
+const zSkin   = new THREE.MeshStandardMaterial({color:0x8a9678, roughness:.95, emissive:0x2e3a26, emissiveIntensity:.4});
+const zSkinR  = new THREE.MeshStandardMaterial({color:0x9a6a58, roughness:.95, emissive:0x3c1c14, emissiveIntensity:.5});  // coureur
+const zSkinB  = new THREE.MeshStandardMaterial({color:0x5f6a52, roughness:.95, emissive:0x263218, emissiveIntensity:.4});  // colosse
+const zSkinS  = new THREE.MeshStandardMaterial({color:0x74a066, roughness:.9,  emissive:0x1e4c18, emissiveIntensity:.55}); // cracheur
+const zCloth  = new THREE.MeshStandardMaterial({color:0x3c3a33, roughness:1, emissive:0x181814, emissiveIntensity:.35});
+const zCloth2 = new THREE.MeshStandardMaterial({color:0x4a3630, roughness:1, emissive:0x1c1210, emissiveIntensity:.35});
+const zEye    = new THREE.MeshBasicMaterial({color:0xff2a14});
+const zEyeS   = new THREE.MeshBasicMaterial({color:0x7dff40});
 const Z_STATS = {
   normal: {hp:2, spd:[0.5,1.2],  scale:1.0,  chase:55, dmg:12, pts:100},
   runner: {hp:2, spd:[2.1,2.7],  scale:0.94, chase:72, dmg:12, pts:150},
@@ -1633,9 +1622,9 @@ function addZombie(x,z,type='normal'){
   torso.position.y = 1.14;
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.17,10,8), skin);
   head.position.y = 1.68;
-  const e1 = new THREE.Mesh(new THREE.SphereGeometry(0.028,6,4), type==='spitter'?zEyeS:zEye);
+  const e1 = new THREE.Mesh(new THREE.SphereGeometry(0.05,7,5), type==='spitter'?zEyeS:zEye);
   const e2 = e1.clone();
-  e1.position.set(-0.06,1.71,0.15); e2.position.set(0.06,1.71,0.15);
+  e1.position.set(-0.07,1.71,0.15); e2.position.set(0.07,1.71,0.15);
   const armL = new THREE.Mesh(new THREE.BoxGeometry(0.11,0.58,0.11), skin);
   const armR = armL.clone();
   armL.position.set(-0.33,1.42,0.22); armR.position.set(0.33,1.42,0.22);
@@ -3012,9 +3001,11 @@ function drawHUD(t){
   }
   hctx.stroke();
   hctx.textAlign='left';
-  hctx.fillText('UAV-07 // FPV CAM 01', 30, 34);
-  hctx.fillText('5.8GHz CH-R7  AES-256', 30, 50);
-  hctx.fillText(`VAGUE ${S.wave}  RESTANTS ${aliveCount()}  CIBLES ${S.targetsHit}/10`, 30, 66);
+  hctx.font='700 15px "Courier New",monospace';
+  hctx.fillText(`VAGUE ${S.wave}`, 30, 38);
+  hctx.font='12px "Courier New",monospace'; hctx.fillStyle=GRN2;
+  hctx.fillText(`${aliveCount()} HOSTILES  ·  CIBLES ${S.targetsHit}/10`, 30, 58);
+  hctx.fillStyle=GRN; hctx.font='13px "Courier New",monospace';
   if(S.mode===2){ hctx.fillStyle='#c8ffc8'; hctx.fillText('NVG ● AMPLI x4', 30, 84); hctx.fillStyle=GRN; }
   else if(S.mode===1){ hctx.fillStyle=AMB; hctx.fillText('MODE NUIT — NVG OFF (N)', 30, 84); hctx.fillStyle=GRN; }
   else if(S.mode===3){ hctx.fillStyle='#ffffff'; hctx.fillText('THERM ● BLANC-CHAUD', 30, 84); hctx.fillStyle=GRN; }
@@ -3088,57 +3079,11 @@ function drawHUD(t){
     hctx.restore();
     hctx.font='13px "Courier New",monospace'; hctx.textAlign='right'; hctx.fillStyle=GRN;
   }
-  hctx.fillText(`48°51'${(12+S.pos.x*0.01).toFixed(2)}"N  2°21'${(30+S.pos.z*0.01).toFixed(2)}"E`, W-30, H-30);
   hctx.textAlign='left';
-  hctx.fillText('MODE COMBAT  GPS 11 SAT', 30, H-30);
 
-  /* --- bande de cap (haut) --- */
-  const tapeW=Math.min(420,W*0.5);
-  hctx.save();
-  hctx.beginPath(); hctx.rect(cx-tapeW/2, 20, tapeW, 44); hctx.clip();
-  hctx.textAlign='center'; hctx.strokeStyle=GRN3;
-  for(let d=-60; d<=60; d+=5){
-    const h2=(Math.round(hdg/5)*5+d+360)%360;
-    const off=((h2-hdg+540)%360)-180;
-    const xx=cx+off*(tapeW/120);
-    if(h2%10===0){
-      hctx.beginPath(); hctx.moveTo(xx,52); hctx.lineTo(xx,62); hctx.stroke();
-      const lbl = h2===0?'N':h2===90?'E':h2===180?'S':h2===270?'W':String(h2/10|0).padStart(2,'0');
-      hctx.fillText(lbl, xx, 46);
-    } else {
-      hctx.beginPath(); hctx.moveTo(xx,57); hctx.lineTo(xx,62); hctx.stroke();
-    }
-  }
-  hctx.restore();
-  hctx.strokeStyle=GRN2;
-  hctx.beginPath(); hctx.moveTo(cx-7,70); hctx.lineTo(cx,62); hctx.lineTo(cx+7,70); hctx.stroke();
-  hctx.textAlign='center';
-  hctx.strokeRect(cx-26, 72, 52, 18);
-  hctx.fillText(String(Math.round(hdg)).padStart(3,'0')+'°', cx, 86);
+  /* --- cap / tangage : retirés (déclutter — centre dégagé) --- */
 
-  /* --- échelle de tangage + horizon (centre, tourne avec le roulis) --- */
-  hctx.save();
-  hctx.translate(cx, cyH);
-  hctx.rotate(-S.roll);                       // incliné à droite => horizon tourne CCW
-  const pxPerDeg = H/70;
-  const pitchOff = (S.camPitch/DEG)*pxPerDeg; // viser en haut => l'horizon descend à l'écran
-  hctx.translate(0, pitchOff);
-  hctx.strokeStyle=GRN2; hctx.textAlign='left';
-  for(let a=-40; a<=40; a+=10){
-    const y=-a*pxPerDeg;
-    if(Math.abs(y + pitchOff) > H*0.36) continue;
-    const w2 = a===0? 150 : 70;
-    hctx.setLineDash(a<0? [7,6]:[]);
-    hctx.beginPath();
-    hctx.moveTo(-w2, y); hctx.lineTo(-24, y);
-    hctx.moveTo( 24, y); hctx.lineTo( w2, y);
-    hctx.stroke();
-    if(a!==0){ hctx.fillText(String(Math.abs(a)), w2+6, y+4); hctx.fillText(String(Math.abs(a)), -w2-22, y+4); }
-  }
-  hctx.setLineDash([]);
-  hctx.restore();
-
-  /* --- réticule central + vecteur vitesse --- */
+  /* --- réticule central --- */
   hctx.strokeStyle=GRN;
   hctx.beginPath();
   hctx.moveTo(cx-16,cyH); hctx.lineTo(cx-5,cyH);
@@ -3164,22 +3109,6 @@ function drawHUD(t){
     }
     hctx.restore();
     hctx.lineWidth=1.4;
-  }
-  { // flight-path marker
-    const fwdX=-Math.sin(S.yaw), fwdZ=-Math.cos(S.yaw);
-    const rgtX=Math.cos(S.yaw),  rgtZ=-Math.sin(S.yaw);
-    const vF=S.vel.x*fwdX+S.vel.z*fwdZ, vR=S.vel.x*rgtX+S.vel.z*rgtZ;
-    if(Math.abs(vF)>1){
-      const ang=Math.atan2(vR,Math.abs(vF)), vang=Math.atan2(S.vel.y,Math.abs(vF));
-      const mx=cx+clamp(ang/DEG,-30,30)*6, my=cyH-clamp(vang/DEG,-25,25)*5;
-      hctx.strokeStyle=GRN2;
-      hctx.beginPath(); hctx.arc(mx,my,6,0,7); hctx.stroke();
-      hctx.beginPath();
-      hctx.moveTo(mx-12,my); hctx.lineTo(mx-6,my);
-      hctx.moveTo(mx+6,my);  hctx.lineTo(mx+12,my);
-      hctx.moveTo(mx,my-6);  hctx.lineTo(mx,my-10);
-      hctx.stroke();
-    }
   }
 
   /* --- réticule de précision quand on zoome --- */
@@ -3213,45 +3142,7 @@ function drawHUD(t){
     hctx.restore();
   }
 
-  /* --- cadran VITESSE (gauche) --- */
-  const lx=Math.max(70,cx-tapeW/2-120);
-  hctx.strokeStyle=GRN2; hctx.textAlign='right';
-  hctx.strokeRect(lx-58, cyH-26, 86, 40);
-  hctx.font='26px "Courier New",monospace';
-  hctx.fillText(String(Math.round(speedK)), lx+16, cyH+4);
-  hctx.font='11px "Courier New",monospace';
-  hctx.fillText('KM/H', lx+16, cyH-30);
-  hctx.fillText('SOL '+Math.round(hSpeed), lx+16, cyH+30);
-  // ruban vertical
-  hctx.save();
-  hctx.beginPath(); hctx.rect(lx+34, cyH-90, 22, 180); hctx.clip();
-  hctx.strokeStyle=GRN3; hctx.textAlign='left';
-  for(let v=Math.floor((speedK-45)/10)*10; v<=speedK+45; v+=10){
-    if(v<0) continue;
-    const y=cyH+(speedK-v)*2;
-    hctx.beginPath(); hctx.moveTo(lx+34,y); hctx.lineTo(lx+ (v%50===0?46:40), y); hctx.stroke();
-  }
-  hctx.restore();
-
-  /* --- cadran ALTITUDE (droite) --- */
-  const rx=Math.min(W-70,cx+tapeW/2+120);
-  hctx.textAlign='left'; hctx.strokeStyle=GRN2;
-  hctx.strokeRect(rx-28, cyH-26, 86, 40);
-  hctx.font='26px "Courier New",monospace';
-  hctx.fillStyle = alt<1.2 && S.vel.y<-2 ? RED : GRN;
-  hctx.fillText(alt.toFixed(1), rx-16, cyH+4);
-  hctx.fillStyle=GRN;
-  hctx.font='11px "Courier New",monospace';
-  hctx.fillText('ALT M', rx-16, cyH-30);
-  const vsi=S.vel.y;
-  hctx.fillText('VZ '+(vsi>=0?'+':'')+vsi.toFixed(1), rx-16, cyH+30);
-  // flèche VSI
-  hctx.strokeStyle=GRN2;
-  hctx.beginPath(); hctx.moveTo(rx+66, cyH); hctx.lineTo(rx+66, cyH-clamp(vsi,-8,8)*7); hctx.stroke();
-  const ay=cyH-clamp(vsi,-8,8)*7;
-  hctx.beginPath();
-  hctx.moveTo(rx+62, ay+(vsi>0?5:-5)); hctx.lineTo(rx+66, ay); hctx.lineTo(rx+70, ay+(vsi>0?5:-5));
-  if(Math.abs(vsi)>.3) hctx.stroke();
+  /* --- cadrans vitesse/altitude retirés → petit report compact en bas-gauche --- */
 
   /* --- bas : batterie, gaz, signal, G --- */
   const by=H-64;
@@ -3273,12 +3164,10 @@ function drawHUD(t){
   hctx.strokeStyle=GRN2; hctx.strokeRect(95, by-11, 84, 13);
   hctx.fillStyle = bat<20? RED : GRN2;
   hctx.fillRect(97, by-9, 80*bat/100, 9);
-  const thr = clamp(0.35 + S.vel.length()/30*0.5 + Math.abs(S.vel.y)/T.vzMax*0.3, 0, 1);
-  hctx.fillStyle=GRN;
-  hctx.fillText('GAZ', 30, by+22);
-  hctx.strokeRect(95, by+11, 84, 13);
-  hctx.fillStyle=GRN2; hctx.fillRect(97, by+13, 80*thr, 9);
-  hctx.textAlign='right'; hctx.fillStyle=GRN;
+  // report vitesse/altitude compact (remplace les gros cadrans)
+  hctx.font='11px "Courier New",monospace'; hctx.fillStyle=GRN3;
+  hctx.fillText(`${Math.round(speedK)} km/h  ·  ALT ${alt.toFixed(0)} m`, 30, by+22);
+  hctx.textAlign='right'; hctx.fillStyle=GRN; hctx.font='15px "Courier New",monospace';
   // munitions explosives
   hctx.font='15px "Courier New",monospace';
   if(S.reloadT>0){
@@ -3306,26 +3195,13 @@ function drawHUD(t){
     hctx.fillStyle=GRN2;
     hctx.fillText(`[X]🔧${its.repair||0}   [B]☢${its.nuke||0}`, W-30, by-56);
   }
-  hctx.font='13px "Courier New",monospace'; hctx.fillStyle=GRN;
-  hctx.font='13px "Courier New",monospace';
-  hctx.fillText(`G ${S.gForce.toFixed(1)}`, W-30, by);
-  hctx.fillText('LINK', W-108, by+22);
-  for(let i=0;i<5;i++){
-    hctx.fillStyle = i<4? GRN2 : GRN3;
-    hctx.fillRect(W-100+i*10, by+22-4-i*2.5, 6, 4+i*2.5);
-  }
-
-  /* --- hints d'onboarding (60 premières secondes) --- */
-  if(S.time < 60 && !S.crashed){
-    const HINTTXT=[['move','Z Q S D — SE DÉPLACER'],['up','A / E — MONTER · DESCENDRE'],
-                   ['shoot','CLIC — TIRER'],['zoom','CLIC DROIT — ZOOM']];
-    let hy=H-170;
+  /* --- rappel de contrôles : 1 ligne, s'efface après 8 s --- */
+  if(S.time < 8 && !S.crashed){
+    const a = 1 - Math.max(0, (S.time-6)/2);
     hctx.textAlign='center'; hctx.font='13px "Courier New",monospace';
-    for(const [k2,txt] of HINTTXT){
-      if(hintsDone[k2]) continue;
-      hctx.fillStyle='rgba(141,250,154,.75)';
-      hctx.fillText(txt, cx, hy); hy-=19;
-    }
+    hctx.globalAlpha = a; hctx.fillStyle='rgba(141,250,154,.85)';
+    hctx.fillText('SOURIS viser  ·  CLIC tirer  ·  ZQSD voler  ·  ESPACE freiner', cx, H-72);
+    hctx.globalAlpha = 1;
   }
   if(S.torch){
     hctx.textAlign='right'; hctx.fillStyle='#fff3c8'; hctx.font='12px "Courier New",monospace';
