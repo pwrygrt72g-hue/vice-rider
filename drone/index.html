@@ -2161,6 +2161,44 @@ function strikeLightning(){
   lightningBolt.geometry.setFromPoints(pts);
   lightningBolt.visible=true; boltMat.opacity=0.95; boltT=0.16;
 }
+/* volées posées au sol qui s'envolent au passage du drone puis reviennent */
+const birdGeo = mergeGeometries([
+  new THREE.BoxGeometry(0.5,0.03,0.16).rotateZ(0.42).translate(-0.24,0,0),
+  new THREE.BoxGeometry(0.5,0.03,0.16).rotateZ(-0.42).translate(0.24,0,0),
+  new THREE.BoxGeometry(0.28,0.06,0.12),
+]);
+const FLOCKS=[]; let birdTotal=0;
+for(const [fx,fz] of [[62,30],[-42,60],[122,-40],[-110,22],[30,-120],[178,82],[-160,-60],[92,150],[240,-30],[-230,110]]){
+  const n=6+((rnd()*7)|0), birds=[];
+  for(let i=0;i<n;i++) birds.push({ox:(rnd()-.5)*6, oz:(rnd()-.5)*6, y:0.3, vx:0,vy:0,vz:0, ph:rnd()*6.28, flying:false});
+  FLOCKS.push({x:fx, z:fz, birds, state:'perched', t:0}); birdTotal+=n;
+}
+const groundBirds=new THREE.InstancedMesh(birdGeo, new THREE.MeshStandardMaterial({color:0x1a1712, roughness:1}), birdTotal);
+groundBirds.frustumCulled=false; groundBirds.castShadow=false; scene.add(groundBirds);
+const _bd=new THREE.Object3D();
+function updateBirds(dt){
+  let idx=0;
+  for(const fl of FLOCKS){
+    const dd=Math.hypot(S.pos.x-fl.x, S.pos.z-fl.z);
+    if(fl.state==='perched' && dd<24 && S.pos.y<48){
+      fl.state='flushing'; fl.t=0;
+      for(const b of fl.birds){ const a=Math.atan2((fl.z+b.oz)-S.pos.z, (fl.x+b.ox)-S.pos.x);
+        b.vx=Math.cos(a)*(6+Math.random()*5); b.vz=Math.sin(a)*(6+Math.random()*5); b.vy=5+Math.random()*4; b.flying=true; }
+      if(AC && !muted) crowCaw();
+    }
+    if(fl.state==='flushing'){ fl.t+=dt; if(fl.t>7 && dd>60){ fl.state='perched';
+      for(const b of fl.birds){ b.flying=false; b.vx=b.vy=b.vz=0; b.y=0.3; b.ox=(Math.random()-.5)*6; b.oz=(Math.random()-.5)*6; } } }
+    for(const b of fl.birds){
+      b.ph+=dt*(b.flying?18:2.2);
+      if(b.flying){ b.ox+=b.vx*dt; b.oz+=b.vz*dt; b.y+=b.vy*dt; b.vy=Math.max(2, b.vy-dt*1.3); b.vx*=0.995; b.vz*=0.995; }
+      _bd.position.set(fl.x+b.ox, b.y+(b.flying?Math.sin(b.ph)*0.2:0), fl.z+b.oz);
+      _bd.rotation.set(b.flying?Math.sin(b.ph)*0.4:0, b.flying?Math.atan2(b.vz,b.vx):b.ph, b.flying?Math.sin(b.ph)*0.5:0);
+      _bd.scale.setScalar(b.flying?1:0.85);
+      _bd.updateMatrix(); groundBirds.setMatrixAt(idx++, _bd.matrix);
+    }
+  }
+  groundBirds.instanceMatrix.needsUpdate=true;
+}
 const _crowDummy = new THREE.Object3D();
 const _grFwd = new THREE.Vector3(), _grSun = new THREE.Vector3();   // temporaires god-rays
 let crowCawT = 5, fireCrackT = 0.3;                                 // minuteurs d'ambiance sonore
@@ -4469,6 +4507,7 @@ function loop(now){
   }
 
   updateCrows(t);
+  updateBirds(dt);
 
   // god-rays : position écran du soleil + intensité (0 si soleil derrière / nuit / météo sombre)
   if(godrayPass){
