@@ -2026,6 +2026,7 @@ let crows=null; const crowData=[];
 }
 const _crowDummy = new THREE.Object3D();
 const _grFwd = new THREE.Vector3(), _grSun = new THREE.Vector3();   // temporaires god-rays
+let crowCawT = 5, fireCrackT = 0.3;                                 // minuteurs d'ambiance sonore
 function updateCrows(t){
   if(!crows) return;
   for(let i=0;i<crowData.length;i++){
@@ -3088,7 +3089,7 @@ let dust;
    AUDIO (procédural)
    ============================================================ */
 let AC=null, motorGain, motorOsc1, motorOsc2, motorFilter, windGain, windSrc, windFilter, muted=false;
-let masterGain=null, rainGain=null;
+let masterGain=null, rainGain=null, ambGain=null, airGain=null, noiseBuf=null;
 function initAudio(){
   if(AC) return;
   AC = new (window.AudioContext||window.webkitAudioContext)();
@@ -3104,6 +3105,16 @@ function initAudio(){
   motorOsc1.start(); motorOsc2.start();
   const len=AC.sampleRate*2, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
   for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  noiseBuf = buf;
+  // --- lit d'ambiance : nappe grave "ville morte" + souffle d'air constant ---
+  const amb1=AC.createOscillator(); amb1.type='sine'; amb1.frequency.value=52;
+  const amb2=AC.createOscillator(); amb2.type='sine'; amb2.frequency.value=78.5;   // léger battement
+  ambGain=AC.createGain(); ambGain.gain.value=0;
+  amb1.connect(ambGain); amb2.connect(ambGain); ambGain.connect(master); amb1.start(); amb2.start();
+  const airSrc=AC.createBufferSource(); airSrc.buffer=buf; airSrc.loop=true;
+  const af=AC.createBiquadFilter(); af.type='lowpass'; af.frequency.value=430; af.Q.value=.3;
+  airGain=AC.createGain(); airGain.gain.value=0;
+  airSrc.connect(af); af.connect(airGain); airGain.connect(master); airSrc.start();
   windSrc=AC.createBufferSource(); windSrc.buffer=buf; windSrc.loop=true;
   windFilter=AC.createBiquadFilter(); windFilter.type='bandpass'; windFilter.frequency.value=500; windFilter.Q.value=.6;
   windGain=AC.createGain(); windGain.gain.value=0;
@@ -3126,6 +3137,29 @@ function audioTick(thr, speed){
   motorGain.gain.setTargetAtTime(on? .045+thr*.075 : 0, AC.currentTime, .07);
   windFilter.frequency.setTargetAtTime(350+speed*45, AC.currentTime, .1);
   windGain.gain.setTargetAtTime(on? Math.min(speed/38,1)*.24 : 0, AC.currentTime, .12);
+  // lit d'ambiance constant (indépendant de la vitesse)
+  if(ambGain) ambGain.gain.setTargetAtTime(on? .013 : 0, AC.currentTime, .6);
+  if(airGain) airGain.gain.setTargetAtTime(on? .045 : 0, AC.currentTime, .6);
+}
+/* cri de corbeau (2 syllabes) + crépitement de feu — ambiance de la zone morte */
+function crowCaw(){
+  if(!AC||muted) return;
+  const t0=AC.currentTime, o=AC.createOscillator(), g=AC.createGain(), f=AC.createBiquadFilter();
+  o.type='sawtooth'; f.type='bandpass'; f.frequency.value=1150; f.Q.value=5;
+  o.connect(f); f.connect(g); g.connect(masterGain);
+  o.frequency.setValueAtTime(880,t0); o.frequency.exponentialRampToValueAtTime(560,t0+.13);
+  g.gain.setValueAtTime(0,t0);
+  g.gain.linearRampToValueAtTime(.05,t0+.02); g.gain.linearRampToValueAtTime(0,t0+.15);
+  g.gain.setValueAtTime(0,t0+.24); g.gain.linearRampToValueAtTime(.042,t0+.26); g.gain.linearRampToValueAtTime(0,t0+.4);
+  o.start(t0); o.stop(t0+.44);
+}
+function fireCrackle(vol){
+  if(!AC||muted||!noiseBuf) return;
+  const t0=AC.currentTime, s=AC.createBufferSource(), g=AC.createGain(), f=AC.createBiquadFilter();
+  s.buffer=noiseBuf; s.playbackRate.value=.7+Math.random()*.6; f.type='highpass'; f.frequency.value=1600;
+  s.connect(f); f.connect(g); g.connect(masterGain);
+  g.gain.setValueAtTime(0,t0); g.gain.linearRampToValueAtTime(vol,t0+.004); g.gain.exponentialRampToValueAtTime(.0008,t0+.07);
+  s.start(t0); s.stop(t0+.09);
 }
 function crashSound(){
   if(!AC||muted) return;
@@ -4302,6 +4336,17 @@ function loop(now){
     godrayPass.uniforms.uSun.value.set(_grSun.x*0.5+0.5, _grSun.y*0.5+0.5);
     const day = (1-S.nightT)*(1-WX.dark*0.55);
     godrayPass.uniforms.uStrength.value = facing>0.05 ? clamp((facing-0.05)*1.5,0,1)*0.85*day : 0;
+  }
+
+  // ambiance sonore ponctuelle : cris de corbeaux + crépitement des feux proches
+  crowCawT -= dt;
+  if(crowCawT<=0){ crowCawT = 7+Math.random()*11; if(S.started && !S.crashed && !S.paused) crowCaw(); }
+  fireCrackT -= dt;
+  if(fireCrackT<=0){ fireCrackT = 0.12+Math.random()*0.22;
+    if(S.started && !S.crashed){ let nd=1e9;
+      for(const f of fireLights){ const dd=Math.hypot(S.pos.x-f.position.x, S.pos.z-f.position.z); if(dd<nd) nd=dd; }
+      if(nd<38) fireCrackle(clamp((1-nd/38)*0.045, 0, 0.045));
+    }
   }
 
   const thr=clamp(0.35 + S.vel.length()/30*0.5 + Math.abs(S.vel.y)/T.vzMax*0.3, 0, 1);
