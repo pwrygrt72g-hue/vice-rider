@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BLACKSITE FPV — Usine abandonnée</title>
+<title>BLACKSITE FPV — Drone armé · horde infinie</title>
 <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBhMGYwYSIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTYiIHI9IjkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzZmZTA2ZiIgc3Ryb2tlLXdpZHRoPSIxLjUiLz48cGF0aCBkPSJNMTYgNXYycTAgMCAwIDBNMTYgMjV2Mk01IDE2aDJNMjUgMTZoMiIgc3Ryb2tlPSIjNmZlMDZmIiBzdHJva2Utd2lkdGg9IjEuNSIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTYiIHI9IjIiIGZpbGw9IiM2ZmUwNmYiLz48L3N2Zz4=">
 <style>
   html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:"Courier New",ui-monospace,monospace;}
@@ -75,6 +75,7 @@
     <b style="color:#c8ffc8;">SOURIS</b> viser&nbsp;·&nbsp;<b style="color:#c8ffc8;">CLIC</b> tirer&nbsp;·&nbsp;<b style="color:#c8ffc8;">ZQSD</b> voler&nbsp;·&nbsp;<b style="color:#c8ffc8;">MAJ</b> boost&nbsp;·&nbsp;<b style="color:#c8ffc8;">ESPACE</b> frein&nbsp;·&nbsp;<b style="color:#c8ffc8;">N</b> vision nocturne
   </div>
   <div class="go2" id="btn-shop-start" style="margin-top:18px;">🛒 BOUTIQUE</div>
+  <div id="touch-warn" class="hidden" style="margin-top:18px;color:#ffd257;font-size:13px;letter-spacing:.08em;max-width:min(560px,86vw);line-height:1.7;">🖥 CLAVIER + SOURIS REQUIS — ouvre cette page sur ordinateur pour piloter le drone.</div>
   <div id="daily-box" class="ctl-mini" style="grid-template-columns:auto auto;margin-top:20px;"></div>
   <small>FLUX VIDÉO 5.8 GHz — CANAL R7 — CRYPTAGE AES</small>
 </div>
@@ -242,19 +243,20 @@ function cgRewarded(onReward){
     });
   }catch(e){ adUX(false); onReward(); }
 }
-function cgMidgame(){
-  if(!CG.ready) return;
+function cgMidgame(after){
+  const done = ()=>{ if(after) after(); };      // la suite ne s'exécute qu'APRÈS la pub
+  if(!CG.ready){ done(); return; }
   const now = performance.now()/1000;
-  if(now - CG.lastMid < 120) return;     // cooldown 2 min
+  if(now - CG.lastMid < 120){ done(); return; } // en cooldown : pas de pub, on enchaîne direct
   CG.lastMid = now;
   try{
     cgGameplay(false); adUX(true);
     CG.sdk.ad.requestAd('midgame', {
       adStarted:  ()=>{},
-      adFinished: ()=>{ adUX(false); cgGameplay(true); },
-      adError:    ()=>{ adUX(false); cgGameplay(true); },
+      adFinished: ()=>{ adUX(false); cgGameplay(true); done(); },
+      adError:    ()=>{ adUX(false); cgGameplay(true); done(); },
     });
-  }catch(e){ adUX(false); }
+  }catch(e){ adUX(false); cgGameplay(true); done(); }
 }
 
 /* ---------- missions (progression + rétention) ---------- */
@@ -1984,7 +1986,8 @@ function addZombie(x,z,type='normal'){
   grp.add(skinMesh, clothMesh, eyeMesh, armL, armR);
   // --- CRACHEUR : poche à acide lumineuse dans le dos ---
   if(type==='spitter'){
-    const sac = new THREE.Mesh(new THREE.SphereGeometry(0.24,10,8), new THREE.MeshBasicMaterial({color:0x8dff40}));
+    const sacMat = new THREE.MeshBasicMaterial({color:0x8dff40}); sacMat.userData.disposable=true;
+    const sac = new THREE.Mesh(new THREE.SphereGeometry(0.24,10,8), sacMat);
     sac.position.set(0,1.18,-0.30); sac.scale.set(1,1.25,0.9);
     grp.add(sac);
   }
@@ -2024,6 +2027,7 @@ function spawnBoss(x,z){
   const flesh = new THREE.MeshStandardMaterial({color:0x6a5648, roughness:.9, emissive:0x2c1410, emissiveIntensity:.45});
   const coreMat = new THREE.MeshBasicMaterial({color:0xff3010});
   const eyeMat  = new THREE.MeshBasicMaterial({color:0xff2410});
+  for(const mm of [armor,flesh,coreMat,eyeMat]) mm.userData.disposable=true;   // uniques → à libérer
   const grp = new THREE.Group();
   const legL=new THREE.Mesh(new THREE.BoxGeometry(0.55,1.8,0.55), armor); legL.position.set(-0.52,0.9,0);
   const legR=legL.clone(); legR.position.x=0.52;
@@ -2150,9 +2154,14 @@ function pickType(){
   if(S.wave>=3 && rr<0.50) return 'spitter';
   return 'normal';
 }
+/* libère la VRAM d'un zombie (géométries fusionnées uniques + matériaux uniques tagués) */
+function disposeZombie(z){
+  scene.remove(z.grp);
+  z.grp.traverse(o=>{ if(o.isMesh){ o.geometry.dispose(); if(o.material.userData && o.material.userData.disposable) o.material.dispose(); } });
+}
 function spawnWave(){
   S.wave++;
-  for(const z of zombies) scene.remove(z.grp);   // nettoie les cadavres
+  for(const z of zombies) disposeZombie(z);       // nettoie ET libère les cadavres
   zombies.length = 0; bossRef = null;
   const n = Math.min(85, 26 + S.wave*11);
   for(let i=0;i<n;i++){
@@ -2566,7 +2575,9 @@ function combat(dt, t){
         z.pos.x += (z.flingX||0)*dt; z.pos.z += (z.flingZ||0)*dt;
       } else if(z.deadT > 4 && z.grp.visible){   // puis le corps s'enfonce
         z.grp.position.y -= dt*0.5;
-        if(z.grp.position.y < -1.6) z.grp.visible = false;
+        if(z.grp.position.y < -1.6){             // enfoui : on libère et on retire du tableau
+          z.grp.visible = false; disposeZombie(z); z._gone = true;
+        }
       }
       continue;
     }
@@ -3107,8 +3118,8 @@ document.getElementById('btn-x2c').addEventListener('click', e=>{
 });
 document.getElementById('btn-base').addEventListener('click', e=>{
   e.stopPropagation();
-  cgMidgame();                           // interstitiel (cooldown 2 min) sur le retour base
-  respawn(); cgGameplay(true); grab();
+  // interstitiel (cooldown 2 min) PUIS retour base — le jeu ne reprend pas sous la pub
+  cgMidgame(()=>{ respawn(); cgGameplay(true); grab(); });
 });
 document.getElementById('btn-ammo').addEventListener('click', e=>{
   e.stopPropagation();
@@ -3412,6 +3423,16 @@ function drawHUD(t){
   hctx.setTransform(dpr,0,0,dpr,0,0);
   hctx.clearRect(0,0,W,H);
   if(!S.started) return;
+  // liaison perdue : on n'affiche QUE la neige analogique, pas le HUD de jeu
+  if(S.crashed){
+    for(let i=0;i<900;i++){
+      const g2=(Math.random()*160)|0;
+      hctx.fillStyle=`rgb(${g2},${g2+((Math.random()*40)|0)},${g2})`;
+      hctx.fillRect(Math.random()*W, Math.random()*H, 2.5, 2.5);
+    }
+    if(canvas.style.transform) canvas.style.transform='';
+    return;
+  }
 
   const cx=W/2, cyH=H/2;
   hctx.lineWidth=1.4; hctx.strokeStyle=GRN2; hctx.fillStyle=GRN;
@@ -3719,14 +3740,6 @@ function drawHUD(t){
     hctx.fillStyle=`rgba(255,255,255,${S.impactFlash*0.25})`;
     hctx.fillRect(0,0,W,H);
   }
-  /* neige analogique sur crash */
-  if(S.crashed){
-    for(let i=0;i<900;i++){
-      const g2=(Math.random()*160)|0;
-      hctx.fillStyle=`rgb(${g2},${g2+((Math.random()*40)|0)},${g2})`;
-      hctx.fillRect(Math.random()*W, Math.random()*H, 2.5, 2.5);
-    }
-  }
 }
 
 /* ============================================================
@@ -3850,6 +3863,8 @@ function loop(now){
       }
     }
   }
+  // purge les cadavres enfouis (évite que le tableau enfle sur une vague longue)
+  for(let i=zombies.length-1;i>=0;i--) if(zombies[i]._gone) zombies.splice(i,1);
 
   // colonnes de fumée
   for(const s of smokes){
@@ -3900,18 +3915,25 @@ addEventListener('resize', ()=>{
   sizeHud();
 });
 
-/* hooks de test */
-window.__drone = {
-  state:S, keys, T, respawn, crash, fire, explode, damage, zombies, targets,
-  barrels, cuves, crates, spits, WX, spawnWave, spawnHorde, chainQ, CG, MISSIONS, WEAPONS, DRONES,
-  airdrop, daily, dailyEvent, addCredits, nukeBlast, shopState, setUpgrades,
-  setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
-  setMode(m){ S.mode=m%4; },
-  setZoom(held,x){ zoomHeld=!!held; if(x) S.zoomX=x; },
-  setWeather(s){ WX.state=s; WX.t=999; },
-  start(){ if(!S.started){ S.started=true; elStart.style.display='none'; } },
-  cam:camera, scene, THREE,
-};
+/* hooks de test — exposés uniquement hors production (QA locale / GitHub Pages), jamais sur CrazyGames */
+if(/(^$|localhost|127\.0\.0\.1|github\.io)/.test(location.hostname) || location.search.includes('dev')){
+  window.__drone = {
+    state:S, keys, T, respawn, crash, fire, explode, damage, zombies, targets,
+    barrels, cuves, crates, spits, WX, spawnWave, spawnHorde, chainQ, CG, MISSIONS, WEAPONS, DRONES,
+    airdrop, daily, dailyEvent, addCredits, nukeBlast, shopState, setUpgrades,
+    setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
+    setMode(m){ S.mode=m%4; },
+    setZoom(held,x){ zoomHeld=!!held; if(x) S.zoomX=x; },
+    setWeather(s){ WX.state=s; WX.t=999; },
+    start(){ if(!S.started){ S.started=true; elStart.style.display='none'; } },
+    cam:camera, scene, THREE,
+  };
+}
+
+/* appareil tactile : le pilotage exige clavier+souris → avertir clairement (CrazyGames teste le mobile) */
+if(window.matchMedia && matchMedia('(pointer: coarse)').matches){
+  document.getElementById('touch-warn')?.classList.remove('hidden');
+}
 </script>
 </body>
 </html>
