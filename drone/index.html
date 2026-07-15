@@ -566,6 +566,7 @@ sun.shadow.camera.top=80;  sun.shadow.camera.bottom=-80;
 sun.shadow.camera.far=600; sun.shadow.bias=-0.0008;
 scene.add(sun); scene.add(sun.target);
 const C_SUN_DAY = new THREE.Color(0xffbd7a), C_SUN_NIGHT = new THREE.Color(0x8fa3cc);
+const C_BOLT = new THREE.Color(0xbcd4ff);   // teinte d'éclair
 const C_FOG_DAY = new THREE.Color(0xb1a087), C_FOG_NIGHT = new THREE.Color(0x14171d);
 const fillIn = new THREE.PointLight(0xfff2d0, 55, 70, 1.8);
 fillIn.position.set(-12, 10, 0); scene.add(fillIn);
@@ -1927,6 +1928,51 @@ marketRow(30, 132, 0.2); marketRow(-72, 58, 1.4);
   }
 }
 
+/* bouches de métro (escalier descendant + garde-corps + totem lumineux) */
+function metroEntrance(mx, mz, ry){
+  const grp=new THREE.Group();
+  for(const [w,d,px,pz] of [[5,0.5,0,-2.3],[5,0.5,0,2.3],[0.5,5.1,-2.5,0],[0.5,5.1,2.5,0]]){
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,0.95,d), M.concrete); m.position.set(px,0.47,pz); grp.add(m); }
+  const hole=new THREE.Mesh(new THREE.BoxGeometry(4.2,0.2,3.8), new THREE.MeshStandardMaterial({color:0x070809, roughness:1}));
+  hole.position.set(0,0.06,0); grp.add(hole);
+  for(let i=0;i<5;i++){ const st=new THREE.Mesh(new THREE.BoxGeometry(3.8,0.24,0.55), M.concrete); st.position.set(0,0.34-i*0.16,-1.5+i*0.6); grp.add(st); }
+  for(const sx of [-1.8,1.8]){ const r=new THREE.Mesh(new THREE.BoxGeometry(0.08,1.0,4.6), M.darkSteel); r.position.set(sx,0.95,0); grp.add(r); }
+  const pole=new THREE.Mesh(new THREE.BoxGeometry(0.2,3.4,0.2), M.darkSteel); pole.position.set(2.9,1.7,-2.1); grp.add(pole);
+  const disc=new THREE.Mesh(new THREE.CylinderGeometry(0.72,0.72,0.16,20).rotateX(Math.PI/2),
+    new THREE.MeshStandardMaterial({color:0x7a1616, emissive:0xff2a18, emissiveIntensity:1.1}));
+  disc.position.set(2.9,3.3,-2.1); grp.add(disc);
+  grp.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+  grp.position.set(mx,0,mz); grp.rotation.y=ry; scene.add(grp);
+  boxColliders.push({min:new THREE.Vector3(mx-2.8,0,mz-2.7), max:new THREE.Vector3(mx+2.8,0.95,mz+2.7)});
+}
+metroEntrance(52, 12, 0); metroEntrance(-118, 70, 1.2); metroEntrance(162, -58, 0.5); metroEntrance(-30, 190, 2.0);
+
+/* train déraillé (voie + locomotive renversée + wagons, dont certains couchés) */
+function derailedTrain(tx, tz, ang){
+  const grp=new THREE.Group(), L=76;
+  const rail=new THREE.MeshStandardMaterial({color:0x3a3d40, roughness:.55, metalness:.6});
+  for(const s of [-0.75,0.75]){ const r=new THREE.Mesh(new THREE.BoxGeometry(L,0.12,0.12), rail); r.position.set(0,0.1,s); grp.add(r); }
+  const tiesGeo=[]; for(let x=-L/2;x<L/2;x+=1.6) tiesGeo.push(new THREE.BoxGeometry(0.3,0.1,2.3).translate(x,0.04,0));
+  grp.add(new THREE.Mesh(mergeGeometries(tiesGeo), new THREE.MeshStandardMaterial({color:0x2e2822, roughness:1})));
+  const rustBody=(c)=> new THREE.MeshStandardMaterial({map:texRust, normalMap:M.rust.normalMap, color:c, roughness:.85, metalness:.3});
+  const loco=new THREE.Mesh(mergeGeometries([new THREE.BoxGeometry(9,3,2.6).translate(0,1.7,0), new THREE.BoxGeometry(3,1.5,2.6).translate(2.4,3.45,0)]), rustBody(0x4a4038));
+  loco.position.set(-26,1.0,3.4); loco.rotation.set(0,0.2,-0.95); grp.add(loco);
+  const wagCols=[0x6a3a30,0x3f5a4a,0x5a5240,0x455060];
+  for(let i=0;i<5;i++){
+    const derail=i<2;
+    const w=new THREE.Mesh(new THREE.BoxGeometry(11,3.2,2.7), rustBody(wagCols[i%wagCols.length]));
+    if(derail){ w.position.set(-14+i*7, 1.5+i*0.8, 3.0+i*2.0); w.rotation.set(0.15,0.1,-0.6-i*0.35); }
+    else { w.position.set(i*13, 1.8, 0); w.rotation.z=(rnd()-.5)*0.08; }
+    w.castShadow=w.receiveShadow=true; grp.add(w);
+  }
+  grp.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+  grp.position.set(tx,0,tz); grp.rotation.y=ang; scene.add(grp);
+  const c=Math.cos(ang), s=Math.sin(ang);
+  for(let i=2;i<5;i++){ const wx=tx+(i*13)*c, wz=tz+(i*13)*s;
+    boxColliders.push({min:new THREE.Vector3(wx-6,0,wz-2), max:new THREE.Vector3(wx+6,3.4,wz+2)}); }
+}
+derailedTrain(-170, -235, 0.16);
+
 /* --- station-service éventrée (repère + abri sous auvent) --- */
 {
   const gx=-40, gz=-58;
@@ -2101,6 +2147,19 @@ let crows=null; const crowData=[];
   for(let i=0;i<16;i++) crowData.push({cx:(rnd()-.5)*320, cz:(rnd()-.5)*320, r:22+rnd()*65,
     h:34+rnd()*42, sp:(0.10+rnd()*0.14)*(rnd()<.5?-1:1), ph:rnd()*6.28, flap:5+rnd()*4, sc:1.3+rnd()*1.3});
   scene.add(crows);
+}
+/* éclair d'orage : polyligne en zigzag, régénérée à chaque coup */
+const boltMat = new THREE.LineBasicMaterial({color:0xd4e6ff, transparent:true, opacity:0.9, fog:false});
+const lightningBolt = new THREE.Line(new THREE.BufferGeometry(), boltMat);
+lightningBolt.frustumCulled=false; lightningBolt.visible=false; lightningBolt.renderOrder=2; scene.add(lightningBolt);
+let boltT=0;
+function strikeLightning(){
+  const a=Math.random()*6.28, R=240+Math.random()*180, bx=Math.cos(a)*R, bz=Math.sin(a)*R;
+  const pts=[]; let x=bx, y=195, z=bz;
+  while(y>28){ pts.push(new THREE.Vector3(x,y,z)); y-=12+Math.random()*16; x+=(Math.random()-.5)*24; z+=(Math.random()-.5)*12;
+    if(Math.random()<0.25){ pts.push(new THREE.Vector3(x+(Math.random()-.5)*30, y-8, z)); pts.push(new THREE.Vector3(x,y,z)); } }  // ramification
+  lightningBolt.geometry.setFromPoints(pts);
+  lightningBolt.visible=true; boltMat.opacity=0.95; boltT=0.16;
 }
 const _crowDummy = new THREE.Object3D();
 const _grFwd = new THREE.Vector3(), _grSun = new THREE.Vector3();   // temporaires god-rays
@@ -4291,11 +4350,15 @@ function loop(now){
   if(WX.state===3){                                    // éclairs d'orage
     WX.flashT -= dt;
     if(WX.flashT<=0){
-      WX.flashT = 3.5 + Math.random()*7;
-      skyUni.uFlash.value = 0.9;
-      setTimeout(thunderSound, 600+Math.random()*1800);
+      WX.flashT = 3.2 + Math.random()*6.5;
+      skyUni.uFlash.value = 1.15;
+      strikeLightning();
+      setTimeout(()=>{ skyUni.uFlash.value = Math.max(skyUni.uFlash.value, 0.65); }, 65);   // flicker multi-strike
+      setTimeout(()=>{ skyUni.uFlash.value = Math.max(skyUni.uFlash.value, 1.0); }, 150);
+      setTimeout(thunderSound, 500+Math.random()*1700);
     }
   }
+  if(boltT>0){ boltT-=dt; boltMat.opacity=Math.max(0, boltT/0.16)*0.95; if(boltT<=0) lightningBolt.visible=false; }
   rain.visible = WX.rain > 0.03;
   rain.material.opacity = WX.rain*0.55;
   if(puddles){ const po=clamp(WX.rain*1.5,0,0.9); puddleMat.opacity=po; puddles.visible=po>0.02; }
@@ -4320,9 +4383,10 @@ function loop(now){
   S.nightT += clamp(nTgt-S.nightT, -dt*0.7, dt*0.7);
   skyUni.uNight.value = S.nightT;
   const fl = skyUni.uFlash.value;
-  sun.intensity  = lerp(3.25, 0.10, S.nightT) * (1 - WX.dark*0.72) + fl*3;
+  sun.intensity  = lerp(3.25, 0.10, S.nightT) * (1 - WX.dark*0.72) + fl*5.0;   // l'éclair illumine fort
   sun.color.lerpColors(C_SUN_DAY, C_SUN_NIGHT, S.nightT);
-  hemi.intensity = lerp(2.3, 0.13, S.nightT) * (1 - WX.dark*0.45) + fl*1.5;   // ambiant jour ↑↑ (débouche les ombres)
+  if(fl>0.15) sun.color.lerp(C_BOLT, Math.min(1,fl)*0.6);                       // teinte bleu-blanc d'éclair
+  hemi.intensity = lerp(2.3, 0.13, S.nightT) * (1 - WX.dark*0.45) + fl*2.8;     // ambiant jour ↑↑ (débouche les ombres)
   scene.fog.color.lerpColors(C_FOG_DAY, C_FOG_NIGHT, S.nightT);
   scene.fog.density = lerp(0.0016, 0.0022, S.nightT) * WX.fogMul;
   fillIn.intensity = lerp(82, 14, S.nightT);
