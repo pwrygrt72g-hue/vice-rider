@@ -48,6 +48,11 @@
     color:#7fc78a;margin-top:14px;cursor:pointer;}
   .go2:hover{border-color:#6fe06f;color:#d9ffd9;}
   @keyframes blink{50%{opacity:.35}}
+  /* menu d'accueil : on laisse voir la ville vivante derrière (dégradé bas) */
+  #screen-start{justify-content:flex-end;padding-bottom:7vh;
+    background:linear-gradient(180deg,rgba(2,8,3,0) 0%,rgba(2,8,3,.10) 36%,rgba(2,8,3,.58) 66%,rgba(3,9,4,.94) 100%);}
+  #screen-start h1{text-shadow:0 0 26px rgba(110,255,140,.6),0 2px 7px rgba(0,0,0,.9);}
+  #screen-start h2{text-shadow:0 1px 5px rgba(0,0,0,.85);}
   #screen-crash{display:none;background:rgba(8,2,2,.6);}
   #screen-crash h1{color:#ff5b5b;text-shadow:0 0 18px rgba(255,80,80,.6);}
   #screen-pause{display:none;}
@@ -3348,6 +3353,17 @@ function physics(dt){
    ============================================================ */
 let shake=0, prevYaw=0, prevCamPitch=0, swayX=0, swayY=0;
 function updateCamera(dt, t){
+  // avant le décollage : survol cinématique lent de la ville (montre le décor)
+  if(!S.started){
+    // orbite établissante quasi-horizontale : skyline + ciel + corbeaux au cadre
+    const mt = t*0.045;
+    camera.position.set(20 + Math.cos(mt)*118, 19 + Math.sin(t*0.11)*2.5, 20 + Math.sin(mt)*118);
+    camera.up.set(0,1,0);
+    camera.lookAt(20, 13, 20);
+    camera.fov = 58; camera.updateProjectionMatrix();
+    gun.visible = false;
+    return;
+  }
   camera.position.copy(S.pos);
   // caméra stabilisée : ne tremble qu'aux impacts et explosions
   shake = lerp(shake, S.impactFlash*0.018, dt*10);
