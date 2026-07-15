@@ -32,7 +32,7 @@
   #fx-scan{position:fixed;inset:0;pointer-events:none;z-index:5;
     background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px);}
   #fx-vig{position:fixed;inset:0;pointer-events:none;z-index:6;
-    background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.5) 100%);}
+    background:radial-gradient(ellipse at center,transparent 62%,rgba(0,0,0,.32) 100%);}
   #fx-tint{position:fixed;inset:0;pointer-events:none;z-index:4;background:rgba(70,255,120,.035);mix-blend-mode:screen;}
   /* --- écrans --- */
   .screen{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -130,6 +130,10 @@
 <script type="module">
 import * as THREE from '../vendor/three.module.js';
 import { mergeGeometries } from '../vendor/jsm/utils/BufferGeometryUtils.js';
+import { EffectComposer } from '../vendor/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from '../vendor/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../vendor/jsm/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from '../vendor/jsm/postprocessing/ShaderPass.js';
 
 /* ============================================================
    BLACKSITE FPV — drone FPV réaliste, souris-gyroscope
@@ -381,12 +385,44 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.17;   // léger lift : moins de zones bouchées, décor plus lisible
+renderer.toneMappingExposure = 1.24;   // lift : compense le contraste du grade, décor bien lisible
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0xb1a087, 0.0016);
 
 const camera = new THREE.PerspectiveCamera(T.fovBase, innerWidth/innerHeight, 0.05, 3000);
+
+/* ---------- post-traitement : bloom cinématique (halo sur soleil, feux, néons, émissifs) ---------- */
+const MAXA = renderer.capabilities.getMaxAnisotropy();   // filtrage anisotrope max (netteté au rasant)
+let composer=null, bloomPass=null, USE_POST = false;
+/* étalonnage final : contraste filmique + saturation + réchauffement + vignette douce */
+const GradeShader = {
+  uniforms: { tDiffuse:{value:null}, uContrast:{value:1.045}, uSat:{value:1.13}, uWarm:{value:0.016}, uVig:{value:0.12} },
+  vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader: `
+    varying vec2 vUv; uniform sampler2D tDiffuse;
+    uniform float uContrast, uSat, uWarm, uVig;
+    void main(){
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      c = (c-0.5)*uContrast + 0.5;                          // contraste autour du gris moyen
+      float l = dot(c, vec3(0.299,0.587,0.114));
+      c = mix(vec3(l), c, uSat);                             // saturation
+      c += vec3(uWarm, uWarm*0.35, -uWarm*0.55);             // léger réchauffement ambre
+      vec2 d = vUv-0.5; c *= clamp(1.0 - dot(d,d)*uVig*2.2, 0.0, 1.0);  // vignette
+      gl_FragColor = vec4(max(c,0.0), 1.0);
+    }`
+};
+function buildComposer(){
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  // (strength, radius, threshold) : seuil haut → seules les zones lumineuses "débordent"
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.62, 0.55, 0.80);
+  composer.addPass(bloomPass);
+  const grade = new ShaderPass(GradeShader);
+  composer.addPass(grade);
+  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.setSize(innerWidth, innerHeight);
+}
 
 /* ---------- ciel atmosphérique (shader : diffusion, soleil bas, nuages FBM) ---------- */
 const SUN_DIR = new THREE.Vector3(-0.62, 0.21, -0.42).normalize();  // fin d'après-midi, soleil bas
@@ -508,7 +544,7 @@ function makeTex(draw, w=512, h=512, rx=1, ry=1){
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(rx, ry);
-  t.anisotropy = 8;
+  t.anisotropy = MAXA;
   t.userData.cv = cv;
   return t;
 }
@@ -534,7 +570,7 @@ function nrmFrom(tex, strength=2.0){
   const n = new THREE.CanvasTexture(out);
   n.wrapS=n.wrapT=THREE.RepeatWrapping;
   n.repeat.copy(tex.repeat);
-  n.anisotropy = 8;
+  n.anisotropy = MAXA;
   return n;
 }
 let seed = 7;
@@ -554,12 +590,12 @@ const texConcrete = makeTex((g,w,h)=>{
   noiseSplat(g,w,h,2600,['#6e6d66','#8a897f','#75746c','#83816f'],.08,.2,2,14);
   noiseSplat(g,w,h,300,['#4d4c45','#3f3e38'],.06,.14,4,26);
   g.strokeStyle='rgba(40,40,36,.35)'; g.lineWidth=1.4;
-  for(let i=0;i<14;i++){ // fissures
+  for(let i=0;i<20;i++){ // fissures
     g.beginPath(); let x=rnd()*w, y=rnd()*h; g.moveTo(x,y);
-    for(let k=0;k<7;k++){ x+=(rnd()-.5)*70; y+=(rnd()-.5)*70; g.lineTo(x,y); }
+    for(let k=0;k<7;k++){ x+=(rnd()-.5)*90; y+=(rnd()-.5)*90; g.lineTo(x,y); }
     g.stroke();
   }
-}, 512,512, 8,8);
+}, 1024,1024, 8,8);
 
 const texFloor = makeTex((g,w,h)=>{
   g.fillStyle='#6b6a62'; g.fillRect(0,0,w,h);
@@ -573,7 +609,7 @@ const texFloor = makeTex((g,w,h)=>{
   g.strokeStyle='rgba(30,30,28,.5)'; g.lineWidth=2;           // joints de dalles
   for(let i=1;i<4;i++){ g.beginPath(); g.moveTo(i*w/4,0); g.lineTo(i*w/4,h); g.stroke();
                         g.beginPath(); g.moveTo(0,i*h/4); g.lineTo(w,i*h/4); g.stroke(); }
-}, 512,512, 12,6);
+}, 1024,1024, 12,6);
 
 const texBrick = makeTex((g,w,h)=>{
   g.fillStyle='#5e5049'; g.fillRect(0,0,w,h);
@@ -591,7 +627,7 @@ const texBrick = makeTex((g,w,h)=>{
   const gr=g.createLinearGradient(0,0,0,h); // crasse en bas
   gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(1,'rgba(20,22,18,.55)');
   g.fillStyle=gr; g.fillRect(0,0,w,h);
-}, 512,512, 6,2);
+}, 1024,1024, 6,2);
 
 const texRust = makeTex((g,w,h)=>{
   g.fillStyle='#6a5c4d'; g.fillRect(0,0,w,h);
@@ -643,8 +679,8 @@ const texAsphalt = makeTex((g,w,h)=>{
 
 const texFacade = makeTex((g,w,h)=>{
   g.fillStyle='#8a857b'; g.fillRect(0,0,w,h);
-  noiseSplat(g,w,h,1800,['#7d786e','#948f84','#6e6a61'],.1,.25,3,16);
-  const cols=6, rows=4, cw=w/cols, ch=h/rows;
+  noiseSplat(g,w,h,3200,['#7d786e','#948f84','#6e6a61'],.1,.25,3,16);
+  const cols=8, rows=6, cw=w/cols, ch=h/rows;
   for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
     const x=c*cw, y=r*ch;
     // fenêtre sombre, parfois éclatée / barricadée
@@ -659,8 +695,8 @@ const texFacade = makeTex((g,w,h)=>{
     g.fillStyle='rgba(40,38,32,.35)';
     for(let s=0;s<4;s++) g.fillRect(x+cw*(.2+.15*s), y+ch*.78, 3, ch*.22);
   }
-  noiseSplat(g,w,h,500,['#4a463e','#3c3831'],.08,.2,4,20);
-}, 512,512, 1,1);
+  noiseSplat(g,w,h,700,['#4a463e','#3c3831'],.08,.2,4,20);
+}, 1024,1024, 1,1);
 
 /* ---------- matériaux (avec relief) ---------- */
 const M = {
@@ -2971,6 +3007,9 @@ function applySettings(){
   renderer.setPixelRatio(pr);
   renderer.setSize(innerWidth, innerHeight);
   sun.castShadow = SETTINGS.q >= 1;
+  sun.shadow.mapSize.set(SETTINGS.q>=2?2048:1024, SETTINGS.q>=2?2048:1024);
+  USE_POST = SETTINGS.q >= 1;                 // bloom dès la qualité moyenne
+  if(USE_POST){ if(!composer) buildComposer(); composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
   localStorage.setItem('bs-settings', JSON.stringify(SETTINGS));
 }
 elSens.value = SETTINGS.sens*100; elVol.value = SETTINGS.vol*100; elQ.value = SETTINGS.q;
@@ -3904,7 +3943,8 @@ function loop(now){
   const thr=clamp(0.35 + S.vel.length()/30*0.5 + Math.abs(S.vel.y)/T.vzMax*0.3, 0, 1);
   audioTick(thr, S.vel.length());
 
-  renderer.render(scene, camera);
+  if(USE_POST && composer) composer.render();
+  else renderer.render(scene, camera);
   drawHUD(t);
 }
 requestAnimationFrame(loop);
@@ -3912,6 +3952,7 @@ requestAnimationFrame(loop);
 addEventListener('resize', ()=>{
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  if(composer) composer.setSize(innerWidth, innerHeight);
   sizeHud();
 });
 
