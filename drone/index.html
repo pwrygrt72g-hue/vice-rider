@@ -2681,6 +2681,9 @@ function killZombie(z, from){
   S.score += z.pts * mult;
   addCredits(z.pts/10);
   if(z.headHit) S.score += 75;
+  // nombre flottant au-dessus du kill (juice)
+  addFloater(z.pos.x, z.pos.y+2.2*z.grp.scale.x, z.pos.z,
+    (z.headHit?'✷':'+')+(z.pts*mult+(z.headHit?75:0)), z.headHit?'#ffd257':(mult>1?'#ff9a5a':'#e8ffe8'));
   // missions du jour
   dailyEvent('kill');
   if(z.headHit) dailyEvent('head');
@@ -3958,7 +3961,7 @@ function physics(dt){
 /* ============================================================
    CAMÉRA FPV
    ============================================================ */
-let shake=0, prevYaw=0, prevCamPitch=0, swayX=0, swayY=0;
+let shake=0, prevYaw=0, prevCamPitch=0, swayX=0, swayY=0, fovBoost=0;
 function updateCamera(dt, t){
   // avant le décollage : survol cinématique lent de la ville (montre le décor)
   if(!S.started){
@@ -3982,7 +3985,8 @@ function updateCamera(dt, t){
   camera.translateZ(-0.02);
   // zoom d'arme (clic droit maintenu)
   S.zoomT = lerp(S.zoomT, zoomHeld?1:0, Math.min(1, dt*9));
-  const baseFov = T.fovBase + Math.min(S.vel.length()/38,1)*T.fovSpeed;
+  fovBoost = lerp(fovBoost, (keys['shift'] && S.vel.length()>10) ? 9 : 0, Math.min(1, dt*7));   // coup de FOV au boost (juice)
+  const baseFov = T.fovBase + Math.min(S.vel.length()/38,1)*T.fovSpeed + fovBoost;
   camera.fov = lerp(baseFov, T.fovBase/S.zoomX, S.zoomT);
   camera.updateProjectionMatrix();
   gun.visible = S.zoomT < 0.35;        // le pod sort du champ en visée optique
@@ -4012,6 +4016,10 @@ function sizeHud(){
   hud.style.width = innerWidth+'px'; hud.style.height = innerHeight+'px';
 }
 sizeHud();
+
+/* nombres de score flottants (juice) */
+const floaters=[]; const _fv=new THREE.Vector3();
+function addFloater(x,y,z,txt,col){ if(floaters.length<36) floaters.push({x,y,z,txt,col,t:1}); }
 
 /* couleurs du HUD : GRN/GRN2/GRN3/AMB/RED définies par la boutique (applyTheme) */
 function drawHUD(t){
@@ -4296,6 +4304,20 @@ function drawHUD(t){
   }
   hctx.shadowBlur=0;
 
+  /* nombres de score flottants (projetés depuis le monde, montent et s'estompent) */
+  if(floaters.length){
+    hctx.save(); hctx.textAlign='center'; hctx.font='700 16px "Courier New",monospace';
+    hctx.shadowColor='rgba(0,0,0,.7)'; hctx.shadowBlur=3;
+    for(const f of floaters){
+      _fv.set(f.x, f.y, f.z).project(camera);
+      if(_fv.z>1 || Math.abs(_fv.x)>1.2 || Math.abs(_fv.y)>1.2) continue;
+      const sx=(_fv.x*0.5+0.5)*W, sy=(1-(_fv.y*0.5+0.5))*H - (1-f.t)*52;
+      hctx.globalAlpha=Math.min(1, f.t*1.5); hctx.fillStyle=f.col;
+      hctx.fillText(f.txt, sx, sy);
+    }
+    hctx.restore();
+  }
+
   /* bannière d'événement */
   if(S.bannerT>0 && S.banner){
     hctx.save();
@@ -4330,6 +4352,16 @@ function drawHUD(t){
     const band=(t*140)%(H+140)-140;             // balayage vertical léger
     hctx.fillStyle='rgba(160,255,170,.04)';
     hctx.fillRect(0, band, W, 90);
+  }
+  /* lignes de vitesse (juice) : stries radiales périphériques quand on fonce */
+  const spd3=S.vel.length();
+  if(spd3>22 && S.zoomT<0.4){
+    const inten=Math.min(1,(spd3-22)/22)*(keys['shift']?1.35:1);
+    hctx.save(); hctx.strokeStyle=`rgba(222,232,255,${0.11*inten})`; hctx.lineWidth=2.2;
+    const r0=Math.min(W,H)*0.30, r1=Math.min(W,H)*(0.33+0.24*inten);
+    for(let i=0;i<16;i++){ const a=(i/16)*6.28 + (i%2?0.2:0);
+      hctx.beginPath(); hctx.moveTo(cx+Math.cos(a)*r0, cyH+Math.sin(a)*r0); hctx.lineTo(cx+Math.cos(a)*r1, cyH+Math.sin(a)*r1); hctx.stroke(); }
+    hctx.restore();
   }
   /* flash blanc sur impact léger */
   if(S.impactFlash>0){
@@ -4440,6 +4472,7 @@ function loop(now){
 
   // bannière + hitmarker
   if(S.bannerT>0) S.bannerT -= dt;
+  for(let i=floaters.length-1;i>=0;i--){ floaters[i].t-=dt*0.85; if(floaters[i].t<=0) floaters.splice(i,1); }
   if(S.hitT>0) S.hitT = Math.max(0, S.hitT - dt);
   // compte à rebours du revive
   if(S.crashed && S.reviveT>0){
@@ -4547,7 +4580,7 @@ addEventListener('resize', ()=>{
 if(/(^$|localhost|127\.0\.0\.1|github\.io)/.test(location.hostname) || location.search.includes('dev')){
   window.__drone = {
     state:S, keys, T, respawn, crash, fire, explode, damage, zombies, targets,
-    barrels, cuves, crates, spits, WX, spawnWave, spawnHorde, chainQ, CG, MISSIONS, WEAPONS, DRONES,
+    barrels, cuves, crates, spits, WX, spawnWave, spawnHorde, killZombie, chainQ, CG, MISSIONS, WEAPONS, DRONES,
     airdrop, daily, dailyEvent, addCredits, nukeBlast, shopState, setUpgrades,
     setLook(yaw,pitch){ S.yaw=yaw; S.camPitch=clamp(pitch,-T.maxLook,T.maxLook); },
     setMode(m){ S.mode=m%4; },
