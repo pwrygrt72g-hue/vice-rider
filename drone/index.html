@@ -1805,21 +1805,34 @@ vehicle(-120,-160, 0.0,'van');     vehicle( 250, 210, 0.3,'truck');
   const sign=addBox(4.5,2.2,0.35, gx+9,6,gz-4, M.rust); sign.rotation.z=0.08;
 }
 
-/* --- ville détruite en silhouette (anneau lointain) --- */
+/* --- skyline lointaine multi-couches : downtown haut + tours hazier + antennes --- */
 {
-  const im=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),
-    new THREE.MeshStandardMaterial({color:0x474b4e, roughness:1}), 48);
-  const d=new THREE.Object3D();
-  for(let i=0;i<48;i++){
-    const a=(i/48)*Math.PI*2 + rnd()*0.1, r=520+rnd()*200;
+  const bodyGeo = new THREE.BoxGeometry(1,1,1);
+  const mat = new THREE.MeshStandardMaterial({color:0x41474f, roughness:1});
+  const N=118, d=new THREE.Object3D();
+  const bodies=new THREE.InstancedMesh(bodyGeo, mat, N);
+  const tops=[], spikes=[];
+  for(let i=0;i<N;i++){
+    const a=(i/N)*Math.PI*2 + (rnd()-.5)*0.16;
+    const downtown = Math.cos(a-1.1) > 0.35;                       // cluster dense sur un arc
+    const r=(downtown?430:560)+rnd()*(downtown?170:360);
     const x=Math.cos(a)*r, z=Math.sin(a)*r;
-    const w=28+rnd()*55, h=35+rnd()*130, dd=28+rnd()*55;
-    d.position.set(x, h/2 - rnd()*h*0.12, z);
-    d.rotation.y=rnd()*1.5; d.scale.set(w,h,dd);
-    d.updateMatrix(); im.setMatrixAt(i,d.matrix);
-    im.setColorAt(i, new THREE.Color().setHSL(0.58+rnd()*0.04, 0.05+rnd()*0.05, 0.28+rnd()*0.1));
+    const w=26+rnd()*52, dd=26+rnd()*52;
+    const fade=Math.min(1,(r-430)/760);
+    const h=(downtown? 95+rnd()*185 : 30+rnd()*120) * (1 - fade*0.28);
+    d.position.set(x, h/2 - rnd()*h*0.07, z); d.rotation.y=rnd()*1.5; d.scale.set(w,h,dd);
+    d.updateMatrix(); bodies.setMatrixAt(i,d.matrix);
+    bodies.setColorAt(i, new THREE.Color().setHSL(0.58+rnd()*0.04, 0.05, 0.24+fade*0.24+rnd()*0.05));
+    if(rnd()<0.42) tops.push([x, h, z, w*0.6, 6+rnd()*20, dd*0.6, d.rotation.y]);   // étage en retrait
+    if(downtown && rnd()<0.55) spikes.push([x, h, z, 4+rnd()*12]);                  // antenne/mât
   }
-  im.castShadow=false; im.receiveShadow=false; scene.add(im);
+  bodies.castShadow=bodies.receiveShadow=false; bodies.instanceColor.needsUpdate=true; scene.add(bodies);
+  if(tops.length){ const tm=new THREE.InstancedMesh(bodyGeo, mat, tops.length);
+    tops.forEach((p,i)=>{ d.position.set(p[0],p[1]+p[4]/2,p[2]); d.rotation.set(0,p[6],0); d.scale.set(p[3],p[4],p[5]); d.updateMatrix(); tm.setMatrixAt(i,d.matrix); });
+    tm.castShadow=false; scene.add(tm); }
+  if(spikes.length){ const sm=new THREE.InstancedMesh(new THREE.CylinderGeometry(0.4,1.4,1,5), mat, spikes.length);
+    spikes.forEach((p,i)=>{ d.position.set(p[0],p[1]+p[3]/2,p[2]); d.rotation.set(0,0,0); d.scale.set(1,p[3],1); d.updateMatrix(); sm.setMatrixAt(i,d.matrix); });
+    sm.castShadow=false; scene.add(sm); }
 }
 
 /* ============================================================
