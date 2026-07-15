@@ -1262,6 +1262,31 @@ for(let i=0;i<9;i++){
          addBox(0.5,7,0.5, cx+7, 3.5, cz, M.metal, {collide:false}); }
 }
 
+/* --- clutter au sol dense (bidons, pneus, sacs de sable, débris) en InstancedMesh : ~4 draw calls --- */
+(function(){
+  const drums=[], tires=[], bags=[], junk=[];
+  for(let i=0;i<80;i++){
+    const a=rnd()*6.28, r=36+rnd()*232, cx=Math.cos(a)*r, cz=Math.sin(a)*r;
+    if(Math.abs(cx)<24 && Math.abs(cz)<38) continue;         // laisse le hall libre
+    const k=(rnd()*4)|0;
+    if(k===0){ for(let j=0;j<2+((rnd()*3)|0);j++) drums.push([cx+(rnd()-.5)*2.4, 0.5, cz+(rnd()-.5)*2.4, rnd()*6.28, 1]); }
+    else if(k===1){ for(let j=0;j<3;j++) tires.push([cx+(rnd()-.5)*1.6, 0.14+j*0.26, cz+(rnd()-.5)*1.6, rnd()*6.28, 1]); }
+    else if(k===2){ for(let j=0;j<5;j++) bags.push([cx+(j-2)*0.72, 0.18+((j%2)?0.32:0), cz, 0.0, 1]); }
+    else { for(let j=0;j<6;j++) junk.push([cx+(rnd()-.5)*7, 0.09, cz+(rnd()-.5)*7, rnd()*6.28, 0.4+rnd()*1.0]); }
+  }
+  const mkInst=(geo,mat,arr)=>{
+    if(!arr.length) return;
+    const im=new THREE.InstancedMesh(geo,mat,arr.length), mtx=new THREE.Matrix4(), sc=new THREE.Vector3();
+    arr.forEach((p,i)=>{ mtx.makeRotationY(p[3]||0); const s=p[4]||1; sc.set(s,s,s);
+      mtx.scale(sc); mtx.setPosition(p[0],p[1],p[2]); im.setMatrixAt(i,mtx); });
+    im.castShadow=true; im.instanceMatrix.needsUpdate=true; scene.add(im);
+  };
+  mkInst(new THREE.CylinderGeometry(0.34,0.34,1.0,10), M.rust, drums);
+  mkInst(new THREE.CylinderGeometry(0.5,0.5,0.28,14), M.darkSteel, tires);
+  mkInst(new THREE.BoxGeometry(0.72,0.34,0.44), M.rust, bags);
+  mkInst(new THREE.BoxGeometry(1,0.16,1), M.concrete, junk);
+})();
+
 /* --- barrières anti-char (jersey) aux carrefours + checkpoint --- */
 {
   const jb = new THREE.InstancedMesh(new THREE.BoxGeometry(2.2,1.0,0.6),
@@ -1646,30 +1671,55 @@ const Z_STATS = {
   spitter:{hp:3, spd:[0.6,0.9],  scale:1.05, chase:60, dmg:12, pts:200},
   boss:   {hp:60, spd:[0.45,0.55], scale:2.7, chase:240, dmg:45, pts:1500},
 };
+/* helpers de géométrie : box/sphère orientées puis translatées (pour fusion) */
+function pBox(w,h,d, x,y,z, rx){ const g=new THREE.BoxGeometry(w,h,d); if(rx) g.rotateX(rx); g.translate(x,y,z); return g; }
+function pSph(r, x,y,z, seg){ const g=new THREE.SphereGeometry(r, seg||8, Math.max(6,(seg||8)-2)); g.translate(x,y,z); return g; }
+/* zombie détaillé — parties statiques fusionnées par matériau (peau / vêtement) → ~5 draw calls */
 function addZombie(x,z,type='normal'){
   const st = Z_STATS[type];
   const skin = type==='runner'?zSkinR : type==='brute'?zSkinB : type==='spitter'?zSkinS : zSkin;
-  const grp = new THREE.Group();
   const cloth = rnd()<.5 ? zCloth : zCloth2;
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.72,0.30), cloth);
-  torso.position.y = 1.14;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17,10,8), skin);
-  head.position.y = 1.68;
-  const e1 = new THREE.Mesh(new THREE.SphereGeometry(0.05,7,5), type==='spitter'?zEyeS:zEye);
-  const e2 = e1.clone();
-  e1.position.set(-0.07,1.71,0.15); e2.position.set(0.07,1.71,0.15);
-  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.11,0.58,0.11), skin);
-  const armR = armL.clone();
-  armL.position.set(-0.33,1.42,0.22); armR.position.set(0.33,1.42,0.22);
-  armL.rotation.x = armR.rotation.x = -1.25;
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.80,0.16), cloth);
-  const legR = legL.clone();
-  legL.position.set(-0.13,0.40,0); legR.position.set(0.13,0.40,0);
-  grp.add(torso,head,e1,e2,armL,armR,legL,legR);
+  const grp = new THREE.Group();
+  const hunch = type==='runner'?0.30 : type==='brute'?0.16 : 0.12;   // penché vers l'avant
+  const bulk  = type==='brute'?1.28 : type==='spitter'?1.18 : 1;
+  const fwd   = hunch*0.5;
+  // --- PEAU statique : crâne + sourcil lourd + mâchoire + nuque ---
+  const skinMesh = new THREE.Mesh(mergeGeometries([
+    pSph(0.185, 0,1.70,0.02+fwd, 10),
+    pBox(0.36,0.07,0.12, 0,1.77,0.15+fwd),
+    pBox(0.22,0.12,0.18, 0,1.585,0.13+fwd),
+    pBox(0.13,0.15,0.13, 0,1.52,0.02+fwd),
+  ]), skin);
+  // --- VÊTEMENT statique : torse penché + épaules + ceinture + jambes + pieds ---
+  const clothMesh = new THREE.Mesh(mergeGeometries([
+    pBox(0.56*bulk,0.76,0.34*bulk, 0,1.14,0.02, hunch),
+    pBox(0.66*bulk,0.18,0.36, 0,1.46,0.04),
+    pBox(0.58,0.10,0.34, 0,0.90,0.02),
+    pBox(0.18,0.74,0.18, -0.14,0.42,0),
+    pBox(0.18,0.74,0.18,  0.14,0.42,0),
+    pBox(0.22,0.12,0.34, -0.14,0.06,0.09),
+    pBox(0.22,0.12,0.34,  0.14,0.06,0.09),
+  ]), cloth);
+  // --- YEUX (2 sphères fusionnées) ---
+  const eyeMesh = new THREE.Mesh(mergeGeometries([
+    pSph(0.055,-0.075,1.72,0.19+fwd,6), pSph(0.055,0.075,1.72,0.19+fwd,6),
+  ]), type==='spitter'?zEyeS:zEye);
+  // --- BRAS : pivot à l'épaule, avant-bras + main (fusionnés) ---
+  const armGeo = mergeGeometries([ pBox(0.12,0.52,0.12, 0,-0.26,0), pSph(0.1, 0,-0.55,0.02,7) ]);
+  const armL = new THREE.Mesh(armGeo, skin), armR = new THREE.Mesh(armGeo, skin);
+  armL.position.set(-0.35,1.50,0.06); armR.position.set(0.35,1.50,0.06);
+  armL.rotation.x = armR.rotation.x = -1.2;
+  grp.add(skinMesh, clothMesh, eyeMesh, armL, armR);
+  // --- CRACHEUR : poche à acide lumineuse dans le dos ---
+  if(type==='spitter'){
+    const sac = new THREE.Mesh(new THREE.SphereGeometry(0.24,10,8), new THREE.MeshBasicMaterial({color:0x8dff40}));
+    sac.position.set(0,1.18,-0.30); sac.scale.set(1,1.25,0.9);
+    grp.add(sac);
+  }
   grp.position.set(x,0,z);
   grp.rotation.y = rnd()*6.28;
-  grp.scale.setScalar(st.scale);
-  grp.traverse(o=>{ o.castShadow = true; });
+  grp.scale.setScalar(st.scale*(0.92+rnd()*0.16));   // variation de gabarit
+  grp.traverse(o=>{ if(o.isMesh) o.castShadow = true; });
   scene.add(grp);
   zombies.push({grp, pos:grp.position, armL, armR, alive:true, deadT:-1, type,
     hp:st.hp, chaseR:st.chase, swatDmg:st.dmg, pts:st.pts, stunT:0, spitCd:2+rnd()*3,
@@ -1832,7 +1882,7 @@ function spawnWave(){
   S.wave++;
   for(const z of zombies) scene.remove(z.grp);   // nettoie les cadavres
   zombies.length = 0; bossRef = null;
-  const n = Math.min(55, 18 + S.wave*8);
+  const n = Math.min(85, 26 + S.wave*11);
   for(let i=0;i<n;i++){
     const sp = zSpots[(Math.random()*zSpots.length)|0];
     addZombie(sp[0]+(Math.random()-.5)*16, sp[1]+(Math.random()-.5)*16, pickType());
@@ -1854,7 +1904,7 @@ function spawnWave(){
 /* --- événement HORDE : une meute surgit du sol près du drone et fonce --- */
 let hordeT = 45;
 function spawnHorde(){
-  const n = 6 + Math.min(12, S.wave*2);
+  const n = 10 + Math.min(22, S.wave*3);
   const a = Math.random()*Math.PI*2;
   const hx = clamp(S.pos.x + Math.cos(a)*65, -280, 280);
   const hz = clamp(S.pos.z + Math.sin(a)*65, -280, 280);
