@@ -413,12 +413,38 @@ const GradeShader = {
       gl_FragColor = vec4(max(c,0.0), 1.0);
     }`
 };
+/* god-rays : radial blur screen-space vers le soleil, masqué sur les zones lumineuses */
+const GodRayShader = {
+  uniforms: { tDiffuse:{value:null}, uSun:{value:new THREE.Vector2(0.5,0.9)}, uStrength:{value:0.0} },
+  vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader: `
+    varying vec2 vUv; uniform sampler2D tDiffuse; uniform vec2 uSun; uniform float uStrength;
+    void main(){
+      vec3 base = texture2D(tDiffuse, vUv).rgb;
+      if(uStrength <= 0.001){ gl_FragColor = vec4(base,1.0); return; }
+      vec2 delta = (uSun - vUv) * 0.92 / 28.0;
+      vec2 uv = vUv; float decay = 1.0; vec3 shafts = vec3(0.0);
+      for(int i=0;i<28;i++){
+        uv += delta;
+        vec3 s = texture2D(tDiffuse, clamp(uv,0.0,1.0)).rgb;
+        float l = max(0.0, dot(s, vec3(0.299,0.587,0.114)) - 0.62);   // seule la lumière vive rayonne
+        shafts += s * l * decay;
+        decay *= 0.93;
+      }
+      shafts *= uStrength / 28.0 * 2.6;
+      shafts *= vec3(1.05, 0.92, 0.72);                                // teinte chaude
+      gl_FragColor = vec4(base + shafts, 1.0);
+    }`
+};
+let godrayPass=null;
 function buildComposer(){
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   // (strength, radius, threshold) : seuil haut → seules les zones lumineuses "débordent"
   bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.5, 0.55, 0.82);
   composer.addPass(bloomPass);
+  godrayPass = new ShaderPass(GodRayShader);
+  composer.addPass(godrayPass);
   const grade = new ShaderPass(GradeShader);
   composer.addPass(grade);
   composer.setPixelRatio(renderer.getPixelRatio());
@@ -1965,6 +1991,7 @@ let crows=null; const crowData=[];
   scene.add(crows);
 }
 const _crowDummy = new THREE.Object3D();
+const _grFwd = new THREE.Vector3(), _grSun = new THREE.Vector3();   // temporaires god-rays
 function updateCrows(t){
   if(!crows) return;
   for(let i=0;i<crowData.length;i++){
@@ -4232,6 +4259,16 @@ function loop(now){
   }
 
   updateCrows(t);
+
+  // god-rays : position écran du soleil + intensité (0 si soleil derrière / nuit / météo sombre)
+  if(godrayPass){
+    _grFwd.set(0,0,-1).applyQuaternion(camera.quaternion);
+    const facing = _grFwd.dot(SUN_DIR);
+    _grSun.copy(camera.position).addScaledVector(SUN_DIR, 900).project(camera);
+    godrayPass.uniforms.uSun.value.set(_grSun.x*0.5+0.5, _grSun.y*0.5+0.5);
+    const day = (1-S.nightT)*(1-WX.dark*0.55);
+    godrayPass.uniforms.uStrength.value = facing>0.05 ? clamp((facing-0.05)*1.5,0,1)*0.85*day : 0;
+  }
 
   const thr=clamp(0.35 + S.vel.length()/30*0.5 + Math.abs(S.vel.y)/T.vzMax*0.3, 0, 1);
   audioTick(thr, S.vel.length());
