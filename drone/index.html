@@ -1849,6 +1849,84 @@ vehicle(-120,-160, 0.0,'van');     vehicle( 250, 210, 0.3,'truck');
   const el=new THREE.PointLight(0xff6620, 26, 16, 2); el.position.set(hx+1.6,1.2,hz); scene.add(el);
 }
 
+/* ============================================================
+   NOUVEAUX REPÈRES — avion crashé, grues, conteneurs, marché, pylônes
+   ============================================================ */
+/* avion de ligne crashé (pièce maîtresse + sillon de débris) */
+{
+  const ax=-250, az=-150, ry=0.6, grp=new THREE.Group();
+  const alu=new THREE.MeshStandardMaterial({color:0xb9bcc0, roughness:.5, metalness:.5});
+  const f1=new THREE.Mesh(new THREE.CylinderGeometry(2.3,2.3,15,18).rotateZ(Math.PI/2), alu); f1.position.set(-6,2.5,0); grp.add(f1);
+  const f2=new THREE.Mesh(new THREE.CylinderGeometry(2.3,1.5,10,18).rotateZ(Math.PI/2), alu); f2.position.set(7,3.2,0.5); f2.rotation.set(0,0.2,-0.4); grp.add(f2);
+  const win=new THREE.Mesh(new THREE.BoxGeometry(14,0.5,0.1), new THREE.MeshStandardMaterial({color:0x1a2430, emissive:0x2a3a48, emissiveIntensity:.5})); win.position.set(-6,3.1,2.28); grp.add(win);
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(16,0.5,4.5), alu); wing.position.set(-4,1.4,-4); wing.rotation.set(0.1,0.3,-0.15); grp.add(wing);
+  const eng=new THREE.Mesh(new THREE.CylinderGeometry(1.1,1.1,3,14).rotateZ(Math.PI/2), M.darkSteel); eng.position.set(-7,0.9,-6); grp.add(eng);
+  const tail=new THREE.Mesh(new THREE.BoxGeometry(0.5,6,3), alu); tail.position.set(11,5,0.5); tail.rotation.z=-0.35; grp.add(tail);
+  grp.traverse(o=>{ if(o.isMesh) o.castShadow=o.receiveShadow=true; });
+  grp.position.set(ax,0,az); grp.rotation.y=ry; scene.add(grp);
+  boxColliders.push({min:new THREE.Vector3(ax-14,0,az-6), max:new THREE.Vector3(ax+14,6,az+6)});
+  for(let i=0;i<14;i++){ const dx=ax+Math.cos(ry+3.14)*i*6+(rnd()-.5)*6, dz=az+Math.sin(ry+3.14)*i*6+(rnd()-.5)*6;
+    const db=new THREE.Mesh(new THREE.TetrahedronGeometry(0.4+rnd()*1.2), alu); db.position.set(dx,0.3,dz); db.rotation.set(rnd()*3,rnd()*3,rnd()*3); db.castShadow=true; scene.add(db); }
+}
+/* grue de chantier (landmark vertical) */
+function crane(cx, cz){
+  const yell=new THREE.MeshStandardMaterial({color:0xd8a12a, roughness:.6, metalness:.4}), H=34;
+  addBox(2.2,H,2.2, cx,H/2,cz, yell);
+  addBox(30,1.0,1.2, cx+9,H,cz, yell, {collide:false});
+  addBox(9,1.0,1.2, cx-6,H,cz, yell, {collide:false});
+  addBox(2.6,2.0,2.6, cx-9,H-1,cz, M.darkSteel, {collide:false});
+  addBox(0.09,10,0.09, cx+18,H-5,cz, M.darkSteel, {collide:false});
+  addBox(0.7,0.7,0.7, cx+18,H-10,cz, M.rust, {collide:false});
+  addBox(2.6,2.0,2.6, cx,1.0,cz, M.concrete);
+}
+crane(130, 30); crane(-250, 25);
+/* parc à conteneurs colorés */
+function containerYard(cx, cz){
+  const cols=[0xa33b2a,0x2f6b8f,0x3f7a4a,0xb0902a,0x8a4a2a,0x555b60];
+  for(let r=0;r<3;r++) for(let c=0;c<4;c++){
+    if(rnd()<0.15) continue;
+    const stack=1+((rnd()*3)|0);
+    for(let s=0;s<stack;s++){
+      const m=new THREE.Mesh(new THREE.BoxGeometry(6,2.5,2.4),
+        new THREE.MeshStandardMaterial({map:texRust, normalMap:M.rust.normalMap, color:cols[(rnd()*cols.length)|0], roughness:.85, metalness:.3}));
+      const px=cx+c*6.6, pz=cz+r*3.0+(rnd()-.5)*0.4;
+      m.position.set(px, 1.3+s*2.55, pz); m.rotation.y=(rnd()-.5)*0.06;
+      m.castShadow=m.receiveShadow=true; scene.add(m);
+      if(s===stack-1) boxColliders.push({min:new THREE.Vector3(px-3,0,pz-1.3), max:new THREE.Vector3(px+3,1.3+s*2.55+1.3,pz+1.3)});
+    }
+  }
+}
+containerYard(285, -95); containerYard(-290, -175);
+/* stands de marché (auvents colorés, touche humaine) */
+function marketRow(mx, mz, ry){
+  const awn=[0x9a3b3b,0x3b6b9a,0x6b9a3b,0x9a8a3b], grp=new THREE.Group();
+  for(let i=0;i<5;i++){
+    const ox=i*4.2;
+    for(const sx of [-1.6,1.6]){ const p=new THREE.Mesh(new THREE.BoxGeometry(0.12,2.4,0.12), M.darkSteel); p.position.set(ox+sx,1.2,0); grp.add(p); }
+    const a=new THREE.Mesh(new THREE.BoxGeometry(3.6,0.08,2.2), new THREE.MeshStandardMaterial({color:awn[(rnd()*awn.length)|0], roughness:.9, side:THREE.DoubleSide}));
+    a.position.set(ox,2.5,0); a.rotation.x=(rnd()-.5)*0.2; grp.add(a);
+    const tbl=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.1,1.4), M.rust); tbl.position.set(ox,0.9,0); grp.add(tbl);
+  }
+  grp.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+  grp.position.set(mx,0,mz); grp.rotation.y=ry; scene.add(grp);
+}
+marketRow(30, 132, 0.2); marketRow(-72, 58, 1.4);
+/* pylônes électriques + câbles caténaires */
+{
+  const line=[[-50,-238],[20,-238],[90,-238],[160,-238],[210,-238]];
+  const pyl=(px,pz)=>{ const g=new THREE.Group();
+    for(const s of [-2.2,2.2]){ const leg=new THREE.Mesh(new THREE.BoxGeometry(0.4,20,0.4), M.darkSteel); leg.position.set(s,10,0); leg.rotation.z=s>0?-0.06:0.06; g.add(leg); }
+    for(const y of [8,14,19]){ const cr=new THREE.Mesh(new THREE.BoxGeometry(9,0.3,0.3), M.darkSteel); cr.position.set(0,y,0); g.add(cr); }
+    g.traverse(o=>{ if(o.isMesh) o.castShadow=true; }); g.position.set(px,0,pz); scene.add(g);
+    boxColliders.push({min:new THREE.Vector3(px-2.7,0,pz-0.6), max:new THREE.Vector3(px+2.7,20,pz+0.6)}); };
+  line.forEach(([x,z])=>pyl(x,z));
+  for(let i=0;i<line.length-1;i++) for(const y of [8,14,19]) for(const off of [-4,0,4]){
+    const seg=[]; for(let k=0;k<=8;k++){ const tt=k/8, sag=Math.sin(tt*Math.PI)*2.5;
+      seg.push(new THREE.Vector3(line[i][0]+off+(line[i+1][0]-line[i][0])*tt, y-sag, line[i][1])); }
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg), new THREE.LineBasicMaterial({color:0x15171a})));
+  }
+}
+
 /* --- station-service éventrée (repère + abri sous auvent) --- */
 {
   const gx=-40, gz=-58;
